@@ -76,9 +76,11 @@
     <p class="sub">致敬未來跑車的粉絲作品・會飛的賽車</p>
     <div class="notice">🅿️ <b>僅限停車（P 檔）時遊玩</b><br>Tesla 車機瀏覽器只允許在停妥時使用網頁遊戲。行駛中請勿操作，確保安全。</div>
     <div id="startCar" class="carline">目前車輛：—</div>
+    <div id="startTrack" class="carline">目前賽道：—</div>
     <div id="startPad" class="padline">🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵</div>
     <div class="menu">
       <button class="btn primary" data-act="start">開始遊戲</button>
+      <button class="btn" data-act="tracks" id="btnTracks">選擇賽道</button>
       <button class="btn" data-act="garage" id="btnGarage">選擇車輛</button>
       <button class="btn" data-act="mapping">按鍵設定</button>
       <button class="btn" data-act="settings">畫質與設定</button>
@@ -95,6 +97,20 @@
 </div>
 
 <!-- 選擇車輛 -->
+<div id="s-tracks" class="screen">
+  <div class="card wide">
+    <h2>選擇賽道</h2>
+    <div id="tlist" class="tgrid"></div>
+    <div class="vinfo">
+      <div class="vhead"><h3 id="tname"></h3><span id="ttag" class="dim"></span></div>
+      <p id="tdesc" class="sub"></p>
+      <p id="tbest" class="sub dim">最佳單圈：—</p>
+    </div>
+    <div class="menu"><button class="btn primary" data-act="back">完成</button></div>
+    <p class="small dim">搖桿／鍵盤可導覽。選擇會自動儲存；切換賽道會重新載入場景。</p>
+  </div>
+</div>
+
 <div id="s-garage" class="screen">
   <div class="card wide">
     <h2>選擇車輛</h2>
