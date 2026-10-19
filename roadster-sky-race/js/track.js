@@ -9,11 +9,8 @@ export const RAIL_L = ROAD_HALF_K + 0.5; // 護欄橫向位置
 export const PIT_DEPTH = 11;
 const GAP_LEN = 40, RAMP_LEN = 24, RAMP_H = 2.4;
 
-// 控制點（x, z），順時針閉合迴圈，約 3 公里
-const CTRL = [
-  [0, 0], [300, 0], [540, -80], [700, -250], [720, -470], [590, -650], [350, -680],
-  [190, -560], [40, -470], [-130, -520], [-310, -450], [-420, -290], [-350, -110], [-190, -35],
-];
+import { TRACKS, trackById, THEMES, DEFAULT_TRACK } from './tracks.js';
+export { TRACKS, trackById, THEMES, DEFAULT_TRACK };
 
 class Grid {
   constructor(track, cell, step, radius) {
@@ -47,8 +44,12 @@ class Grid {
 }
 
 export class Track {
-  constructor(N = 1200) {
-    const pts = CTRL.map(([x, z]) => new THREE.Vector3(x, 0, z));
+  constructor(idOrDef = DEFAULT_TRACK, N = 1200) {
+    const def = typeof idOrDef === 'string' ? trackById(idOrDef) : (idOrDef || trackById(DEFAULT_TRACK));
+    this.id = def.id; this.name = def.name; this.tag = def.tag; this.desc = def.desc;
+    this.theme = THEMES[def.theme] || THEMES.desert;
+    this.def = def;
+    const pts = def.ctrl.map(([x, z]) => new THREE.Vector3(x, 0, z));
     const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
     curve.arcLengthDivisions = 4000;
     this.curve = curve;
@@ -88,10 +89,10 @@ export class Track {
     this.bank = new Float32Array(N);
     for (let i = 0; i < N; i++) this.bank[i] = clamp(ks[i] * 75, -0.3, 0.3);
 
-    // 峽谷缺口：選在最直的位置附近
+    // 缺口：選在最直的位置附近
     this.gaps = [];
     const gl = Math.round(GAP_LEN / this.ds);
-    for (const f of [0.2, 0.47, 0.76]) {
+    for (const f of (def.gaps || [0.2, 0.47, 0.76])) {
       let bestI = 0, bestC = 1e9;
       const c0 = Math.round(f * N), span = Math.round(0.06 * N);
       for (let c = c0 - span; c <= c0 + span; c += 3) {
@@ -107,9 +108,10 @@ export class Track {
 
     // 高度：緩起伏，缺口附近壓平，再加上跳台
     const py = (this.py = new Float32Array(N));
+    const H = def.height || { a: 7, b: 4.5, c: 2, pa: 2, pb: 3, pc: 5, oa: 0.6, ob: 2.1 };
     const base = (i) => {
       const u = (i / N) * Math.PI * 2;
-      return 7 * Math.sin(2 * u + 0.6) + 4.5 * Math.sin(3 * u + 2.1) + 2 * Math.sin(5 * u);
+      return H.a * Math.sin(H.pa * u + H.oa) + H.b * Math.sin(H.pb * u + H.ob) + H.c * Math.sin(H.pc * u);
     };
     for (let i = 0; i < N; i++) {
       let y = base(i);

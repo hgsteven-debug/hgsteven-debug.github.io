@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { World, QUALITY } from './world.js';
 import { CarModel, paintsOf } from './car.js';
 import { VEHICLES, DEFAULT_VEHICLE, vehicleById } from './vehicles.js';
+import { TRACKS, DEFAULT_TRACK, trackById } from './tracks.js';
 import { Vehicle } from './physics.js';
 import { InputManager } from './input.js';
 import { UI, shortPadName } from './ui.js';
@@ -21,7 +22,7 @@ const PHYS_DT = 1 / 120;
 let renderer, scene, camera, world, track, car, veh, hud, ui, audio, input;
 const game = {
   state: 'loading', time: 0, camMode: 0, countdown: 0, dyn: 1,
-  lap: { n: 1, t: 0, last: null, best: store.get('best', null), cp: [false, false, false], prevFi: null },
+  lap: { n: 1, t: 0, last: null, best: null, cp: [false, false, false], prevFi: null },
   lastGoodI: 0, camYaw: 0, camSnap: true, shake: 0, kick: 0, rumbleT: 0, acc: 0, frames: [], autoDone: false,
 };
 const camPos = new THREE.Vector3();
@@ -57,7 +58,8 @@ async function boot() {
     input = new InputManager();
     audio = new GameAudio();
 
-    world = new World(renderer, scene, qname);
+    const tid = trackById(store.get('track', DEFAULT_TRACK)).id;
+    world = new World(renderer, scene, qname, tid);
     track = world.track;
     await world.build((p, label) => { $('loadBar').style.width = Math.round(p * 80) + '%'; $('loadTxt').textContent = `載入中：${label}…`; });
     $('loadTxt').textContent = '載入中：車輛…';
@@ -68,11 +70,13 @@ async function boot() {
     scene.add(car.root); scene.add(car.blob);
     veh = new Vehicle(track);
     veh.setTune(vehicleById(vid).tune);
+    game.lap.best = store.get('best.' + track.id, store.get('best', null));
     hud = new Hud(track, world);
 
     ui = new UI(input, {
       onStart: startGame, onResume: resume, onRestart: () => startGame(), onQuit: quit,
       onFullscreen: toggleFullscreen, onVehicle: setVehicle, getCar: () => car,
+      onTrack: (id) => { store.set('track', id); const u = new URL(location.href); location.href = u.toString(); },
       onQuality: (q) => { store.set('quality', q); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u.toString(); },
       getQuality: () => qname, onVolume: (v) => audio.setVolume(v), getVolume: () => audio.volume,
       onTouchMode: () => {}, onTouchPress: (p) => { input.pressed[p] = true; game.touchPressed = p; },
@@ -97,9 +101,9 @@ async function boot() {
     document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'race') pause(); });
     window.addEventListener('blur', () => { if (game.state === 'race' && params.get('nopauseblur') !== '1') pause(); });
 
-    window.__sky = { Q, CarModel, setVehicle, sim, game, veh, input, world, hud, ui, car, camera, renderer, scene, audio, startGame, track, THREE };
+    window.__sky = { Q, CarModel, setVehicle, sim, game, veh, input, world, hud, ui, car, camera, renderer, scene, audio, startGame, track, TRACKS, trackById, VEHICLES, vehicleById, THREE };
     game.state = 'menu';
-    ui.show('start');
+    ui.refreshTracks(); ui.show('start');
     if (params.get('autostart') === '1') { startGame(); }
     last = performance.now();
     requestAnimationFrame(frame);
@@ -222,7 +226,7 @@ function updateLap(dt) {
         const t = lap.t;
         lap.last = t;
         const isBest = lap.best == null || t < lap.best;
-        if (isBest) { lap.best = t; store.set('best', t); }
+        if (isBest) { lap.best = t; store.set('best.' + track.id, t); store.set('best', t); }
         hud.toast(isBest ? `第 ${lap.n} 圈完成・新最佳！` : `第 ${lap.n} 圈完成`, 2500);
         audio.beep(true);
         lap.n++; lap.t = 0; lap.cp = [false, false, false];

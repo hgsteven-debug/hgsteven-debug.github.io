@@ -1,4 +1,4 @@
-// 程序化原創車輛模型：Roadster / Model 3 / Model Y / Model S / Model X / Cybertruck / Semi / Cybercab 風格的原創造型
+// 程序化原創車輛模型：Roadster 系列、Model 系列、Cybertruck/beast、Semi、Cybercab、Robovan 等風格的原創造型（無任何商標）
 // 全部以 Three.js 幾何生成（放樣截面 + 車輪拱孔洞 + 稜面放樣 + Lathe），無任何商標、標誌、文字或官方模型資料。
 import * as THREE from 'three';
 import { clamp, lerp } from './util.js';
@@ -157,7 +157,70 @@ const SPECS = {
     rear: [{ x: 0.45, y: 1.2, r: 0.2, ry: 0, k: 1.2 }, { x: 0.95, y: 1.0, r: 0.11, ry: 0.15, k: 0.7 }], zTail: 4.55,
     lifts: [[-0.95, -2.4], [0.95, -2.4], [-0.95, 2.2], [0.95, 2.2]], liftR: 1.9,
   },
+  // ---- 變體：以現有車身為基礎微調（尾翼、加長、經典比例）----
+  roadster08: null, model3p: null, modelyl: null, modelsplaid: null, modelxplaid: null, cyberbeast: null, robovan: null,
 };
+// 變體規格（於 SPECS 定義後填入，避免重複貼大段資料）
+(function fillVariants() {
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  // 2008 Roadster：較短、較圓的經典雙座
+  const r08 = clone(SPECS.cybercab);
+  r08.blob = [2.9, 4.6]; r08.mirror = [0.9, 0.82, -0.7]; r08.diffuser = true;
+  r08.parts[0].keys = [
+    [-1.85, 0.52, 0.30, 0.48, 0.50], [-1.55, 0.72, 0.25, 0.60, 0.68], [-1.15, 0.82, 0.23, 0.68, 0.74],
+    [-0.4, 0.84, 0.24, 0.72, 0.78], [0.5, 0.84, 0.24, 0.74, 0.80], [1.15, 0.80, 0.24, 0.72, 0.76],
+    [1.55, 0.68, 0.26, 0.66, 0.70], [1.85, 0.50, 0.32, 0.56, 0.58]];
+  r08.parts[0].z0 = -1.85; r08.parts[0].z1 = 1.85;
+  r08.cab = { z0: -1.2, z1: 1.2, cf: 0.35, cb: 0.4, ex: 2.2, keys: [
+    [-1.2, 0.52, 0.62, 0.78], [-0.7, 0.66, 0.62, 1.1], [-0.2, 0.70, 0.62, 1.28], [0.4, 0.70, 0.62, 1.28],
+    [0.9, 0.64, 0.62, 1.1], [1.2, 0.48, 0.62, 0.86]] };
+  r08.wheels = [{ z: -1.05, x: 0.74, w: 0.22, front: true }, { z: 1.05, x: 0.74, w: 0.24, front: false }];
+  r08.zTail = 1.72; r08.rear = [{ x: 0.28, y: 0.5, r: 0.11, ry: 0, k: 0.85 }, { x: 0.55, y: 0.46, r: 0.06, ry: 0.2, k: 0.5 }];
+  SPECS.roadster08 = r08;
+  // Model 3 Performance：尾翼
+  const m3p = clone(SPECS.model3);
+  m3p.boxes = [{ s: [1.35, 0.045, 0.28], p: [0, 0.92, 2.05] }, { s: [0.08, 0.12, 0.22], p: [-0.55, 0.86, 1.95] }, { s: [0.08, 0.12, 0.22], p: [0.55, 0.86, 1.95] }];
+  SPECS.model3p = m3p;
+  // Model Y L：加長
+  const myl = clone(SPECS.modely);
+  myl.blob = [3.5, 7.0]; myl.parts[0].z0 = -2.65; myl.parts[0].z1 = 2.65;
+  myl.parts[0].keys = [
+    [-2.65, 0.50, 0.30, 0.48, 0.50], [-2.25, 0.74, 0.25, 0.62, 0.70], [-1.85, 0.90, 0.23, 0.76, 0.86], [-1.5, 0.94, 0.22, 0.80, 0.90],
+    [-0.5, 0.94, 0.24, 0.84, 0.92], [0.7, 0.94, 0.24, 0.86, 0.94], [1.6, 0.94, 0.23, 0.88, 0.96], [2.25, 0.88, 0.25, 0.92, 0.96],
+    [2.65, 0.74, 0.32, 0.86, 0.88]];
+  myl.cab = { z0: -1.1, z1: 2.55, cf: 0.3, cb: 0.12, ex: 3.6, keys: [
+    [-1.1, 0.60, 0.72, 0.94], [-0.5, 0.74, 0.72, 1.28], [0.2, 0.78, 0.72, 1.55], [1.0, 0.80, 0.72, 1.64],
+    [1.7, 0.80, 0.72, 1.62], [2.25, 0.76, 0.72, 1.46], [2.55, 0.70, 0.72, 1.18]] };
+  myl.wheels = [{ z: -1.55, x: 0.82, w: 0.26, front: true }, { z: 1.55, x: 0.82, w: 0.28, front: false }];
+  myl.zTail = 2.5; myl.mirror = [0.98, 1.02, -1.1];
+  SPECS.modelyl = myl;
+  // Model S / X Plaid：尾翼
+  const msp = clone(SPECS.models);
+  msp.boxes = [{ s: [1.4, 0.05, 0.3], p: [0, 0.9, 2.2] }, { s: [0.09, 0.14, 0.24], p: [-0.58, 0.84, 2.08] }, { s: [0.09, 0.14, 0.24], p: [0.58, 0.84, 2.08] }];
+  SPECS.modelsplaid = msp;
+  const mxp = clone(SPECS.modelx);
+  mxp.boxes = [{ s: [1.5, 0.05, 0.32], p: [0, 1.05, 2.2] }, { s: [0.1, 0.15, 0.26], p: [-0.62, 0.98, 2.08] }, { s: [0.1, 0.15, 0.26], p: [0.62, 0.98, 2.08] }];
+  SPECS.modelxplaid = mxp;
+  // Cyberbeast：同 Cybertruck 車身
+  SPECS.cyberbeast = clone(SPECS.cybertruck);
+  // Robovan：長廂型
+  const rv = clone(SPECS.modely);
+  rv.blob = [3.6, 7.8]; rv.mirror = null; rv.R = 0.38; rv.archR = 0.42; rv.archX = 0.72; rv.yL = 0.28; rv.fx = 1.2;
+  rv.parts[0] = { z0: -2.9, z1: 2.9, capF: 0.55, capB: 0.35, sh: { rx: 0.18, ry: 0.14, rby: 0.1, rbx: 0.12, tuck: 0.95, topExp: 1.3 }, keys: [
+    [-2.9, 0.72, 0.35, 0.70, 0.72], [-2.5, 0.92, 0.30, 0.95, 1.05], [-2.0, 1.05, 0.28, 1.15, 1.25], [-1.4, 1.08, 0.28, 1.25, 1.35],
+    [-0.4, 1.08, 0.28, 1.28, 1.38], [0.8, 1.08, 0.28, 1.28, 1.38], [1.8, 1.08, 0.28, 1.25, 1.35], [2.4, 1.02, 0.30, 1.15, 1.25],
+    [2.9, 0.85, 0.35, 0.95, 1.05]] };
+  rv.cab = { z0: -2.5, z1: 2.5, cf: 0.4, cb: 0.35, ex: 2.8, keys: [
+    [-2.5, 0.70, 0.95, 1.15], [-1.8, 0.90, 0.95, 1.55], [-0.8, 0.98, 0.95, 1.85], [0.5, 0.98, 0.95, 1.9],
+    [1.5, 0.95, 0.95, 1.75], [2.2, 0.88, 0.95, 1.45], [2.5, 0.75, 0.95, 1.2]] };
+  rv.wheels = [{ z: -1.9, x: 0.92, w: 0.28, front: true }, { z: 1.9, x: 0.92, w: 0.30, front: false }];
+  rv.head = [[-0.7, 0.85, 0.7, 0.85, 0.04, 0.04, 18], 1, false];
+  rv.tail = [-0.85, 0.85, 1.15, 0.04, 0.0];
+  rv.darks = [[-0.7, 0.45, 0.7, 0.45, 0.06, 12, 1], [-0.85, 0.5, 0.85, 0.5, 0.1, 12, -1]];
+  rv.rear = [{ x: 0.4, y: 0.7, r: 0.14, ry: 0, k: 1.0 }, { x: 0.75, y: 0.65, r: 0.08, ry: 0.15, k: 0.6 }];
+  rv.zTail = 2.75; rv.lifts = [[-0.88, -1.0], [0.88, -1.0], [-0.88, 1.0], [0.88, 1.0]];
+  SPECS.robovan = rv;
+})();
 const capE = (z, z0, z1, cf, cb) => {
   let e = 1;
   if (z < z0 + cf) { const d = (z - z0) / cf; e = Math.sqrt(Math.max(0, 1 - (1 - d) * (1 - d))); }
@@ -432,7 +495,7 @@ export class CarModel {
 
     // ---- 材質 ----
     const paintOpts = { color: pdef.color, metalness: pdef.metalness, roughness: pdef.roughness, envMapIntensity: 1.0 };
-    if (physical && this.vehicleId !== 'cybertruck') { paintOpts.clearcoat = 1; paintOpts.clearcoatRoughness = 0.04; }
+    if (physical && this.spec.kind !== 'truck') { paintOpts.clearcoat = 1; paintOpts.clearcoatRoughness = 0.04; }
     this.paint = new Mat(paintOpts);
     const dark = new THREE.MeshStandardMaterial({ color: 0x0a0b0d, metalness: 0.6, roughness: 0.45, envMapIntensity: 0.9, side: THREE.DoubleSide });
     const glassOpts = { color: 0x03060a, metalness: 0.55, roughness: 0.05, envMapIntensity: 2.4 };

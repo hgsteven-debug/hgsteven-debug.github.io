@@ -75,6 +75,55 @@ export const VEHICLES = [
       liftDrain: 0.9, nitro: 10, nitroDrain: 0.95, airThrust: 6.5, airSteer: 1.25, tough: 0.9, wb: 2.3, hw: 0.72 }),
     cam: { dist: 0.9, height: 0.95, cockpit: [1.2, 0.1] },
   },
+  {
+    id: 'roadster08', name: '2008 Roadster', tag: '經典雙座', mass: 1300, paints: ALL5,
+    desc: '初代雙座敞篷風格：輕巧、轉向靈活，極速略低，飛行輕盈。',
+    tune: T({ accel: 13.8, vTop: 58, brake: 29, grip: 1.6, steer: 1.22, maxSteer: 0.58, yawResp: 12, eCap: 0.9, liftA: 29, climb: 10, hMax: 36,
+      liftDrain: 0.95, nitro: 10.5, nitroDrain: 1.0, airThrust: 6.8, airSteer: 1.2, tough: 0.85, wb: 2.45, hw: 0.74 }),
+    cam: { dist: 0.92, height: 0.95, cockpit: [1.15, 0.15] },
+  },
+  {
+    id: 'model3p', name: 'Model 3 Performance', tag: '性能轎車', mass: 1850, paints: ALL5,
+    desc: 'Model 3 性能版：尾翼、更硬懸吊與更強加速，彎道抓地更好。',
+    tune: T({ accel: 15.2, vTop: 68, brake: 32, grip: 1.85, steer: 1.18, maxSteer: 0.55, yawResp: 12, eCap: 1.0, liftA: 30, climb: 10, hMax: 36,
+      liftDrain: 1.0, nitro: 12, nitroDrain: 1.05, airThrust: 7.2, airSteer: 1.15, tough: 1.0, wb: 2.84, hw: 0.82 }),
+    cam: { dist: 1, height: 1, cockpit: [1.2, 0.15] },
+  },
+  {
+    id: 'modelyl', name: 'Model Y L', tag: '加長六座休旅', mass: 2300, paints: ALL5,
+    desc: '加長六座版 Model Y：車身長、空間大，較重但續航與堅固度提升。',
+    tune: T({ accel: 11.0, vTop: 57, brake: 28, grip: 1.5, steer: 1.0, maxSteer: 0.54, yawResp: 9.5, eCap: 1.2, liftA: 24, climb: 8, hMax: 30,
+      liftDrain: 1.2, nitro: 9.5, nitroDrain: 1.05, airThrust: 5.5, airSteer: 0.95, tough: 1.3, wb: 3.15, hw: 0.84 }),
+    cam: { dist: 1.15, height: 1.2, cockpit: [1.45, 0.25], menu: 16 },
+  },
+  {
+    id: 'modelsplaid', name: 'Model S Plaid', tag: '三馬達旗艦', mass: 2200, paints: ALL5,
+    desc: 'Model S 三馬達性能版：加速與極速頂尖，附尾翼。',
+    tune: T({ accel: 17.5, vTop: 78, brake: 33, grip: 1.8, steer: 1.1, maxSteer: 0.53, yawResp: 11, eCap: 1.15, liftA: 31, climb: 10.5, hMax: 36,
+      liftDrain: 1.1, nitro: 13, nitroDrain: 1.1, airThrust: 8, airSteer: 1.05, tough: 1.15, wb: 3.0, hw: 0.82 }),
+    cam: { dist: 1.05, height: 1.0, cockpit: [1.12, 0.2] },
+  },
+  {
+    id: 'modelxplaid', name: 'Model X Plaid', tag: '三馬達休旅', mass: 2500, paints: ALL5,
+    desc: 'Model X 三馬達版：休旅身形但加速兇猛，飛行仍偏吃力。',
+    tune: T({ accel: 16.2, vTop: 72, brake: 31, grip: 1.6, steer: 1.02, maxSteer: 0.52, yawResp: 10, eCap: 1.15, liftA: 25, climb: 8.5, hMax: 30,
+      liftDrain: 1.3, nitro: 12.5, nitroDrain: 1.1, airThrust: 6.5, airSteer: 0.98, tough: 1.5, wb: 3.04, hw: 0.88 }),
+    cam: { dist: 1.12, height: 1.18, cockpit: [1.5, 0.2] },
+  },
+  {
+    id: 'cyberbeast', name: 'Cyberbeast', tag: '三馬達皮卡', mass: 3200, paints: ['steel'],
+    desc: 'Cybertruck 三馬達「野獸」版：加速更猛、更耐撞，仍飛得低。',
+    tune: T({ accel: 15.5, vTop: 64, brake: 29, grip: 1.5, steer: 0.98, maxSteer: 0.5, yawResp: 9, eCap: 1.25, liftA: 22, climb: 7.2, hMax: 26,
+      liftDrain: 1.45, nitro: 12, nitroDrain: 1.15, airThrust: 5.8, airSteer: 0.92, tough: 2.2, wb: 3.5, hw: 1.0 }),
+    cam: { dist: 1.2, height: 1.3, cockpit: [1.6, 0.1], menu: 17 },
+  },
+  {
+    id: 'robovan', name: 'Robovan', tag: '無人廂型車', mass: 2800, paints: ALL5,
+    desc: '低矮修長的無人廂型車：穩定、空間大、續航長，轉向偏鈍。',
+    tune: T({ accel: 9.5, vTop: 52, brake: 26, grip: 1.25, steer: 0.85, maxSteer: 0.48, yawResp: 7.5, eCap: 1.35, liftA: 20, climb: 6.5, hMax: 24,
+      liftDrain: 1.4, nitro: 8.5, nitroDrain: 1.2, airThrust: 4.5, airSteer: 0.8, tough: 1.7, wb: 3.8, hw: 0.95 }),
+    cam: { dist: 1.35, height: 1.35, cockpit: [1.7, 0.4], menu: 20 },
+  },
 ];
 export const DEFAULT_VEHICLE = 'roadster';
 export const vehicleById = (id) => VEHICLES.find((v) => v.id === id) || VEHICLES[0];
