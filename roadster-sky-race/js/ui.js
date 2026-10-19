@@ -2,6 +2,7 @@
 import { ACTIONS, DEFAULT_BINDINGS, bindingText, buttonNames, hintsFor, PROFILES } from './input.js';
 import { paintsOf } from './car.js';
 import { VEHICLES, DEFAULT_VEHICLE, vehicleById, statsOf, STAT_LABELS } from './vehicles.js';
+import { TRACKS, DEFAULT_TRACK, trackById } from './tracks.js';
 import { store } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -17,16 +18,17 @@ export function shortPadName(id) {
 export class UI {
   constructor(input, handlers) {
     this.input = input; this.h = handlers;
-    this.screens = { loading: $('s-loading'), start: $('s-start'), pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'), garage: $('s-garage') };
+    this.screens = { loading: $('s-loading'), start: $('s-start'), pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'), garage: $('s-garage'), tracks: $('s-tracks') };
     this.current = 'loading';
     this.stack = [];           // 返回用
     this.focusEl = null;
     this.learningRow = null;
     this.vehicleId = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+    this.trackId = trackById(store.get('track', DEFAULT_TRACK)).id;
     this.touchMode = store.get('touch', 'auto');
     this.mapRows = {};
     this.buildMapping();
-    this.buildGarage();
+    this.buildGarage(); this.buildTracks(); this.refreshTracks();
     this.wire();
     this.syncSettings();
   }
@@ -38,6 +40,7 @@ export class UI {
     if (name === 'mapping') this.refreshMapping();
     if (name === 'settings') this.syncSettings();
     if (name === 'garage') this.refreshGarage();
+    if (name === 'tracks') this.refreshTracks();
     this.setFocus(this.firstFocus());
   }
   hideAll() {
@@ -62,9 +65,11 @@ export class UI {
     const f = this.focusables();
     if (this.current === 'mapping') return f[0] || null;
     if (this.current === 'garage') return f.find((b) => b.dataset.veh === this.vehicleId) || f[0] || null;
+    if (this.current === 'tracks') return f.find((b) => b.dataset.track === this.trackId) || f[0] || null;
     return f.find((b) => b.classList.contains('primary')) || f[0] || null;
   }
   setFocus(el) {
+    // scroll garage / track cards into view when using gamepad
     if (this.focusEl) this.focusEl.classList.remove('focus');
     this.focusEl = el;
     if (el) { el.classList.add('focus'); el.scrollIntoView({ block: 'nearest' }); }
@@ -105,6 +110,7 @@ export class UI {
       if (b.dataset.inv != null) { this.input.setInvertSteer(b.dataset.inv === '1'); this.syncSettings(); return; }
       if (b.dataset.pm) { this.input.setPadMode(b.dataset.pm); this.syncSettings(); return; }
       if (b.dataset.veh) { this.selectVehicle(b.dataset.veh); return; }
+      if (b.dataset.track) { this.selectTrack(b.dataset.track); return; }
       if (b.dataset.paintk) { this.setPaint(b.dataset.paintk); return; }
       if (b.dataset.q) { this.h.onQuality(b.dataset.q); return; }
       if (b.dataset.v != null) { this.h.onVolume(parseFloat(b.dataset.v)); this.syncSettings(); return; }
@@ -119,6 +125,7 @@ export class UI {
         case 'mapping': this.show('mapping', true); break;
         case 'settings': this.show('settings', true); break;
         case 'garage': this.show('garage', true); break;
+        case 'tracks': this.show('tracks', true); break;
         case 'fullscreen': this.h.onFullscreen(); break;
         case 'back': this.back(); break;
         case 'calibrate': this.input.calibrate(); this.updateCalState(); break;
@@ -150,6 +157,37 @@ export class UI {
       b.innerHTML = `<b>${v.name}</b><small>${v.tag}</small>`;
       host.appendChild(b);
     }
+  }
+  buildTracks() {
+    const host = $('tlist'); if (!host) return; host.innerHTML = '';
+    for (const t of TRACKS) {
+      const b = document.createElement('button');
+      b.className = 'btn tbtn'; b.dataset.track = t.id;
+      b.innerHTML = `<b>${t.name}</b><small>${t.tag}</small>`;
+      host.appendChild(b);
+    }
+  }
+  get track() { return trackById(this.trackId); }
+  selectTrack(id) {
+    const t = trackById(id);
+    if (t.id === this.trackId) { this.refreshTracks(); this.setFocus(document.querySelector(`#tlist [data-track="${t.id}"]`)); return; }
+    this.trackId = t.id;
+    store.set('track', t.id);
+    if (this.h.onTrack) this.h.onTrack(t.id);
+    else { location.reload(); }
+  }
+  refreshTracks() {
+    const t = this.track;
+    for (const b of document.querySelectorAll('#tlist [data-track]')) b.classList.toggle('sel', b.dataset.track === t.id);
+    if ($('tname')) $('tname').textContent = t.name;
+    if ($('ttag')) $('ttag').textContent = t.tag;
+    if ($('tdesc')) $('tdesc').textContent = t.desc;
+    const best = store.get('best.' + t.id, store.get('best', null));
+    if ($('tbest')) {
+      const fmt = (x) => { if (x == null) return '—'; const m = Math.floor(x / 60), s = (x % 60).toFixed(3); return m + ':' + s.padStart(6, '0'); };
+      $('tbest').textContent = '最佳單圈：' + fmt(best);
+    }
+    const st = $('startTrack'); if (st) st.textContent = `目前賽道：${t.name}（${t.tag}）`;
   }
   get vehicle() { return vehicleById(this.vehicleId); }
   selectVehicle(id) {

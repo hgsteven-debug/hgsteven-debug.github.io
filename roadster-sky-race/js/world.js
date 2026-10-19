@@ -1,6 +1,6 @@
 // 場景：天空、光線、地形、道路、護欄、岩石、能量環
 import * as THREE from 'three';
-import { Track, ROAD_HALF, ROAD_HALF_K, RAIL_L, PIT_DEPTH } from './track.js';
+import { Track, ROAD_HALF, ROAD_HALF_K, RAIL_L, PIT_DEPTH, DEFAULT_TRACK } from './track.js';
 import { clamp, lerp, smoothstep, mulberry32, fbm2, noise2 } from './util.js';
 import * as TX from './textures.js';
 
@@ -16,28 +16,43 @@ const nextFrame = () => new Promise((r) => setTimeout(r, 0));
 
 const SKY_VERT = `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
 const SKY_FRAG = `
-varying vec3 vDir; uniform vec3 sunDir;
+varying vec3 vDir; uniform vec3 sunDir; uniform float skyKind;
 void main(){
   vec3 d = normalize(vDir); float h = d.y;
-  vec3 horizon = vec3(0.80,0.66,0.52), mid = vec3(0.34,0.50,0.78), zenith = vec3(0.07,0.20,0.55);
+  vec3 horizon, mid, zenith;
+  if (skyKind > 1.5) { // night
+    horizon = vec3(0.10,0.12,0.22); mid = vec3(0.04,0.06,0.16); zenith = vec3(0.01,0.02,0.08);
+  } else if (skyKind > 0.5) { // sunset
+    horizon = vec3(0.95,0.45,0.28); mid = vec3(0.55,0.28,0.45); zenith = vec3(0.12,0.14,0.38);
+  } else {
+    horizon = vec3(0.80,0.66,0.52); mid = vec3(0.34,0.50,0.78); zenith = vec3(0.07,0.20,0.55);
+  }
   float t = clamp(h,0.0,1.0);
   vec3 col = mix(horizon, mid, smoothstep(0.0,0.22,t));
   col = mix(col, zenith, smoothstep(0.18,0.85,t));
-  col = mix(col, vec3(0.42,0.32,0.22), smoothstep(0.0,-0.25,h));
+  if (skyKind < 0.5) col = mix(col, vec3(0.42,0.32,0.22), smoothstep(0.0,-0.25,h));
   float sd = max(dot(d,sunDir),0.0);
-  col += vec3(1.0,0.62,0.30)*pow(sd,6.0)*0.35;
-  col += vec3(1.0,0.82,0.55)*pow(sd,40.0)*0.8;
-  col += vec3(1.0,0.95,0.85)*smoothstep(0.9993,0.9998,sd)*12.0;
+  if (skyKind > 1.5) {
+    col += vec3(0.55,0.65,1.0)*pow(sd,8.0)*0.25;
+    // 簡易星點
+    float stars = step(0.997, fract(sin(dot(d.xy*40.0,vec2(12.9898,78.233)))*43758.5453));
+    col += vec3(stars)*smoothstep(0.1,0.5,h)*0.8;
+  } else {
+    col += vec3(1.0,0.62,0.30)*pow(sd,6.0)*0.35;
+    col += vec3(1.0,0.82,0.55)*pow(sd,40.0)*0.8;
+    col += vec3(1.0,0.95,0.85)*smoothstep(0.9993,0.9998,sd)*12.0;
+  }
   gl_FragColor = vec4(col,1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
 
 export class World {
-  constructor(renderer, scene, quality) {
+  constructor(renderer, scene, quality, trackId = DEFAULT_TRACK) {
     this.renderer = renderer; this.scene = scene; this.q = QUALITY[quality] || QUALITY.med;
     this.qname = quality;
-    this.track = new Track();
+    this.track = new Track(trackId);
+    this.theme = this.track.theme;
     this.rings = [];
     this.aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     this.tmpV = new THREE.Vector3();
@@ -46,11 +61,12 @@ export class World {
   async build(progress = () => {}) {
     const steps = [
       ['天空與光線', () => this.buildSky()],
-      ['沙漠地形', () => this.buildTerrain()],
+      ['地形', () => this.buildTerrain()],
       ['賽道路面', () => this.buildRoad()],
       ['護欄與路標', () => this.buildRails()],
       ['岩石與山脈', () => this.buildScenery()],
       ['能量環', () => this.buildRings()],
+      ['特色結構', () => this.buildExtras()],
     ];
     for (let i = 0; i < steps.length; i++) {
       progress((i / steps.length), steps[i][0]);
@@ -70,7 +86,7 @@ export class World {
     const geo = new THREE.SphereGeometry(50, 32, 16);
     const mat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { sunDir: { value: SUN_DIR.clone() } },
+      uniforms: { sunDir: { value: new THREE.Vector3(...this.theme.sun).normalize() }, skyKind: { value: this.theme.skyKind === 'night' ? 2.0 : (this.theme.skyKind === 'sunset' ? 1.0 : 0.0) } },
     });
     const sky = new THREE.Mesh(geo, mat);
     sky.renderOrder = -10; sky.frustumCulled = false;
@@ -83,10 +99,14 @@ export class World {
     scene.environment = this.envRT.texture;
     pm.dispose();
     scene.add(sky);
-    scene.fog = new THREE.FogExp2(HAZE.clone(), 0.00042);
+    const th = this.theme;
+    const haze = new THREE.Color().setRGB(th.fog[0], th.fog[1], th.fog[2], THREE.LinearSRGBColorSpace);
+    scene.fog = new THREE.FogExp2(haze, th.fogDen);
+    const sunDir = new THREE.Vector3(...th.sun).normalize();
+    this.sunDir = sunDir;
 
-    const sun = new THREE.DirectionalLight(0xffe2bd, 3.2);
-    sun.position.copy(SUN_DIR).multiplyScalar(150);
+    const sun = new THREE.DirectionalLight(th.sunCol, th.sunInt);
+    sun.position.copy(sunDir).multiplyScalar(150);
     if (this.q.shadows) {
       sun.castShadow = true;
       sun.shadow.mapSize.set(this.q.shadows, this.q.shadows);
@@ -98,7 +118,7 @@ export class World {
     }
     scene.add(sun); scene.add(sun.target);
     this.sun = sun;
-    const hemi = new THREE.HemisphereLight(0xbcd2ff, 0x8a6a48, 0.45);
+    const hemi = new THREE.HemisphereLight(th.hemiSky, th.hemiGnd, th.hemiInt);
     scene.add(hemi);
 
     // 遠方山脊環
@@ -112,7 +132,7 @@ export class World {
       pos.setY(i, top ? h : -150);
     }
     ring.computeVertexNormals();
-    const rm = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x6a5f66), side: THREE.BackSide, fog: true });
+    const rm = new THREE.MeshBasicMaterial({ color: new THREE.Color(th.horizon), side: THREE.BackSide, fog: true });
     this.horizon = new THREE.Mesh(ring, rm);
     this.horizon.frustumCulled = false;
     const b = this.track.bounds;
@@ -147,7 +167,8 @@ export class World {
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     geo.computeVertexNormals();
     const nrm = geo.attributes.normal;
-    const sand = new THREE.Color(0xd2a96a), sand2 = new THREE.Color(0xb98a52), rock = new THREE.Color(0x7a5f4a), rock2 = new THREE.Color(0x4f4039), dust = new THREE.Color(0xe0c08a);
+    const tc = this.theme.sand;
+    const sand = new THREE.Color(tc[0]), sand2 = new THREE.Color(tc[1]), rock = new THREE.Color(tc[2]), rock2 = new THREE.Color(tc[3]), dust = new THREE.Color(tc[4]);
     const c = new THREE.Color();
     for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
       const k = j * nx + i, x = pos[k * 3], z = pos[k * 3 + 2], h = hs[k];
@@ -205,7 +226,7 @@ export class World {
 
     // 路側裙邊 + 缺口斷面
     const sp = [], sc = [], si = [];
-    const gray = new THREE.Color(0x8d8a86), dark = new THREE.Color(0x5a5048);
+    const gray = new THREE.Color(this.theme.road[0]), dark = new THREE.Color(this.theme.road[1]);
     const addQuad = (p0, p1, p2, p3, color) => {
       const o = sp.length / 3;
       for (const p of [p0, p1, p2, p3]) { sp.push(p.x, p.y, p.z); sc.push(color.r, color.g, color.b); }
@@ -331,7 +352,7 @@ export class World {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     geo.setIndex(idx); geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ color: 0xc8ccd0, vertexColors: true, roughness: 0.35, metalness: 0.85, side: THREE.DoubleSide, envMapIntensity: 0.9 });
+    const mat = new THREE.MeshStandardMaterial({ color: this.theme.rail, vertexColors: true, roughness: 0.35, metalness: 0.85, side: THREE.DoubleSide, envMapIntensity: 0.9 });
     const rail = new THREE.Mesh(geo, mat);
     rail.castShadow = !!this.q.shadows;
     this.scene.add(rail);
@@ -344,8 +365,8 @@ export class World {
       list.push([i, side]);
     }
     const pg = new THREE.BoxGeometry(0.14, 1.0, 0.14);
-    const posts = new THREE.InstancedMesh(pg, new THREE.MeshStandardMaterial({ color: 0x555a60, roughness: 0.6, metalness: 0.6 }), list.length);
-    const refl = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.12, 0.05), new THREE.MeshBasicMaterial({ color: 0xff7a1a, toneMapped: false }), Math.ceil(list.length / 3));
+    const posts = new THREE.InstancedMesh(pg, new THREE.MeshStandardMaterial({ color: this.theme.post, roughness: 0.6, metalness: 0.6 }), list.length);
+    const refl = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.12, 0.05), new THREE.MeshBasicMaterial({ color: this.theme.refl, toneMapped: false }), Math.ceil(list.length / 3));
     const d = new THREE.Object3D();
     let ri = 0;
     list.forEach(([i, side], n) => {
@@ -375,7 +396,7 @@ export class World {
       p.setXYZ(i, x * k, y * k * 0.85, z * k);
     }
     geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0, flatShading: false });
+    const mat = new THREE.MeshStandardMaterial({ color: this.theme.rock, roughness: 0.95, metalness: 0, flatShading: false });
     const count = this.q.rocks;
     const mesh = new THREE.InstancedMesh(geo, mat, count);
     const d = new THREE.Object3D(), col = new THREE.Color();
@@ -439,8 +460,9 @@ export class World {
     }
     this.rings = list;
     const tor = new THREE.TorusGeometry(1, 0.075, 8, 32);
-    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.2, 1.6, 2.4), toneMapped: false });
-    const halo = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.1, 0.6, 1.0), transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const rc = this.theme.ring;
+    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(rc[0], rc[1], rc[2]), toneMapped: false });
+    const halo = new THREE.MeshBasicMaterial({ color: new THREE.Color(rc[0]*0.5, rc[1]*0.4, rc[2]*0.4), transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
     this.ringMesh = new THREE.InstancedMesh(tor, mat, list.length);
     this.haloMesh = new THREE.InstancedMesh(new THREE.TorusGeometry(1, 0.2, 6, 32), halo, list.length);
     this.ringMesh.frustumCulled = false; this.haloMesh.frustumCulled = false;
@@ -452,6 +474,61 @@ export class World {
   }
 
   resetRings() { for (const r of this.rings) r.on = true; }
+
+
+  // 海岸橋樑／隧道、雪山夜燈等主題裝飾（低面數）
+  buildExtras() {
+    const th = this.theme, tr = this.track, def = tr.def;
+    if (!def) return;
+    const group = new THREE.Group();
+    const wrap = tr.wrap;
+    if (def.bridges) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0x6a7580, metalness: 0.7, roughness: 0.4 });
+      for (const f of def.bridges) {
+        const i = wrap(Math.round(f * tr.N));
+        const len = 48, segs = 8;
+        for (let k = -segs; k <= segs; k++) {
+          const j = wrap(i + k * 2);
+          const deck = new THREE.Mesh(new THREE.BoxGeometry(ROAD_HALF_K * 2.2, 0.5, tr.ds * 2.2), mat);
+          deck.position.set(tr.px[j], tr.py[j] - 0.8, tr.pz[j]);
+          deck.lookAt(tr.px[wrap(j+1)], tr.py[wrap(j+1)] - 0.8, tr.pz[wrap(j+1)]);
+          group.add(deck);
+          if (k % 2 === 0) {
+            for (const side of [-1, 1]) {
+              const p = new THREE.Mesh(new THREE.BoxGeometry(0.35, Math.max(4, tr.py[j] * 0.15 + 6), 0.35), mat);
+              p.position.set(tr.px[j] + tr.rx[j] * side * ROAD_HALF_K * 1.05, tr.py[j] - Math.max(2, tr.py[j] * 0.08 + 3), tr.pz[j] + tr.rz[j] * side * ROAD_HALF_K * 1.05);
+              group.add(p);
+            }
+          }
+        }
+      }
+    }
+    if (def.tunnel != null) {
+      const i = wrap(Math.round(def.tunnel * tr.N));
+      const mat = new THREE.MeshStandardMaterial({ color: 0x2a3038, roughness: 0.9, side: THREE.DoubleSide });
+      for (let k = -18; k <= 18; k++) {
+        const j = wrap(i + k);
+        const arch = new THREE.Mesh(new THREE.CylinderGeometry(ROAD_HALF_K + 2.5, ROAD_HALF_K + 2.5, tr.ds * 1.1, 12, 1, true, 0, Math.PI), mat);
+        arch.rotation.z = Math.PI / 2;
+        arch.position.set(tr.px[j], tr.py[j] + 1.2, tr.pz[j]);
+        arch.lookAt(tr.px[wrap(j+1)], tr.py[wrap(j+1)] + 1.2, tr.pz[wrap(j+1)]);
+        group.add(arch);
+      }
+    }
+    if (th.skyKind === 'night') {
+      // 路邊微光燈
+      const lamp = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.4, 0.7), toneMapped: false });
+      for (let i = 0; i < tr.N; i += 28) {
+        for (const side of [-1, 1]) {
+          const m = new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 4), lamp);
+          m.position.set(tr.px[i] + tr.rx[i] * side * (ROAD_HALF_K + 1.2), tr.py[i] + 3.2, tr.pz[i] + tr.rz[i] * side * (ROAD_HALF_K + 1.2));
+          group.add(m);
+        }
+      }
+    }
+    this.scene.add(group);
+    this.extras = group;
+  }
 
   updateRings(dt, time) {
     const d = this._rd;
