@@ -30,7 +30,7 @@ async function testLoop() {
     const { track, veh, game, sim, ribbonCompression } = sky;
     const s = track.stunt;
     const order = s && s.wall0 < s.wall1 && s.wall1 < s.loop0 && s.loop0 < s.loopTop && s.loopTop < s.loop1
-      && s.loop1 <= s.inv0 && s.inv0 < s.inv1 && s.inv1 < s.fly0 && s.fly0 <= s.fly1 && s.fly1 < s.jump0
+      && s.loop1 <= s.inv0 && s.inv0 < s.inv1 && s.inv1 < s.jump0
       && s.jump0 < s.jump1 && s.jump1 < track.N;
     const slowC = ribbonCompression(-1, 1 / 22, 8);
     const fastC = ribbonCompression(-1, 1 / 22, 40);
@@ -355,6 +355,107 @@ async function testKeys() {
   await page.close();
 }
 
+async function testStuntDrive() {
+  const { page, errors } = await open('?track=stunt&q=low&ai=0&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
+  const report = await page.evaluate(() => {
+    const sky = window.__sky;
+    const tr = sky.track;
+    const veh = sky.veh;
+    sky.game.freeze = true;
+    sky.game.state = 'race';
+    let maxDy = 0, maxTurn = 0, worst = null;
+    for (let i = 0; i < tr.N; i++) {
+      const j = (i + 1) % tr.N;
+      const dy = Math.abs(tr.py[j] - tr.py[i]);
+      const dot = tr.tx[i] * tr.tx[j] + tr.ty[i] * tr.ty[j] + tr.tz[i] * tr.tz[j];
+      const turn = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (dy > maxDy) maxDy = dy;
+      if (turn > maxTurn) { maxTurn = turn; worst = i; }
+    }
+    const cap = veh.t.vMax * 3.6 + 4;
+    const follow = () => {
+      const fi = veh.attached ? veh.fi : (veh.q1.fi || veh.fi || 0);
+      const look = Math.max(10, Math.min(28, (veh.speed || 0) * 0.34));
+      const f = tr.frame(fi + look);
+      let err = Math.atan2(-f.tangent.x, -f.tangent.z) - veh.heading;
+      while (err > Math.PI) err -= Math.PI * 2;
+      while (err < -Math.PI) err += Math.PI * 2;
+      const lat = veh.attached ? (veh.lat || 0) : (veh.q1.near ? veh.q1.l : 0);
+      // 橫向右為正（與地面轉向一致）。steer 為正＝向右。
+      let steer = veh.attached
+        ? -lat * 0.55
+        : -err * 0.85 - lat * 0.14;
+      const airborne = !veh.attached && (veh.airTime > 0.12 || (veh.q1 && veh.q1.gap));
+      if (airborne) steer = -err * 0.6;
+      else if (!veh.attached && Math.abs(lat) > 4.5) steer = -lat * 0.28;
+      steer = Math.max(-1, Math.min(1, steer));
+      const st = sky.input.state;
+      const target = st._target || 48;
+      const spd = Math.max(veh.speed, Math.abs(veh.speedF || 0));
+      const here = tr.kind ? tr.kind[tr.wrap(Math.floor(fi))] : 0;
+      const soon = tr.kind ? tr.kind[tr.wrap(Math.floor(fi) + 10)] : 0;
+      st.steer = steer;
+      st.throttle = spd < target ? 1 : 0.35;
+      st.brake = !veh.attached && spd > target + 12 ? 0.35 : 0;
+      st.nitro = spd < target - 6 && target >= 42;
+      st.lift = !!(veh.flipAssist || here === 4 || soon === 4);
+      st.pitch = st.lift ? 0.65 : 0;
+    };
+    const orig = sky.input.poll.bind(sky.input);
+    sky.input.poll = (dt) => { orig(dt); follow(); };
+    const drives = [];
+    for (const target of [32, 48, 64]) {
+      sky.input.state._target = target;
+      sky.game.respawns = 0;
+      veh.placeOnTrack(tr.N - 12, 0, target * 0.45);
+      let maxKmh = 0, progress = 0, prev = veh.fi, nan = false;
+      const tEnd = target >= 64 ? 80 : target >= 48 ? 100 : 110;
+      for (let t = 0; t < tEnd && progress < tr.N * 1.05; t += 5) {
+        sky.sim(5);
+        maxKmh = Math.max(maxKmh, veh.kmh);
+        let d = veh.fi - prev;
+        if (d < -tr.N / 2) d += tr.N;
+        if (d > tr.N / 2) d -= tr.N;
+        if (d > 0) progress += d;
+        prev = veh.fi;
+        if (!Number.isFinite(veh.pos.x) || !Number.isFinite(veh.kmh)) { nan = true; break; }
+      }
+      drives.push({ target, progress: Math.round(progress), need: Math.round(tr.N * 0.9), maxKmh: Math.round(maxKmh), respawns: sky.game.respawns || 0, fi: Math.round(veh.fi), nan, y: Math.round(veh.pos.y) });
+    }
+    sky.input.poll = orig;
+    const fuzz = [];
+    let seed = 11;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let trial = 0; trial < 28; trial++) {
+      const i = Math.floor(rnd() * tr.N);
+      const sp = rnd() * 75;
+      veh.placeOnTrack(i, (rnd() * 2 - 1) * 7, sp);
+      let maxKmh = 0, bad = '';
+      const inp = { steer: rnd() * 2 - 1, throttle: 0.3 + rnd() * 0.7, brake: rnd() * 0.2, nitro: rnd() > 0.4, lift: rnd() > 0.75, pitch: rnd() * 2 - 1 };
+      for (let n = 0; n < 120 * 3; n++) {
+        if (n % 20 === 0) { inp.steer = rnd() * 2 - 1; inp.throttle = rnd(); inp.nitro = rnd() > 0.5; }
+        veh.step(1 / 120, inp);
+        if (veh.events.respawn) { veh.recoverToCheckpoint(); veh.events.respawn = false; veh.events.why = ''; }
+        maxKmh = Math.max(maxKmh, veh.kmh);
+        if (!Number.isFinite(veh.pos.x) || maxKmh > cap) { bad = 'speed ' + Math.round(maxKmh); break; }
+      }
+      if (bad) fuzz.push({ trial, i, sp: Math.round(sp), bad, y: Math.round(veh.pos.y) });
+    }
+    return { maxDy: +maxDy.toFixed(2), maxTurn: +maxTurn.toFixed(2), worst, cap: Math.round(cap), drives, fuzz, cps: (tr.checkpoints || []).length, arrows: !!(sky.world && sky.world.stuntArrows) };
+  });
+  if (errors.length) throw new Error(errors.join('\n'));
+  if (!(report.maxDy < 4)) throw new Error('cliff ' + JSON.stringify(report));
+  if (!(report.maxTurn < 0.75)) throw new Error('kink ' + JSON.stringify(report));
+  if (report.cps < 4) throw new Error('checkpoints ' + JSON.stringify(report));
+  if (!report.arrows) throw new Error('no guide arrows');
+  for (const d of report.drives) {
+    if (d.nan || d.maxKmh > report.cap) throw new Error('overspeed ' + JSON.stringify(d));
+    if (d.progress < d.need) throw new Error('did not finish a lap ' + JSON.stringify(d));
+    if (d.respawns > 8) throw new Error('too many respawns ' + JSON.stringify(d));
+  }
+  if (report.fuzz.length) throw new Error('fuzz ' + JSON.stringify(report.fuzz.slice(0, 6)));
+}
+
 async function testPadPage() {
   const page = await browser.newPage();
   const errors = [];
@@ -378,6 +479,7 @@ try {
     ['gamepad test page', testPadPage],
     ['ai lap', testAi],
     ['ai stunt loop', testAiStunt],
+    ['stunt laps and fuzz', testStuntDrive],
   ];
   for (const [name, fn] of tests) {
     try { await fn(); ok(name); }

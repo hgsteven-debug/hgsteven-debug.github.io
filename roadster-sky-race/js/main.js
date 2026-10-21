@@ -820,7 +820,10 @@ function nearestGap(v) {
 }
 function respawnRacer(r, why) {
   const v = r ? r.veh : veh;
-  if (!track.gaps.length) { v.placeOnTrack(track.wrap(track.N - 10), r ? r.lat0 : 0, 20); }
+  const msg = (v.events && v.events.why) || why;
+  if (v.events) v.events.why = '';
+  if (track.checkpoints && track.checkpoints.length && v.recoverToCheckpoint) v.recoverToCheckpoint();
+  else if (!track.gaps.length) v.placeOnTrack(track.wrap(track.N - 10), r ? r.lat0 : 0, 20);
   else {
     const g = nearestGap(v);
     v.placeOnTrack(track.wrap(g.g0 - track.rampRows - 32), r ? r.lat0 : 0, 24);
@@ -830,7 +833,7 @@ function respawnRacer(r, why) {
     game.respawns = (game.respawns || 0) + 1;
     hud.flash();
     game.camSnap = true; game.camYaw = v.heading;
-    if (why) hud.toast(why, 2200);
+    if (msg) hud.toast(msg, 2200);
   } else if (r.cam) { r.cam.snap = true; r.cam.yaw = v.heading; }
 }
 function respawn(why) { respawnRacer(race ? race.racers[0] : null, why); }

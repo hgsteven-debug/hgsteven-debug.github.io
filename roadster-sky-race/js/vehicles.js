@@ -133,6 +133,14 @@ export function fullTune(t) {
   const o = { ...t };
   o.vRef = o.vTop * 1.43;                                                        // 推力隨速度線性衰減到 0 的速度
   o.drag = Math.max(1e-5, (o.accel * (1 - o.vTop / o.vRef) - 0.35) / (o.vTop * o.vTop)); // 令 vTop 為推力 = 阻力（含 0.35 滾動阻力）的平衡點
+  // 平路全油門加氮氣的平衡速度。下坡與迴圈不得超過這個速度。
+  let lo = o.vTop, hi = o.vRef * 1.35;
+  for (let i = 0; i < 24; i++) {
+    const v = (lo + hi) / 2;
+    const a = o.accel * Math.max(0, 1 - v / o.vRef) + o.nitro * Math.max(0, 1 - v / (o.vRef * 1.35)) - o.drag * v * v;
+    if (a > 0) lo = v; else hi = v;
+  }
+  o.vMax = lo;
   return o;
 }
 

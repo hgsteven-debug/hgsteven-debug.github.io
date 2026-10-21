@@ -29,7 +29,7 @@ export class Vehicle {
     this.grounded = true;
     this.thrusting = false;
     this.nitroOn = false;
-    this.events = { impact: 0, wall: 0, respawn: false, ring: false, offroad: false };
+    this.events = { impact: 0, wall: 0, respawn: false, ring: false, offroad: false, why: '' };
     this.accel = 0; this.latAccel = 0; this.speedF = 0;
     this.thrust = 0; this.lift = 0; this.braking = false;
     this.groundY = 0; this.airTime = 0;
@@ -47,6 +47,49 @@ export class Vehicle {
     this.sawCeiling = false;
     this.sawInvert = false;
     this._jumpArmed = false;
+    this.lastCp = null;
+    this._safeT = 0;
+    this._trapT = 0;
+    this._trapDist = 0;
+    this._oobT = 0;
+    this._lip = 0;
+  }
+
+  _frameSlot(name) {
+    return this[name] || (this[name] = {
+      pos: new THREE.Vector3(), tangent: new THREE.Vector3(), normal: new THREE.Vector3(), right: new THREE.Vector3(),
+    });
+  }
+
+  _limitSpeed() {
+    const cap = (this.t && this.t.vMax) || 90;
+    let sp = this.vel.length();
+    if (!Number.isFinite(sp)) { this.vel.set(0, 0, 0); sp = 0; }
+    else if (sp > cap) this.vel.multiplyScalar(cap / sp);
+    if (!Number.isFinite(this.speedF)) this.speedF = 0;
+    else if (this.speedF > cap) this.speedF = cap;
+    else if (this.speedF < -cap * 0.4) this.speedF = -cap * 0.4;
+  }
+
+  _checkpointBehind(fi) {
+    const cps = this.tr.checkpoints;
+    const N = this.tr.N;
+    const at = this.tr.wrap(Math.round(fi || 0));
+    if (!cps || !cps.length) return at;
+    let best = cps[0], bestD = 1e9;
+    for (const c of cps) {
+      let d = at - c;
+      d = ((d % N) + N) % N;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
+
+  recoverToCheckpoint() {
+    const i = this.lastCp != null ? this.tr.wrap(this.lastCp) : this._checkpointBehind(this.fi);
+    this.placeOnTrack(i, 0, 22);
+    this.energy = Math.max(this.energy, 55);
+    this.lastCp = this._checkpointBehind(i);
   }
 
   // 套用車輛調校（見 vehicles.js）
@@ -66,6 +109,14 @@ export class Vehicle {
     this.speedF = speed;
     this.yawRate = 0; this.steerAngle = 0;
     this.airTime = 0; this.thrusting = false;
+    this._safeT = 1.6;
+    this._trapT = 0;
+    this._trapDist = 0;
+    this._oobT = 0;
+    this._lip = 0;
+    this._railT = 0;
+    this._onRail = false;
+    this._wx = null;
     if (tr.kind && tr.kind[i] && tr.kind[i] !== KIND.FLY) {
       this.attached = true;
       this.grounded = true;
@@ -85,8 +136,14 @@ export class Vehicle {
     this.probe();
     this.pos.y = this.groundY;
     this.snapOrientation();
+    // 出生點的索引以呼叫者指定的為準。探地用的是另一個查詢，舊的 q1 會把車指到別的路段。
+    this.fi = i;
+    this.q1.fi = i;
+    this.q1.i = i;
     this.q1.l = lat;
-    this.fi = this.q1.fi || i;
+    this.q1.al = Math.abs(lat);
+    this.q1.near = true;
+    this.q1.y = this.pos.y;
   }
 
   _blankFrame() {
@@ -109,7 +166,8 @@ export class Vehicle {
   _detachRibbon(fly) {
     const f = this.tr.frame(this.fi, this._blankFrame());
     this.attached = false;
-    this.detachCool = 1.05;
+    // 倒吊缺口只要離開路面就好；太長的冷卻會錯過緊接著的落地橋。
+    this.detachCool = fly ? 0.32 : 0.9;
     this.vel.copy(f.tangent).multiplyScalar(this.speedF || 0).addScaledVector(f.right, this.vlat || 0);
     this.n.copy(f.normal);
     if (fly || f.normal.y < 0.55) {
@@ -137,11 +195,33 @@ export class Vehicle {
     }
     return false;
   }
+  // 地面索引會跳過迴圈。沿著路面一格一格追上車子，避免索引卡在迴圈前面。
+  // 人已經開過特技、離入口很遠時，改接到前面的路面，不要永遠卡在入口。
+  _catchRibbon() {
+    const tr = this.tr;
+    let fi = this.fi || 0;
+    for (let n = 0; n < 10; n++) {
+      const a = tr.frame(fi, this._frameSlot('_fc'));
+      const b = tr.frame(fi + 1, this._frameSlot('_fd'));
+      if (this.pos.distanceTo(b.pos) + 0.2 < this.pos.distanceTo(a.pos)) fi = tr.wrapF(fi + 1);
+      else break;
+    }
+    const ground = this.q1.fi || fi;
+    if (this._skipsRibbon(fi, ground)) {
+      const mouth = tr.frame(fi, this._frameSlot('_fc'));
+      const g = tr.frame(ground, this._frameSlot('_fe'));
+      if (this.pos.distanceTo(mouth.pos) > 16 && this.pos.distanceTo(g.pos) < 10 && Math.abs(this.pos.y - g.pos.y) < 4) {
+        this.fi = ground;
+        return;
+      }
+    }
+    this.fi = fi;
+  }
   _tryAttach() {
     const tr = this.tr;
     if (!tr.hasRibbon || this.attached || this.detachCool > 0 || !tr.kind) return;
     const i = Math.round(this.fi || this.q1.fi || 0);
-    for (let k = 0; k <= 8; k++) {
+    for (let k = 0; k <= 14; k++) {
       const j = tr.wrap(i + k);
       const kind = tr.kind[j];
       if (!kind || kind === KIND.FLY) continue;
@@ -149,7 +229,7 @@ export class Vehicle {
       const dx = this.pos.x - f.pos.x, dy = this.pos.y - f.pos.y, dz = this.pos.z - f.pos.z;
       if (dx * dx + dy * dy + dz * dz > 280) continue;
       const sp = Math.max(this.speed, Math.abs(this.speedF || 0));
-      const stick = ribbonCompression(f.normal.y, f.kn, sp);
+      const stick = ribbonCompression(f.normal.y, clamp(f.kn, -0.05, 0.08), sp);
       // 吸地力不夠就不要貼上（否則高速墜落也會被倒吊段吸回去）
       if (stick < 1.2) continue;
       this.attached = true;
@@ -172,7 +252,11 @@ export class Vehicle {
     if (thr > 0.01) af += thr * t.accel * Math.max(0, 1 - Math.max(0, vf) / t.vRef);
     if (brk > 0.01 && vf > 0.5) af -= brk * t.brake;
     af -= t.drag * vf * Math.abs(vf);
-    af += -9.81 * f0.tangent.y;
+    const back = tr.frame(this.fi - 0.8, this._frameSlot('_fb'));
+    const ahead = tr.frame(this.fi + 0.8, this._frameSlot('_fa'));
+    const span = Math.max(0.5, ahead.pos.distanceTo(back.pos));
+    const slope = clamp((ahead.pos.y - back.pos.y) / span, -1, 1);
+    af += -G * slope;
     this.nitroOn = !!inp.nitro && this.energy > 0.5 && (thr > 0.1 || vf > 5);
     if (this.nitroOn) {
       af += t.nitro * Math.max(0, 1 - vf / (t.vRef * 1.35));
@@ -180,14 +264,20 @@ export class Vehicle {
     } else this.energy += 4 / t.eCap * dt;
     this.energy = clamp(this.energy, 0, ENERGY_MAX);
     vf += af * dt;
-    vlat += -9.81 * f0.right.y * dt;
-    const c = ribbonCompression(f0.normal.y, f0.kn, vf);
+    const cap = t.vMax || 90;
+    if (vf > cap) vf = cap;
+    else if (vf < -cap * 0.4) vf = -cap * 0.4;
+    vlat += -G * f0.right.y * dt;
+    // 鬆開搖桿時把車拉回路面中央，高牆才不會一路滑出去。
+    vlat += clamp(-(this.lat || 0) * 4.5, -14, 14) * dt;
+    const kn = clamp(f0.kn, -0.05, 0.08);
+    const c = ribbonCompression(f0.normal.y, kn, vf);
     const maxA = t.grip * Math.max(0.2, c);
     vlat += clamp(-vlat * 10, -maxA, maxA) * dt;
     const steer = inp.steer || 0;
     this.steerAngle = damp(this.steerAngle, steer * t.maxSteer, 14, dt);
-    // 和地面相同：steer 為正＝向右，橫向（左為正）因此減少
-    vlat = damp(vlat, -vf * Math.tan(this.steerAngle), 5, dt);
+    // 和地面相同：steer 為正＝向右，橫向（右為正）因此增加。
+    vlat = damp(vlat, vf * Math.tan(this.steerAngle), 5, dt);
     this.lat = clamp((this.lat || 0) + vlat * dt, -ROAD_HALF - 0.3, ROAD_HALF + 0.3);
     this.fi = tr.wrapF(this.fi + (vf * dt) / Math.max(0.3, f0.arc));
     const f = tr.frame(this.fi, f0);
@@ -209,9 +299,46 @@ export class Vehicle {
     if (f.kind === KIND.LOOP && f.normal.y < -0.45) this.sawCeiling = true;
     if (f.kind === KIND.INVERT && f.normal.y < -0.45) this.sawInvert = true;
     const offEdge = Math.abs(this.lat) > ROAD_HALF + 0.05;
-    const leave = c < 0.45 || offEdge || f.kind === KIND.FLY || f.kind === KIND.GROUND;
-    if (leave) this._detachRibbon(f.kind !== KIND.GROUND);
-    if (this.pos.y < -30) ev.respawn = true;
+    const ride = f.kind === KIND.WALL || f.kind === KIND.LOOP || f.kind === KIND.INVERT || f.kind === KIND.DECK;
+    const leave = c < 0.45 || offEdge || !ride;
+    if (leave) this._detachRibbon(f.kind === KIND.FLY);
+    this._limitSpeed();
+    this._noteTrap(dt);
+  }
+
+  _noteTrap(dt) {
+    const ev = this.events;
+    const fi = this.attached ? this.fi : (this.q1.fi || this.fi || 0);
+    if (this.tr.checkpoints && this.tr.checkpoints.length) this.lastCp = this._checkpointBehind(fi);
+    if (this._wx == null) { this._wx = this.pos.x; this._wy = this.pos.y; this._wz = this.pos.z; }
+    const moved = Math.hypot(this.pos.x - this._wx, this.pos.y - this._wy, this.pos.z - this._wz);
+    this._wx = this.pos.x; this._wy = this.pos.y; this._wz = this.pos.z;
+    if (this.pos.y < -30 || !Number.isFinite(this.pos.x)) { ev.respawn = true; if (!ev.why) ev.why = '偏離賽道，回到檢查點'; }
+    if (this._safeT > 0) { this._safeT -= dt; this._trapT = 0; this._trapDist = 0; this._oobT = 0; return; }
+    const away = !this.attached && ((this.q1.al || 0) > 34 || (this.q1.d || 0) > 40);
+    const oob = this.pos.y < -8 || away || !Number.isFinite(this.pos.y);
+    this._oobT = oob ? (this._oobT || 0) + dt : 0;
+    this._trapT = (this._trapT || 0) + dt;
+    this._trapDist = (this._trapDist || 0) + moved;
+    // 貼著護欄磨、油門踩著卻快不起來：約兩秒回到檢查點。停在路面中央不算。
+    const grinding = this._onRail && this.speed < 9 && this.thrust > 0.15 && !this.attached;
+    this._railT = grinding ? (this._railT || 0) + dt : 0;
+    if ((this._lip || 0) > 1.2 || this._oobT > 2 || this._railT > 2) {
+      ev.respawn = true;
+      ev.why = this._oobT > 2 && (this._lip || 0) <= 1.2 && this._railT <= 2 ? '偏離賽道，回到檢查點' : '卡住了，回到檢查點';
+    } else if (this._trapT >= 2) {
+      const pinned = this._trapDist < 2.2 && (
+        this.speed > 8 || (this._lip || 0) > 0.2 || (!this.onRoad && this.speed < 4)
+        || (this.airTime > 1.6 && !this.thrusting)
+        || (!this.attached && this.q1.near && this.q1.al > 16 && this.speed < 8)
+      );
+      if (pinned) {
+        ev.respawn = true;
+        ev.why = '卡住了，回到檢查點';
+      }
+      this._trapT = 0;
+      this._trapDist = 0;
+    }
   }
 
   snapOrientation() {
@@ -410,14 +537,17 @@ export class Vehicle {
     const n = this.n;
     const vn = this.vel.dot(n);
     const rise = gy - this.pos.y;
-    if (rise > 1.0 && this.pos.y < gy) {
-      // 撞上落地端斷面 / 垂直牆：彈回
+    const overGap = tr.isGapIdx(tr._q.fi);
+    if (!overGap && this.airTime < 0.35 && rise > 1.15 && this.pos.y < gy - 0.5) {
+      // 垂直斷面。只退回水平位置，不要把車身拉上斷面，也不要讓垂直速度一直累加。
       this.pos.x = px; this.pos.z = pz;
       this.vel.x *= -0.15; this.vel.z *= -0.15;
+      if (this.vel.y > 0) this.vel.y = 0;
       ev.wall = Math.max(ev.wall, sp0);
-      this.pos.y = Math.max(this.pos.y, gy - 1.0);
       this.grounded = false;
+      this._lip = (this._lip || 0) + dt;
     } else if (this.pos.y <= gy) {
+      this._lip = 0;
       this.pos.y = gy;
       if (this.flipAssist) {
         _up.set(0, 1, 0).applyQuaternion(this.q);
@@ -444,26 +574,38 @@ export class Vehicle {
     }
 
     // ---------- 護欄 ----------
+    // 只消掉向外的速度。舊版每一步至少扣 2% 車速，貼著護欄會穩定磨在約 20 km/h，方向盤打滿也離不開。
     const q2 = tr.query(this.pos.x, this.pos.z, this.q1);
+    this._onRail = false;
     if (q2.near && !q2.gap && tr.hasRail(q2.fi) && this.alt < 3.2) {
       const lim = ROAD_HALF_K - 0.4;
       if (q2.al > lim && Math.abs(this._prevL) <= lim + 0.5) {
-        const side = Math.sign(q2.l);
+        const side = Math.sign(q2.l) || 1;
         const ex = q2.al - lim;
         this.pos.x -= q2.rx * ex * side; this.pos.z -= q2.rz * ex * side;
         const vlat = (this.vel.x * q2.rx + this.vel.z * q2.rz) * side;
+        this._onRail = true;
         if (vlat > 0) {
-          this.vel.x -= q2.rx * side * vlat * 1.25; this.vel.z -= q2.rz * side * vlat * 1.25;
-          const hit = Math.hypot(this.vel.x, this.vel.z);
-          const loss = 1 - clamp(vlat / 40, 0.02, 0.35) / t.tough;
-          this.vel.x *= loss; this.vel.z *= loss;
-          ev.wall = Math.max(ev.wall, vlat * 1.5 + 4);
-          // 車頭向賽道方向略為修正
-          const ht = Math.atan2(-q2.tx, -q2.tz);
-          let dh = ht - this.heading;
-          while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
-          if (Math.abs(dh) > Math.PI / 2) dh = 0;
-          this.heading += dh * 0.18;
+          this.vel.x -= q2.rx * side * vlat; this.vel.z -= q2.rz * side * vlat;
+          if (vlat > 8) {
+            const loss = clamp((vlat - 8) / 55, 0, 0.22) / t.tough;
+            this.vel.x *= 1 - loss; this.vel.z *= 1 - loss;
+          }
+          ev.wall = Math.max(ev.wall, vlat * 1.2 + 2);
+          // 車手正在把車頭轉開時不要把航向鎖回護欄，否則方向盤打滿也離不開。
+          const into = (inp.steer || 0) * side;
+          if (into > -0.15 && vlat > 6) {
+            const ht = Math.atan2(-q2.tx, -q2.tz);
+            let dh = ht - this.heading;
+            while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
+            if (Math.abs(dh) <= Math.PI / 2) this.heading += dh * Math.min(0.1, dt * 1.5);
+          }
+        }
+        // into > 0 ＝往護欄裡打。往反方向打時補一點向內的速度，車身才不會被位置修正釘住。
+        const intoWall = (inp.steer || 0) * side;
+        if (intoWall < -0.2) {
+          const push = 9 * dt;
+          this.vel.x -= q2.rx * side * push; this.vel.z -= q2.rz * side * push;
         }
       }
     }
@@ -472,6 +614,7 @@ export class Vehicle {
     // 墜入峽谷
     if (q2.near && tr.pitEdge(q2.fi) > 0.5 && this.pos.y < q2.y - 7.5) {
       ev.respawn = true;
+      ev.why = '';
     }
     if (tr.obstacles && this.pos.y < 80) {
       for (let oi = 0; oi < tr.obstacles.length; oi++) {
@@ -488,7 +631,8 @@ export class Vehicle {
     }
     if (!this.attached) {
       const next = this.q1.fi || this.fi;
-      this.fi = this._skipsRibbon(this.fi, next) ? this.fi : next;
+      if (this._skipsRibbon(this.fi, next)) this._catchRibbon();
+      else this.fi = next;
     }
 
     // ---------- 姿態 ----------
@@ -511,6 +655,8 @@ export class Vehicle {
       this.q.slerp(_qT, 1 - Math.exp(-6 * dt));
     }
     if (this.tr.hasRibbon && !this.attached) this._tryAttach();
+    this._limitSpeed();
+    this._noteTrap(dt);
   }
 
   // 給手機對帳：房主把這包狀態傳出去，手機可整包貼回再重播尚未確認的輸入。
