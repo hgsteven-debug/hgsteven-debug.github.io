@@ -88,12 +88,15 @@ const AXIS_LIMIT = 1.05;            // 超過這個絕對值（例如十字鍵 h
 const CAL_TIME = 0.3;               // 連線後的校正取樣時間（秒）
 const median = (a) => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : 0; };
 
-// 每位玩家一個 InputManager（padIndex 指定使用哪支搖桿；null = 自動選擇）。
-// v1 只有 1 位玩家；雙人分割畫面時可建立第二個 new InputManager({ padIndex: 1 })。
+// 每位玩家一個 InputManager。padIndex 指定搖桿；null = 自動選擇。
+// keys:false 時不監聽鍵盤（給 P2，避免和 P1 搶按鍵）。exclusive 時不會改抓別支搖桿。
+// 目前畫面只接兩位本地玩家；同一個建構子之後可以再長到四位。
 export class InputManager {
-  constructor({ padIndex = null } = {}) {
+  constructor({ padIndex = null, keys = true, exclusive = false } = {}) {
     this.bindings = this.loadBindings();
     this.keys = new Set();
+    this.useKeyboard = keys !== false;
+    this.exclusive = !!exclusive;
     this.touch = { left: false, right: false, gas: false, brake: false, lift: false, nitro: false };
     this.padIndex = padIndex;       // null = 自動選擇
     this.pad = null;                // 目前使用的 Gamepad 物件
@@ -118,15 +121,37 @@ export class InputManager {
     this.onPadChange = () => {};
     this.anyPadInput = false;
     this.keyPressedQueue = new Set();
-    window.addEventListener('gamepadconnected', (e) => { this.refreshPads(); this.onPadChange(true, e.gamepad); });
-    window.addEventListener('gamepaddisconnected', (e) => { this.refreshPads(); this.onPadChange(false, e.gamepad); });
-    window.addEventListener('keydown', (e) => {
+    this._onGpOn = (e) => { this.refreshPads(); this.onPadChange(true, e.gamepad); };
+    this._onGpOff = (e) => { this.refreshPads(); this.onPadChange(false, e.gamepad); };
+    this._onKeyDown = (e) => {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
       if (!e.repeat) this.keyPressedQueue.add(e.code);
       this.keys.add(e.code);
-    });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => { this.keys.clear(); });
+    };
+    this._onKeyUp = (e) => this.keys.delete(e.code);
+    this._onBlur = () => { this.keys.clear(); };
+    window.addEventListener('gamepadconnected', this._onGpOn);
+    window.addEventListener('gamepaddisconnected', this._onGpOff);
+    if (this.useKeyboard) {
+      window.addEventListener('keydown', this._onKeyDown);
+      window.addEventListener('keyup', this._onKeyUp);
+      window.addEventListener('blur', this._onBlur);
+    }
+  }
+
+  dispose() {
+    window.removeEventListener('gamepadconnected', this._onGpOn);
+    window.removeEventListener('gamepaddisconnected', this._onGpOff);
+    window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('blur', this._onBlur);
+    this.keys.clear();
+    this.pad = null;
+  }
+
+  lockPad(index) {
+    this.padIndex = index;
+    this.exclusive = index != null;
   }
 
   _newCal() { return { done: false, t: 0, n: 0, samples: [], centre: {}, ignore: new Set(), hat: new Set(), still: {}, last: {}, heal: {} }; }
@@ -268,7 +293,7 @@ export class InputManager {
     const pads = this.getPads();
     let gp = null;
     if (this.padIndex != null) gp = pads.find((g) => g.index === this.padIndex) || null;
-    if (!gp) gp = pads.find((g) => g.mapping === 'standard') || pads[0] || null;
+    if (!gp && !this.exclusive) gp = pads.find((g) => g.mapping === 'standard') || pads[0] || null;
     this.pad = gp;
     const profile = gp ? resolveProfile(this.padMode, gp.id) : this.profile;
     const info = gp ? { connected: true, id: gp.id, mapping: gp.mapping, index: gp.index, profile: profile.id } : { connected: false, id: '', mapping: '', index: -1, profile: this.profile.id };

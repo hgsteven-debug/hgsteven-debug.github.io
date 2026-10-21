@@ -199,7 +199,7 @@ export class World {
     const loops = Math.round(tr.length / TX.ROAD_TEX_LEN);
     const vPerM = loops / tr.length;
     const pos = [], uv = [], idx = [];
-    const gapSkip = (i) => tr.isGapIdx(i + 0.5);
+    const gapSkip = (i) => (tr.hiddenRoad ? tr.hiddenRoad(i) : tr.isGapIdx(i + 0.5));
     const rowOf = new Int32Array(N + 1).fill(-1);
     let v = 0;
     for (let i = 0; i <= N; i++) {
@@ -218,7 +218,10 @@ export class World {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     const tex = TX.roadTexture(this.aniso);
-    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.82, metalness: 0.05, envMapIntensity: 0.5 });
+    const mat = new THREE.MeshStandardMaterial({
+      map: tex, roughness: 0.82, metalness: 0.05, envMapIntensity: 0.5,
+      side: tr.hasRibbon ? THREE.DoubleSide : THREE.FrontSide,
+    });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = !!this.q.shadows;
     this.road = mesh;
@@ -235,6 +238,7 @@ export class World {
     const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), D = new THREE.Vector3();
     for (let i = 0; i < N; i++) {
       if (gapSkip(i)) continue;
+      if (tr.kind && tr.kind[tr.wrap(i)] !== 0) continue;
       for (const side of [-1, 1]) {
         tr.surface(i, side * ROAD_HALF_K, A); tr.surface(i + 1, side * ROAD_HALF_K, B);
         C.copy(B).setY(B.y - 1.4); D.copy(A).setY(A.y - 1.4);
@@ -242,7 +246,8 @@ export class World {
       }
     }
     for (const g of tr.gaps) {
-      const i0 = g.g0, i1 = g.g0 + tr.gapLen;
+      const glen = tr.gapSpan ? tr.gapSpan(g) : tr.gapLen;
+      const i0 = g.g0, i1 = tr.wrap(g.g0 + glen);
       const depth = PIT_DEPTH + 1.6;
       // 缺口起點斷面（朝向缺口）
       tr.surface(i0, -ROAD_HALF_K, A); tr.surface(i0, ROAD_HALF_K, B);
@@ -336,7 +341,7 @@ export class World {
     };
     for (const side of [-1, 1]) {
       for (let i = 0; i < N; i++) {
-        if (tr.isGapIdx(i + 0.5)) continue;
+        if (!tr.hasRail(i + 0.5)) continue;
         const a = pts(i, side), b = pts(i + 1, side);
         // 三個面：內側、頂面、外側
         for (const [p, q] of [[0, 1], [1, 2], [2, 3]]) {
@@ -361,7 +366,7 @@ export class World {
     const spacing = 4;
     const list = [];
     for (const side of [-1, 1]) for (let i = 0; i < N; i += spacing) {
-      if (tr.isGapIdx(i + 0.5) || tr.isGapIdx(i + spacing - 0.5)) continue;
+      if (!tr.hasRail(i + 0.5) || !tr.hasRail(i + spacing - 0.5)) continue;
       list.push([i, side]);
     }
     const pg = new THREE.BoxGeometry(0.14, 1.0, 0.14);
@@ -440,19 +445,22 @@ export class World {
     const list = [];
     const nearGap = (i) => tr.gaps.some((g) => {
       let a = i - g.g0; if (a < -N / 2) a += N; if (a > N / 2) a -= N;
-      return a > -tr.rampRows - 40 && a < tr.gapLen + 30;
+      const span = tr.gapSpan ? tr.gapSpan(g) : tr.gapLen;
+      return a > -tr.rampRows - 40 && a < span + 30;
     });
     const GR = 14;
     for (let k = 0; k < GR; k++) {
       const i = Math.round((k + 0.35) * N / GR);
       if (nearGap(i)) continue;
+      if (tr.kind && tr.kind[tr.wrap(i)]) continue;
       const lat = (k % 2 ? 1 : -1) * 4.5;
       const p = tr.surface(i, lat); p.y += 1.9;
       list.push({ pos: p, T: new THREE.Vector3(tr.tx[i], 0, tr.tz[i]), R: 3.7, air: false, on: true, i });
     }
     for (const g of tr.gaps) {
       for (const f of [0.3, 0.72]) {
-        const i = g.g0 + Math.round(tr.gapLen * f);
+        const glen = tr.gapSpan ? tr.gapSpan(g) : tr.gapLen;
+        const i = g.g0 + Math.round(glen * f);
         const lipY = tr.py[tr.wrap(g.g0)];
         const p = tr.surface(i, 0); p.y = lipY + 5.5 + (f > 0.5 ? 0.5 : 0);
         list.push({ pos: p, T: new THREE.Vector3(tr.tx[tr.wrap(i)], 0, tr.tz[tr.wrap(i)]), R: 5.2, air: true, on: true, i: tr.wrap(i) });
@@ -513,6 +521,42 @@ export class World {
         arch.position.set(tr.px[j], tr.py[j] + 1.2, tr.pz[j]);
         arch.lookAt(tr.px[wrap(j+1)], tr.py[wrap(j+1)] + 1.2, tr.pz[wrap(j+1)]);
         group.add(arch);
+      }
+    }
+    if (tr.obstacles && tr.obstacles.length) {
+      for (const o of tr.obstacles) {
+        const len = o.len || 3.6, ht = o.ht || 1.15;
+        const body = new THREE.Mesh(
+          new THREE.BoxGeometry(len, ht, 1.65),
+          new THREE.MeshStandardMaterial({ color: o.color, roughness: 0.5, metalness: 0.25 }),
+        );
+        body.position.set(o.x, o.y + 0.1, o.z);
+        body.rotation.y = o.yaw || 0;
+        body.castShadow = !!this.q.shadows;
+        const cab = new THREE.Mesh(
+          new THREE.BoxGeometry(len * 0.4, 0.62, 1.45),
+          new THREE.MeshStandardMaterial({ color: 0x14181e, roughness: 0.25, metalness: 0.45 }),
+        );
+        cab.position.set(-len * 0.06, ht * 0.55, 0);
+        body.add(cab);
+        const wgeo = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 8);
+        const wmat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.85 });
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+          const w = new THREE.Mesh(wgeo, wmat);
+          w.rotation.z = Math.PI / 2;
+          w.position.set(sx * len * 0.32, -ht * 0.42, sz * 0.72);
+          body.add(w);
+        }
+        group.add(body);
+      }
+      if (tr.stunt) {
+        const deckMat = new THREE.MeshStandardMaterial({ color: 0x5a534c, roughness: 0.92 });
+        for (let i = tr.stunt.jump0; i <= tr.stunt.jump1; i += 2) {
+          const deck = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.28, Math.max(1.6, tr.ds * 2.1)), deckMat);
+          deck.position.set(tr.px[i], tr.py[i] + 0.15, tr.pz[i]);
+          deck.rotation.y = Math.atan2(tr.tx[i], tr.tz[i]);
+          group.add(deck);
+        }
       }
     }
     if (th.skyKind === 'night') {

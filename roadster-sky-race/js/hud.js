@@ -44,12 +44,12 @@ export class Hud {
     g.beginPath(); for (let i = 0; i <= tr.N; i += 4) { const [x, y] = P(i); i ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke();
     // 缺口
     g.strokeStyle = '#ff4a3a'; g.lineWidth = 5;
-    for (const gp of tr.gaps) { g.beginPath(); for (let k = 0; k <= tr.gapLen; k++) { const [x, y] = P(gp.g0 + k); k ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); }
+    for (const gp of tr.gaps) { const glen = tr.gapSpan ? tr.gapSpan(gp) : tr.gapLen; g.beginPath(); for (let k = 0; k <= glen; k++) { const [x, y] = P(gp.g0 + k); k ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); }
     // 起點
     const [sx, sy] = P(0); g.fillStyle = '#fff'; g.fillRect(sx - 6, sy - 2, 12, 4);
     this.mmBase = off;
   }
-  drawMinimap(veh) {
+  drawMinimap(veh, racers) {
     const c = this.el.mm.getContext('2d'), S = this.el.mm.width, sc = this.mmScale;
     c.clearRect(0, 0, S, S);
     c.drawImage(this.mmBase, 0, 0);
@@ -58,6 +58,15 @@ export class Hud {
       if (!r.on) continue;
       c.fillStyle = r.air ? '#9cf' : '#27d7ff';
       c.beginPath(); c.arc(r.pos.x * sc + this.mmOff.x, r.pos.z * sc + this.mmOff.y, 3, 0, 7); c.fill();
+    }
+    if (racers) {
+      for (const r of racers) {
+        if (!r || !r.veh || r.veh === veh) continue;
+        c.fillStyle = r.driver && r.driver.kind === 'local' ? '#7dffb0' : '#d0d4dc';
+        c.beginPath();
+        c.arc(r.veh.pos.x * sc + this.mmOff.x, r.veh.pos.z * sc + this.mmOff.y, 4, 0, 7);
+        c.fill();
+      }
     }
     const x = veh.pos.x * sc + this.mmOff.x, y = veh.pos.z * sc + this.mmOff.y;
     c.save(); c.translate(x, y); c.rotate(-veh.heading);

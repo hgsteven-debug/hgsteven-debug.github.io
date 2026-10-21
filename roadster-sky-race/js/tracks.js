@@ -36,6 +36,18 @@ export const TRACKS = [
     gaps: [0.25, 0.55, 0.82],
     height: { a: 14, b: 8, c: 4, pa: 3, pb: 5, pc: 7, oa: 1.1, ob: 0.7 },
   },
+  {
+    id: 'stunt', name: '迴旋試煉', tag: '賽道 4',
+    desc: '垂直高牆、完整倒吊迴圈、吸地倒走。倒吊段結束後會飛出去，按住推進器翻正再落地，接著飛越一排原創停車。速度不夠會掉下去。',
+    theme: 'stunt',
+    ctrl: [
+      [0, 0], [280, 20], [520, 140], [640, 380], [520, 640], [260, 820],
+      [0, 900], [-260, 800], [-500, 600], [-580, 360], [-420, 140], [-200, 10],
+    ],
+    gaps: [],
+    height: { a: 3.5, b: 2, c: 1, pa: 1, pb: 2, pc: 3, oa: 0.3, ob: 1.1 },
+    stunts: { wall: [0.07, 0.16], loop: 0.28, loopR: 22 },
+  },
 ];
 export const DEFAULT_TRACK = 'canyon';
 export const trackById = (id) => TRACKS.find((t) => t.id === id) || TRACKS[0];
@@ -81,5 +93,18 @@ export const THEMES = {
     rock: 0xb8c4d0,
     skyKind: 'night',
     ring: [0.4, 1.8, 2.8],
+  },
+  stunt: {
+    label: '迴旋黃昏',
+    fog: [0.55, 0.42, 0.48], fogDen: 0.00036,
+    sun: [-0.2, 0.28, 0.85], sunCol: 0xffb070, sunInt: 2.4,
+    hemiSky: 0xc8b0ff, hemiGnd: 0x4a4038, hemiInt: 0.5,
+    horizon: 0x3a3344,
+    sand: [0xb7a090, 0x8a7060, 0x5a5048, 0x3a3438, 0xd0b8a4],
+    road: [0x6a6670, 0x3a3840],
+    rail: 0xd8d0c8, post: 0x4a4450, refl: 0xffcc66,
+    rock: 0x7a6a62,
+    skyKind: 'sunset',
+    ring: [0.35, 1.5, 2.2],
   },
 };
