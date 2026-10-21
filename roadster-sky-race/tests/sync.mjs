@@ -103,6 +103,37 @@ catch (e) { bad('reconcile / slerp', e); }
 try { testBuffer(); ok('snapshot interpolation'); }
 catch (e) { bad('snapshot interpolation', e); }
 
+function testGuestSmooth() {
+  const vis = { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 0, ready: true };
+  const moved = sync.easeGuestPose(vis, { x: 4, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 10 }, 1 / 60);
+  assert(moved.step < 1.5 && moved.step > 0.2 && !moved.snapped, JSON.stringify(moved));
+  const far = sync.easeGuestPose({ x: 0, y: 0, z: 0, ready: true, qx: 0, qy: 0, qz: 0, qw: 1 }, { x: 40, y: 0, z: 0, qw: 1 }, 1 / 60);
+  assert(far.snapped && far.x === 40, JSON.stringify(far));
+  const road = { known: false, onRoad: true, since: 0, toastAt: 0 };
+  const still = sync.hostOffroadWarn(road, true, 1000);
+  assert(!still.warn, 'on road warned');
+  const early = sync.hostOffroadWarn(still.state, false, 1100);
+  assert(!early.warn, 'warned too soon');
+  const later = sync.hostOffroadWarn(early.state, false, 1700);
+  assert(later.warn, 'missed off-track warning');
+  const again = sync.hostOffroadWarn(later.state, false, 2000);
+  assert(!again.warn, 'repeated warning');
+  const back = sync.hostOffroadWarn(again.state, true, 2100);
+  assert(!back.warn && back.state.onRoad === true, JSON.stringify(back));
+  assert(sync.wantCssRotate({ type: 'portrait-primary', sw: 800, sh: 400, iw: 390, ih: 844 }, 'native') === true);
+  assert(sync.wantCssRotate({ type: 'portrait-primary', sw: 400, sh: 800, iw: 844, ih: 390 }, 'css') === false);
+  assert(sync.wantCssRotate({ type: 'landscape-primary', sw: 400, sh: 800, iw: 390, ih: 700 }, 'css') === false);
+  assert(sync.wantCssRotate({ type: '', sw: 844, sh: 430 }, 'native') === false, 'url bar jitter');
+  assert(sync.wantCssRotate({ type: '', sw: 390, sh: 760 }, 'css') === true);
+  assert(sync.wantCssRotate({ type: '', sw: 844, sh: 390 }, 'css') === false);
+  const packed = sync.packSelf({ x: 1.239, y: 2, z: 3, vx: 10.129, vy: 0, vz: 0, onRoad: false, speed: 12.3456, qw: 1 });
+  assert(packed.x === 1.24 && packed.speed === 12.35 && packed.onRoad === false, JSON.stringify(packed));
+  assert(JSON.stringify(packed).length < 400, 'self payload ' + JSON.stringify(packed).length);
+}
+
+try { testGuestSmooth(); ok('guest smooth / off-track / orientation'); }
+catch (e) { bad('guest smooth / off-track / orientation', e); }
+
 function testIceList() {
   const now = 1792669800000;
   const list = ice.iceServers(now);
@@ -306,30 +337,69 @@ try {
     await phone.page.bringToFront();
     const view = await phone.page.evaluate(() => {
       const sky = window.__sky;
-      sky.input.touch.gas = true;
-      sky.input.touch.left = true;
+      const gas = document.querySelector('[data-t="gas"]');
+      const r = gas.getBoundingClientRect();
+      const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+      gas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7, clientX: cx, clientY: cy, pointerType: 'touch' }));
+      gas.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch' }));
+      sky.input.poll(1 / 60);
+      for (let i = 0; i < 4; i++) sky.net.flushInput();
       const touch = document.getElementById('touch');
       return {
         split: !!sky.game.split,
         touch: touch && !touch.classList.contains('hidden'),
         q: sky.Q && sky.Q.scale,
         state: sky.game.state,
+        label: (gas.textContent || '').trim(),
+        held: !!sky.input.touch.gas,
+        throttle: sky.input.state.throttle,
+        dpr: sky.renderer.getPixelRatio(),
       };
     });
     if (view.split) throw new Error('phone is split ' + JSON.stringify(view));
     if (!view.touch) throw new Error('touch controls hidden ' + JSON.stringify(view));
     if (!(view.q < 0.7)) throw new Error('phone quality ' + JSON.stringify(view));
+    if (view.label !== '加速') throw new Error('gas label ' + JSON.stringify(view));
+    if (!view.held || !(view.throttle > 0.5)) throw new Error('gas hold ' + JSON.stringify(view));
+    if (!(view.dpr <= 1.05)) throw new Error('phone dpr ' + JSON.stringify(view));
     const hostView = await host.page.evaluate(() => ({
       split: !!window.__sky.game.split,
       locals: window.__sky.race.locals().length,
       kinds: window.__sky.race.racers.map((r) => r.driver.kind),
     }));
     if (hostView.split || hostView.locals !== 1 || !hostView.kinds.includes('remote')) throw new Error('host view ' + JSON.stringify(hostView));
-    await phone.page.waitForFunction(() => window.__sky.veh.speed > 4, { timeout: 8000 });
     await host.page.waitForFunction(() => {
       const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
       return !!(r && r.driver.state.throttle > 0.5);
-    }, { timeout: 10000 });
+    }, { timeout: 8000, polling: 100 });
+    const phoneAt = await phone.page.evaluate(() => ({
+      x: window.__sky.car.root.position.x,
+      z: window.__sky.car.root.position.z,
+      sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
+      sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
+    }));
+    const hostMove = await host.page.evaluate(() => {
+      const sky = window.__sky;
+      const r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+      const x0 = r.veh.pos.x, z0 = r.veh.pos.z;
+      const thr = r.driver.state.throttle;
+      const cmd = r.driver.sample();
+      for (let i = 0; i < 90; i++) r.veh.step(1 / 60, cmd);
+      sky.net.flushState();
+      return { thr, sp: r.veh.speed, moved: Math.hypot(r.veh.pos.x - x0, r.veh.pos.z - z0), x: r.veh.pos.x };
+    });
+    if (!(hostMove.thr > 0.5 && hostMove.sp > 4 && hostMove.moved > 1)) throw new Error('host throttle ' + JSON.stringify(hostMove));
+    await phone.page.waitForFunction((at) => {
+      const s = window.__sky.net.latest && window.__sky.net.latest.self;
+      return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
+    }, { timeout: 8000, polling: 100 }, phoneAt);
+    const phoneMoved = await phone.page.evaluate((at) => {
+      const sky = window.__sky;
+      for (let i = 0; i < 10; i++) sky.net.tick(1 / 30);
+      const p = sky.car.root.position;
+      return Math.hypot(p.x - at.x, p.z - at.z);
+    }, phoneAt);
+    if (!(phoneMoved > 0.4)) throw new Error('phone view froze ' + phoneMoved);
     await phone.page.waitForFunction(() => window.__sky.net.ghosts >= 1 && window.__sky.net.latest && window.__sky.net.latest.standings && window.__sky.net.latest.standings.length >= 2, { timeout: 8000 });
     await phone.page.evaluate(() => window.__sky.net.disconnect());
     const dropped = await host.page.waitForFunction(() => window.__sky.net.remotes === 0, { timeout: 8000, polling: 200 }).then(() => true).catch(() => false);
@@ -389,6 +459,88 @@ try {
 } catch (e) {
   webrtc = 'fail';
   bad('phone joins by room code', e);
+}
+
+try {
+  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1');
+  await host.page.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 22000 });
+  const ready = await host.page.evaluate(() => window.__sky.net.ready);
+  if (!ready) {
+    console.log('SKIP phone relay', await host.page.evaluate(() => window.__sky.net.failMsg));
+    await host.page.close();
+  } else {
+    await host.page.evaluate(() => window.__sky.startGame());
+    const meta = await host.page.evaluate(() => ({ url: window.__sky.net.url }));
+    const phoneUrl = new URL(meta.url);
+    phoneUrl.searchParams.set('track', 'canyon');
+    phoneUrl.searchParams.set('noadapt', '1');
+    phoneUrl.searchParams.set('nopauseblur', '1');
+    const phone = await browser.newPage();
+    await phone.evaluateOnNewDocument(() => {
+      const boom = function () { throw new Error('blocked'); };
+      window.RTCPeerConnection = boom;
+      window.webkitRTCPeerConnection = boom;
+    });
+    const errors = [];
+    phone.on('pageerror', (e) => errors.push(String(e && e.message || e)));
+    await phone.setViewport({ width: 915, height: 412, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    await phone.goto(phoneUrl.toString(), { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await phone.waitForFunction(() => window.__sky && window.__sky.game.state !== 'loading', { timeout: 90000, polling: 200 });
+    const linked = await waitLink(host.page, phone, 40000);
+    if (!linked.ok) throw new Error('relay did not connect ' + JSON.stringify(linked));
+    const via = await phone.evaluate(() => (document.getElementById('joinStatus') || {}).textContent || '');
+    if (via.indexOf('網頁中繼') < 0) throw new Error('not on relay ' + via);
+    await phone.bringToFront();
+    await phone.waitForFunction(() => window.__sky.game.state === 'race' || window.__sky.game.state === 'countdown', { timeout: 15000, polling: 200 });
+    await phone.waitForFunction(() => window.__sky.game.state === 'race', { timeout: 15000, polling: 200 });
+    await phone.evaluate(() => {
+      const gas = document.querySelector('[data-t="gas"]');
+      const r = gas.getBoundingClientRect();
+      gas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 9, clientX: r.x + 12, clientY: r.y + 12, pointerType: 'touch' }));
+      gas.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true, pointerId: 9, pointerType: 'touch' }));
+      window.__sky.input.poll(1 / 60);
+      for (let i = 0; i < 4; i++) window.__sky.net.flushInput();
+    });
+    await host.page.waitForFunction(() => {
+      const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
+      return !!(r && r.driver.state.throttle > 0.5);
+    }, { timeout: 8000, polling: 100 });
+    const phoneAt = await phone.evaluate(() => ({
+      x: window.__sky.car.root.position.x,
+      z: window.__sky.car.root.position.z,
+      sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
+      sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
+    }));
+    const hostMove = await host.page.evaluate(() => {
+      const sky = window.__sky;
+      const r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+      const x0 = r.veh.pos.x, z0 = r.veh.pos.z;
+      const thr = r.driver.state.throttle;
+      const cmd = r.driver.sample();
+      for (let i = 0; i < 90; i++) r.veh.step(1 / 60, cmd);
+      sky.net.flushState();
+      return { thr, sp: r.veh.speed, moved: Math.hypot(r.veh.pos.x - x0, r.veh.pos.z - z0) };
+    });
+    if (!(hostMove.thr > 0.5 && hostMove.sp > 3 && hostMove.moved > 1)) throw new Error('relay host ' + JSON.stringify(hostMove));
+    await phone.waitForFunction((at) => {
+      const s = window.__sky.net.latest && window.__sky.net.latest.self;
+      return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
+    }, { timeout: 8000, polling: 100 }, phoneAt);
+    const moved = await phone.evaluate((at) => {
+      const sky = window.__sky;
+      for (let i = 0; i < 10; i++) sky.net.tick(1 / 30);
+      const p = sky.car.root.position;
+      return Math.hypot(p.x - at.x, p.z - at.z);
+    }, phoneAt);
+    if (!(moved > 0.3)) throw new Error('relay view froze ' + moved);
+    const warned = await phone.evaluate(() => (document.getElementById('toast').textContent || '') + '|' + (document.getElementById('state').textContent || ''));
+    if (warned.indexOf('離道') >= 0 || warned.indexOf('偏離賽道') >= 0) throw new Error('false off-track ' + warned);
+    await phone.close();
+    await host.page.close();
+    ok('phone relay throttle');
+  }
+} catch (e) {
+  bad('phone relay throttle', e);
 }
 
 await browser.close();

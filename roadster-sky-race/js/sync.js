@@ -4,6 +4,8 @@
 export const REMOTE_LIMIT = 1;
 export const INPUT_STALE_MS = 500;
 export const INTERP_DELAY_MS = 100;
+export const STATE_GAP_MS = 66;
+export const INPUT_GAP_MS = 50;
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const PUBLIC_ORIGIN = 'https://hgsteven-debug.github.io';
 
@@ -89,6 +91,142 @@ export function failText(err) {
   return '連線失敗。請確認兩台裝置都有網路。嚴格的防火牆或對稱 NAT 可能擋下點對點連線。這台比賽不受影響。';
 }
 
+export function roundNet(v, d = 0) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return d;
+  return Math.round(x * 100) / 100;
+}
+
+// 橫向鎖定失敗時才用 CSS 轉正。看螢幕方向或螢幕邊長，不看會跟著網址列跳的 innerHeight。
+// sticky 讓一次誤判沒辦法立刻翻回去：要明顯超過 80px 才換邊。
+export function wantCssRotate(sample, sticky) {
+  const type = (sample && sample.type) || '';
+  const iw = (sample && sample.iw) || 0;
+  const ih = (sample && sample.ih) || 0;
+  const viewLandscape = iw > ih + 80;
+  const viewPortrait = ih > iw + 80;
+  if (type.indexOf('landscape') === 0) return false;
+  if (type.indexOf('portrait') === 0) return !viewLandscape;
+  if (viewLandscape) return false;
+  if (viewPortrait) {
+    if (sticky === 'native') return false;
+    return true;
+  }
+  const sw = (sample && sample.sw) || 0;
+  const sh = (sample && sample.sh) || 0;
+  if (sticky === 'css') return !(sw > sh + 80);
+  if (sticky === 'native') return sh > sw + 80;
+  return sh > sw + 40;
+}
+
+// 手機畫面追房主姿態。一幀最多吃掉一部分誤差，重生那種大跳才直接對齊。
+export function easeGuestPose(vis, target, dt) {
+  const o = vis || { x: 0, y: 0, z: 0, ready: false };
+  if (!target) return o;
+  const dx = (target.x || 0) - (o.x || 0);
+  const dy = (target.y || 0) - (o.y || 0);
+  const dz = (target.z || 0) - (o.z || 0);
+  const dist = Math.hypot(dx, dy, dz);
+  if (!o.ready || !(dist < 30)) {
+    o.x = target.x || 0;
+    o.y = target.y || 0;
+    o.z = target.z || 0;
+    o.heading = target.heading || 0;
+    o.qx = target.qx || 0;
+    o.qy = target.qy || 0;
+    o.qz = target.qz || 0;
+    o.qw = target.qw == null ? 1 : target.qw;
+    o.speed = target.speed || 0;
+    o.ready = true;
+    o.step = dist;
+    o.snapped = true;
+    return o;
+  }
+  const k = 1 - Math.exp(-8 * Math.max(0, dt || 0));
+  o.x += dx * k;
+  o.y += dy * k;
+  o.z += dz * k;
+  let dh = (target.heading || 0) - (o.heading || 0);
+  while (dh > Math.PI) dh -= Math.PI * 2;
+  while (dh < -Math.PI) dh += Math.PI * 2;
+  o.heading = (o.heading || 0) + dh * k;
+  const q = slerpQuat(o, target, k);
+  o.qx = q.qx; o.qy = q.qy; o.qz = q.qz; o.qw = q.qw;
+  o.speed = (o.speed || 0) + ((target.speed || 0) - (o.speed || 0)) * k;
+  o.ready = true;
+  o.step = dist * k;
+  o.snapped = false;
+  return o;
+}
+
+// 偏離賽道只相信房主，而且要連續離道一陣子才提示一次，不能每幀刷。
+export function hostOffroadWarn(state, onRoad, now, debounceMs = 450, repeatMs = 4000) {
+  const s = state || { known: false, onRoad: true, since: now || 0, toastAt: 0 };
+  const on = onRoad !== false;
+  if (!s.known || s.onRoad !== on) {
+    s.known = true;
+    s.onRoad = on;
+    s.since = now || 0;
+  }
+  let warn = false;
+  const t = now || 0;
+  const toasted = s.toastAt || 0;
+  if (!s.onRoad && t - s.since >= debounceMs && (toasted === 0 || t - toasted >= repeatMs)) {
+    warn = true;
+    s.toastAt = t;
+  }
+  return { state: s, warn };
+}
+
+export function packSelf(s) {
+  if (!s) return null;
+  const n = roundNet;
+  const speed = s.speed != null ? s.speed : Math.hypot(s.vx || 0, s.vy || 0, s.vz || 0);
+  return {
+    x: n(s.x), y: n(s.y), z: n(s.z),
+    qx: n(s.qx), qy: n(s.qy), qz: n(s.qz), qw: n(s.qw, 1),
+    vx: n(s.vx), vy: n(s.vy), vz: n(s.vz),
+    heading: n(s.heading), speed: n(speed),
+    energy: n(s.energy, 100),
+    grounded: !!s.grounded,
+    onRoad: s.onRoad !== false,
+    nitroOn: !!s.nitroOn,
+    thrusting: !!s.thrusting,
+    thrust: n(s.thrust),
+    lift: n(s.lift),
+    braking: !!s.braking,
+    steerAngle: n(s.steerAngle),
+    groundY: n(s.groundY, s.y),
+    nx: n(s.nx), ny: n(s.ny, 1), nz: n(s.nz),
+    fi: n(s.fi), lat: n(s.lat),
+    attached: !!s.attached,
+    alt: n(s.alt),
+  };
+}
+
+export function packPose(p) {
+  if (!p) return null;
+  const n = roundNet;
+  const o = {
+    x: n(p.x), y: n(p.y), z: n(p.z),
+    qx: n(p.qx), qy: n(p.qy), qz: n(p.qz), qw: n(p.qw, 1),
+    vx: n(p.vx), vy: n(p.vy), vz: n(p.vz),
+    nx: n(p.nx), ny: n(p.ny, 1), nz: n(p.nz),
+    heading: n(p.heading), speed: n(p.speed), gy: n(p.gy, p.y),
+    steer: n(p.steer), thrust: n(p.thrust), lift: n(p.lift), fi: n(p.fi),
+    grounded: !!p.grounded, nitro: !!p.nitro, braking: !!p.braking,
+    onRoad: p.onRoad !== false,
+  };
+  if (p.id != null) o.id = p.id;
+  if (p.name != null) o.name = p.name;
+  if (p.kind != null) o.kind = p.kind;
+  if (p.vehicle != null) o.vehicle = p.vehicle;
+  if (p.paint != null) o.paint = p.paint;
+  if (p.lap != null) o.lap = p.lap;
+  if (p.finish != null) o.finish = p.finish;
+  return o;
+}
+
 export function dist3(a, b) {
   if (!a || !b) return Infinity;
   const dx = (a.x || 0) - (b.x || 0);
@@ -167,6 +305,10 @@ function lerpPose(a, b, u) {
   o.grounded = !!src.grounded;
   o.nitro = !!src.nitro;
   o.braking = !!src.braking;
+  o.onRoad = src.onRoad !== false;
+  o.thrusting = !!src.thrusting;
+  o.energy = lerpNum(a.energy == null ? (b.energy || 0) : a.energy, b.energy == null ? (a.energy || 0) : b.energy, u);
+  o.alt = lerpNum(a.alt || 0, b.alt || 0, u);
   o.kind = b.kind || a.kind;
   o.name = b.name || a.name;
   o.paint = b.paint || a.paint;

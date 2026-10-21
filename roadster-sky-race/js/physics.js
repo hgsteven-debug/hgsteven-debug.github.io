@@ -307,6 +307,7 @@ export class Vehicle {
   }
 
   _noteTrap(dt) {
+    if (this.followHost) return;
     const ev = this.events;
     const fi = this.attached ? this.fi : (this.q1.fi || this.fi || 0);
     if (this.tr.checkpoints && this.tr.checkpoints.length) this.lastCp = this._checkpointBehind(fi);
@@ -433,7 +434,7 @@ export class Vehicle {
       ar += gsx * _r.x + gsy * _r.y + gsz * _r.z;
       let gripScale = 1;
       const off = !this.onRoad;
-      if (off) { af -= vf * 0.3; gripScale *= 0.55; ev.offroad = true; }
+      if (off) { af -= vf * 0.3; gripScale *= 0.55; if (!this.followHost) ev.offroad = true; }
       const steer = inp.steer;
       if (brk > 0.3 && Math.abs(steer) > 0.25 && vf > 12) gripScale *= 0.55;     // 煞車漂移
       else if (thr > 0.7 && Math.abs(steer) > 0.6 && vf > 3 && vf < 32) gripScale *= 0.8; // 低速出彎甩尾
@@ -612,7 +613,7 @@ export class Vehicle {
     this._prevL = q2.l;
 
     // 墜入峽谷
-    if (q2.near && tr.pitEdge(q2.fi) > 0.5 && this.pos.y < q2.y - 7.5) {
+    if (!this.followHost && q2.near && tr.pitEdge(q2.fi) > 0.5 && this.pos.y < q2.y - 7.5) {
       ev.respawn = true;
       ev.why = '';
     }

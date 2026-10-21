@@ -42,27 +42,31 @@ button.mini { pointer-events:auto; background:var(--bg); color:var(--fg); border
 #hint { position:absolute; left:1.2rem; bottom:1rem; color:rgba(255,255,255,.55); max-width:26rem; line-height:1.5; }
 #count { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%); font-size:9rem; font-weight:900; text-shadow:0 4px 30px rgba(0,0,0,.8); pointer-events:none; }
 
-#touch { position:fixed; inset:0; pointer-events:none; z-index:5; }
+#touch { position:fixed; inset:0; pointer-events:none; z-index:5;
+  --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px); --safe-t: env(safe-area-inset-top, 0px); }
 .gpad, .stick { position:absolute; pointer-events:auto; touch-action:none; }
 .gpad { border:2px solid rgba(255,255,255,.42); background:rgba(10,16,24,.58); color:#fff; font:inherit; font-weight:800;
   display:flex; align-items:center; justify-content:center; text-align:center; line-height:1.15; }
 .gpad.on { filter:brightness(1.55); border-color:#fff; background:rgba(39,215,255,.35); }
-.gpad.shoulder { top:4%; height:16%; width:24%; border-radius:1.1rem 1.1rem .7rem .7rem; font-size:1.15rem; }
-.gpad.lt { left:5%; background:rgba(160,36,28,.55); }
-.gpad.rt { right:5%; background:rgba(24,140,58,.55); }
-.stick { left:7%; bottom:8%; width:34vmin; height:34vmin; }
+.gpad.pedal { border-radius:1.3rem; z-index:6; }
+.gpad.brake { left:calc(10px + var(--safe-l)); bottom:calc(8px + var(--safe-b)); width:132px; height:64px; font-size:1.35rem;
+  background:rgba(160,36,28,.78); }
+.gpad.gas { right:calc(10px + var(--safe-r)); bottom:calc(8px + var(--safe-b)); width:150px; height:118px; font-size:1.7rem;
+  letter-spacing:.12em; background:rgba(24,150,64,.86); }
+.stick { left:calc(10px + var(--safe-l)); bottom:calc(80px + var(--safe-b)); width:118px; height:118px; }
 .stick-ring { position:absolute; inset:8%; border-radius:50%; border:3px solid rgba(255,255,255,.4); background:rgba(8,14,22,.45); }
 .stick .knob { position:absolute; left:50%; top:50%; width:38%; height:38%; margin:0; border-radius:50%;
   background:radial-gradient(circle at 40% 35%, #f4f7fb, #8ea0b3 62%, #2c3846); border:2px solid rgba(255,255,255,.7);
   transform:translate(-50%, -50%); }
 .stick-lbl { position:absolute; left:0; right:0; bottom:-0.2rem; text-align:center; font-size:.85rem; font-weight:700; color:rgba(255,255,255,.8); pointer-events:none; text-shadow:0 1px 4px #000; }
-.gpad.face { width:16vmin; height:16vmin; border-radius:50%; font-size:1rem; }
-.gpad.face.y { right:20%; bottom:46%; background:rgba(230,190,40,.45); }
-.gpad.face.x { right:33%; bottom:24%; background:rgba(40,120,210,.5); }
-.gpad.face.b { right:7%; bottom:24%; background:rgba(190,48,40,.55); }
-.gpad.face.a { right:20%; bottom:6%; background:rgba(36,150,70,.55); }
-.gpad.menu { left:50%; top:3.5%; transform:translateX(-50%); width:18vmin; height:9vmin; border-radius:.8rem; font-size:.95rem; background:rgba(20,24,32,.72); }
-html.force-landscape body { position:fixed; width:100vh; height:100vw; top:0; left:0; transform-origin:top left;
+.gpad.face { width:52px; height:52px; border-radius:50%; font-size:.82rem; z-index:4; }
+.gpad.face.y { right:calc(78px + var(--safe-r)); bottom:calc(232px + var(--safe-b)); background:rgba(230,190,40,.45); }
+.gpad.face.x { right:calc(136px + var(--safe-r)); bottom:calc(176px + var(--safe-b)); background:rgba(40,120,210,.5); }
+.gpad.face.b { right:calc(18px + var(--safe-r)); bottom:calc(176px + var(--safe-b)); background:rgba(190,48,40,.55); }
+.gpad.face.a { right:calc(78px + var(--safe-r)); bottom:calc(136px + var(--safe-b)); background:rgba(36,150,70,.55); }
+.gpad.menu { left:50%; top:calc(8px + var(--safe-t)); transform:translateX(-50%); width:72px; height:34px; border-radius:.8rem; font-size:.85rem; background:rgba(20,24,32,.72); }
+html.force-landscape body { position:fixed; width:100lvh; height:100lvw; top:0; left:0; transform-origin:top left;
   transform:rotate(90deg) translateY(-100%); overflow:hidden; }
 
 .screen { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:10;
