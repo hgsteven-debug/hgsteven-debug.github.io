@@ -38,18 +38,36 @@ export const TRACKS = [
   },
   {
     id: 'stunt', name: '迴旋試煉', tag: '賽道 4',
-    desc: '垂直高牆、完整倒吊迴圈、吸地倒走。倒吊段結束後會飛出去，按住推進器翻正再落地，接著飛越一排原創停車。速度不夠會掉下去。',
+    desc: '傾斜高牆、一座完整迴圈，然後是倒吊直道。速度不夠會從倒吊段落下。接著平緩落地，再飛越一排原創停車。黃箭頭與檢查門標出路徑；卡住或衝出賽道約兩秒會回到上一道檢查門。',
     theme: 'stunt',
-    ctrl: [
-      [0, 0], [280, 20], [520, 140], [640, 380], [520, 640], [260, 820],
-      [0, 900], [-260, 800], [-500, 600], [-580, 360], [-420, 140], [-200, 10],
-    ],
+    ctrl: stadiumCtrl(560, 420),
     gaps: [],
     height: { a: 3.5, b: 2, c: 1, pa: 1, pb: 2, pc: 3, oa: 0.3, ob: 1.1 },
-    stunts: { wall: [0.07, 0.16], loop: 0.28, loopR: 22 },
+    // 高牆在第一條直道，迴圈與跳躍在對面直道，彎道半徑大約 420 公尺。
+    stunts: { wall: [0.02, 0.13], loop: 0.52, loopR: 22 },
   },
 ];
 export const DEFAULT_TRACK = 'canyon';
+
+// 直道加半圓：彎道夠寬，高速用搖桿才不會一直磨護欄。
+function stadiumCtrl(straight, radius) {
+  const pts = [];
+  const push = (x, z) => pts.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10]);
+  const seg = 4;
+  const arc = 8;
+  for (let i = 0; i <= seg; i++) push(-straight / 2 + (straight * i) / seg, -radius);
+  for (let k = 1; k <= arc; k++) {
+    const a = -Math.PI / 2 + (Math.PI * k) / arc;
+    push(straight / 2 + radius * Math.cos(a), radius * Math.sin(a));
+  }
+  for (let i = 1; i <= seg; i++) push(straight / 2 - (straight * i) / seg, radius);
+  for (let k = 1; k < arc; k++) {
+    const a = Math.PI / 2 + (Math.PI * k) / arc;
+    push(-straight / 2 + radius * Math.cos(a), radius * Math.sin(a));
+  }
+  return pts;
+}
+
 export const trackById = (id) => TRACKS.find((t) => t.id === id) || TRACKS[0];
 
 // 各主題的天空／霧／地形／光線參數
