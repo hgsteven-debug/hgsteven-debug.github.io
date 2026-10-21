@@ -2,8 +2,8 @@
 // 斷線只回呼，主機的物理不會等待網路。
 import { RemoteDriver } from './race.js';
 import {
-  REMOTE_LIMIT, makeRoomCode, peerIdFor, joinUrl, failText, packInput, zeroInput, formatCode,
-  STATE_GAP_MS, INPUT_GAP_MS,
+  REMOTE_LIMIT, makeRoomCode, peerIdFor, joinUrl, failText, packInput, zeroInput, formatCode, normalizeCode,
+  STATE_GAP_MS, INPUT_GAP_MS, LINK_STALE_MS, REMOTE_GRACE_MS, hostStillThere,
 } from './sync.js';
 import { iceServers, webrtcSupport } from './ice.js';
 import { connectRelay } from './relay.js';
@@ -105,6 +105,10 @@ function pathOf(conn) {
   }).catch(() => 'webrtc');
 }
 
+function relayOpts(h, role, index, epoch) {
+  return Object.assign({}, (h && h.relayOpts) || {}, { role, index, epoch });
+}
+
 function how(via) {
   if (via === 'ws') return '網頁中繼';
   if (via === 'relay') return 'TURN 中繼';
@@ -119,7 +123,7 @@ export function createHost(handlers) {
   const wsPeers = new Map();
   const session = {
     role: 'host',
-    code: makeRoomCode(),
+    code: normalizeCode(h.code || '') || makeRoomCode(),
     url: '',
     ready: false,
     failed: false,
@@ -135,6 +139,8 @@ export function createHost(handlers) {
     wsReason: '',
     wsGaveUp: false,
     linking: false,
+    relayIndex: 0,
+    relayEpoch: 0,
     _destroyed: false,
     _gen: 0,
     _reopening: false,
@@ -143,8 +149,15 @@ export function createHost(handlers) {
   let relay = null;
   let lastKick = 0;
 
+  function relayQuery() {
+    return { index: relay && Number.isFinite(relay.index) ? relay.index : session.relayIndex, epoch: relay && Number.isFinite(relay.epoch) ? relay.epoch : session.relayEpoch };
+  }
+
   function emit(kind) {
-    session.url = joinUrl(session.code, globalThis.location);
+    const q = relayQuery();
+    session.relayIndex = q.index;
+    session.relayEpoch = q.epoch;
+    session.url = joinUrl(session.code, globalThis.location, q);
     const text = hostText();
     session.failMsg = session.failed ? text : '';
     try { if (h.onStatus) h.onStatus({ text, kind, code: session.code, url: session.url, ready: session.ready, failed: session.failed }); }
@@ -153,13 +166,17 @@ export function createHost(handlers) {
 
   function hostText() {
     const rtcBit = session.rtc.ok ? 'WebRTC 可用' : ('WebRTC 不可用：' + session.rtc.reason);
-    const wsBit = session.wsOpen ? '網頁中繼已連上' : ('網頁中繼：' + (session.wsReason || '連線中'));
-    if (session.remotes.length) return '階段：P3 已加入（' + how(session.remotes[0].via) + '）。';
+    const wsBit = session.wsOpen ? '網頁中繼：已連到伺服器，尚未跟手機確認' : ('網頁中繼：' + (session.wsReason || '連線中'));
+    if (session.remotes.length) {
+      const remote = session.remotes[0];
+      if (remote.holding) return '階段：P3 訊號中斷，車輛先留在場上。' + wsBit + '。';
+      return '階段：P3 已加入（' + how(remote.via) + '）。';
+    }
     if (session.linking) return '階段：手機正在接通 WebRTC。' + rtcBit + '。' + wsBit + '。';
     if (session.failed) return '階段：失敗。掃碼：' + (session.peerDetail || '沒有連上') + '。' + wsBit + '。' + rtcBit + '。本機比賽不受影響。';
     if (session.peerOpen && session.wsOpen) return '階段：房間已登記，等待手機。' + rtcBit + '。' + wsBit + '。';
     if (session.peerOpen) return '階段：房間已登記在掃碼伺服器。' + wsBit + '。' + rtcBit + '。';
-    if (session.wsOpen) return '階段：掃碼伺服器尚未登記（' + (session.peerDetail || '連線中') + '）。網頁中繼已連上，手機仍可加入。' + rtcBit + '。';
+    if (session.wsOpen) return '階段：掃碼伺服器尚未登記（' + (session.peerDetail || '連線中') + '）。網頁中繼已連到伺服器，手機仍可加入。' + rtcBit + '。';
     return '階段：正在向掃碼伺服器登記房間。' + wsBit + '。' + rtcBit + '。';
   }
 
@@ -175,46 +192,95 @@ export function createHost(handlers) {
     if (!remote) return;
     const i = session.remotes.indexOf(remote);
     if (i >= 0) session.remotes.splice(i, 1);
+    remote.holding = false;
     try { if (remote.driver) remote.driver.push(zeroInput()); } catch (e) {}
     try { if (remote.conn && remote.conn.open) remote.conn.send({ t: why === 'replaced' ? 'replaced' : 'bye' }); } catch (e) {}
-    try { if (remote.conn) remote.conn.close(); } catch (e) {}
+    try { if (remote.conn && remote.conn !== remote._kept) remote.conn.close(); } catch (e) {}
     try { if (h.onLeave) h.onLeave(remote, why); } catch (e) {}
     if (!session.remotes.length) mark();
   }
 
+  function touchRemote(remote) {
+    if (!remote) return;
+    remote.lastBeat = performance.now();
+    remote.supersede = false;
+    if (remote.holding) {
+      remote.holding = false;
+      remote.heldAt = 0;
+      mark();
+    }
+  }
+
+  // 訊號閃斷先留著同一台車。煞車讓它慢下來，圈數和位置都不清。
+  function holdRemote(remote) {
+    if (!remote || remote.holding) return;
+    if (session.remotes.indexOf(remote) < 0) return;
+    remote.holding = true;
+    remote.heldAt = performance.now();
+    remote.cmd = { steer: 0, throttle: 0, brake: 1, lift: false, nitro: false, pitch: 0 };
+    remote.lastAt = performance.now();
+    try { if (remote.driver) remote.driver.push(remote.cmd); } catch (e) {}
+    mark();
+  }
+
+  function expireHeld(now) {
+    for (const remote of session.remotes.slice()) {
+      if (remote.holding && remote.heldAt && now - remote.heldAt >= REMOTE_GRACE_MS) drop(remote, 'timeout');
+      else if (!remote.holding && remote.via === 'ws') {
+        const beat = remote.lastBeat || remote.joinedAt || 0;
+        if (beat && now - beat >= LINK_STALE_MS) holdRemote(remote);
+      }
+    }
+  }
+
   function nameFor(slot) { return 'P' + (3 + slot); }
 
-  function adopt(conn, nonce) {
-    if (conn._skyJoined || session._destroyed) return;
-    const incoming = conn._skyVia || 'webrtc';
-    const prev = nonce ? session.remotes.find((r) => r.nonce === nonce) : null;
-    if (prev && prev.via !== 'ws' && incoming === 'ws' && prev.conn && prev.conn.open) {
-      try { conn.close(); } catch (e) {}
-      return;
+  function greet(conn, remote) {
+    try { conn.send(h.welcome ? h.welcome(remote) : { t: 'welcome', name: remote.name, slot: remote.slot }); } catch (e) {}
+    try { const st = h.state && h.state(remote); if (st) conn.send(st); } catch (e) {}
+  }
+
+  function resumeRemote(conn, prev, incoming) {
+    const old = prev.conn;
+    prev.holding = false;
+    prev.heldAt = 0;
+    prev.supersede = false;
+    prev.conn = conn;
+    prev.via = incoming;
+    conn._skyJoined = true;
+    touchRemote(prev);
+    try { if (old && old !== conn) old.close(); } catch (e) {}
+    if (!prev.racer) {
+      try { if (h.onJoin) h.onJoin(prev); } catch (e) {}
     }
-    if (prev && prev.via === 'ws' && incoming !== 'ws') {
-      const old = prev.conn;
-      prev.conn = conn;
-      prev.via = incoming;
-      conn._skyJoined = true;
-      try { if (old && old !== conn) old.close(); } catch (e) {}
-      try { conn.send(h.welcome ? h.welcome(prev) : { t: 'welcome', name: prev.name, slot: prev.slot }); } catch (e) {}
-      try { const st = h.state && h.state(prev); if (st) conn.send(st); } catch (e) {}
-      mark();
+    greet(conn, prev);
+    mark();
+    if (incoming !== 'ws') {
       pathOf(conn).then((via) => {
         if (session._destroyed || prev.conn !== conn) return;
         prev.via = via;
         mark();
       });
+    }
+  }
+
+  function adopt(conn, nonce) {
+    if (conn._skyJoined || session._destroyed) return;
+    const incoming = conn._skyVia || 'webrtc';
+    const prev = nonce ? session.remotes.find((r) => r.nonce === nonce) : null;
+    if (prev && prev.via !== 'ws' && incoming === 'ws' && prev.conn && prev.conn.open && !prev.holding) {
+      try { conn.close(); } catch (e) {}
+      return;
+    }
+    if (prev) {
+      resumeRemote(conn, prev, incoming);
       return;
     }
     while (session.remotes.length >= REMOTE_LIMIT) {
       const cur = session.remotes[0];
-      if (prev && cur === prev) { drop(cur, 'replaced'); break; }
       const age = performance.now() - (cur.lastAt || cur.joinedAt || 0);
-      const same = nonce && cur.nonce && cur.nonce === nonce;
-      const fresh = !!(cur.conn && cur.conn.open) && age < 2500;
-      if (!same && fresh) {
+      const fresh = !cur.holding && !cur.supersede && !!(cur.conn && cur.conn.open) && age < 2500;
+      if (fresh) {
         try { conn.send({ t: 'full' }); } catch (e) {}
         try { conn.close(); } catch (e) {}
         return;
@@ -232,6 +298,9 @@ export function createHost(handlers) {
       cmd: zeroInput(),
       lastAt: 0,
       joinedAt: performance.now(),
+      lastBeat: performance.now(),
+      holding: false,
+      heldAt: 0,
       driver: new RemoteDriver(),
       racer: null,
       via: incoming,
@@ -239,11 +308,7 @@ export function createHost(handlers) {
     session.remotes.push(remote);
     session.linking = false;
     try { if (h.onJoin) h.onJoin(remote); } catch (e) {}
-    try { conn.send(h.welcome ? h.welcome(remote) : { t: 'welcome', name: remote.name, slot: remote.slot }); } catch (e) {}
-    try {
-      const st = h.state && h.state(remote);
-      if (st) conn.send(st);
-    } catch (e) {}
+    greet(conn, remote);
     mark();
     if (incoming !== 'ws') {
       pathOf(conn).then((via) => {
@@ -267,19 +332,30 @@ export function createHost(handlers) {
         remote.cmd = packInput(data);
         remote.seq = data.seq | 0;
         remote.lastAt = performance.now();
+        touchRemote(remote);
         try { remote.driver.push(remote.cmd); } catch (e) {}
       } else if (data.t === 'hello') {
         if (data.nonce) remote.nonce = data.nonce;
+        touchRemote(remote);
+        greet(conn, remote);
+      } else if (data.t === 'ping') {
+        touchRemote(remote);
+        try { conn.send({ t: 'pong', n: data.n, nonce: remote.nonce, relay: relayQuery().index, epoch: relayQuery().epoch }); } catch (e) {}
       } else if (data.t === 'bye') {
-        drop(remote, 'close');
+        if (data.gone) drop(remote, 'leave');
+        else {
+          // 剛接回的 hello 後 1 秒內，舊的 bye 不能把車又按住。但仍讓出位子給另一台手機。
+          remote.supersede = true;
+          if (performance.now() - (remote.lastBeat || 0) > 1000) holdRemote(remote);
+        }
       } else if (data.t === 'reset') {
         try { if (h.onReset) h.onReset(remote); } catch (e) {}
       } else if (data.t === 'car') {
         try { if (h.onCar) h.onCar(remote, data); } catch (e) {}
       }
     });
-    conn.on('close', () => drop(session.remotes.find((r) => r.conn === conn), 'close'));
-    conn.on('error', () => drop(session.remotes.find((r) => r.conn === conn), 'error'));
+    conn.on('close', () => holdRemote(session.remotes.find((r) => r.conn === conn)));
+    conn.on('error', () => holdRemote(session.remotes.find((r) => r.conn === conn)));
   }
 
   function wsPeer(nonce) {
@@ -307,11 +383,23 @@ export function createHost(handlers) {
     if (!msg || msg.from === 'host' || session._destroyed) return;
     const nonce = msg.nonce || '';
     if (!nonce) return;
+    if (msg.t === 'ping') {
+      try {
+        relay.send({ t: 'pong', n: msg.n, nonce, relay: relay.index, epoch: relay.epoch, from: 'host' });
+      } catch (e) {}
+      const known = session.remotes.find((r) => r.nonce === nonce || r.nonce === msg.from);
+      if (known) touchRemote(known);
+      return;
+    }
     if (msg.t === 'bye') {
       const matches = session.remotes.filter((r) => (r.nonce === nonce || r.nonce === msg.from) && r.via === 'ws');
-      for (const remote of matches) drop(remote, 'close');
-      const ghost = wsPeers.get(nonce) || wsPeers.get(msg.from);
-      if (ghost) { try { ghost.close(); } catch (e) {} }
+      for (const remote of matches) {
+        if (msg.gone) drop(remote, 'leave');
+        else {
+          remote.supersede = true;
+          if (performance.now() - (remote.lastBeat || 0) > 1000) holdRemote(remote);
+        }
+      }
       return;
     }
     const webrtc = session.remotes.find((r) => r.nonce === nonce && r.via !== 'ws' && r.conn && r.conn.open);
@@ -327,12 +415,20 @@ export function createHost(handlers) {
       onStatus: (s) => {
         session.wsOpen = !!s.open;
         session.wsReason = s.open ? '' : (s.reason || '');
-        if (s.failed && !s.open) session.wsGaveUp = true;
+        session.wsGaveUp = false;
+        if (Number.isFinite(s.index)) session.relayIndex = s.index;
+        if (Number.isFinite(s.epoch)) session.relayEpoch = s.epoch;
         mark();
       },
-      onOpen: () => { session.wsOpen = true; session.wsGaveUp = false; mark(); },
+      onOpen: () => {
+        session.wsOpen = true;
+        session.wsGaveUp = false;
+        try { relay.send({ t: 'broker', relay: relay.index, epoch: relay.epoch, from: 'host' }); } catch (e) {}
+        mark();
+      },
+      onFailover: () => { mark(); },
       onMessage: onRelayMessage,
-    });
+    }, relayOpts(h, 'host', session.relayIndex, session.relayEpoch));
   }
 
   function openPeer() {
@@ -476,6 +572,7 @@ export function createHost(handlers) {
     if (session._destroyed) return;
     runDue(deadlines, now);
     if (relay) relay.poll(now);
+    expireHeld(now);
     if (session.peerOpen || !session.rtc.ok) return;
     if (session._reopening || now - lastKick < 8000) return;
     if (!session.peerGaveUp && !session.peerDetail) return;
@@ -485,6 +582,34 @@ export function createHost(handlers) {
       return;
     }
     reopenSame();
+  };
+  session.debugJoin = (nonce) => {
+    const hs = {};
+    const conn = {
+      open: true,
+      peer: 'debug-' + nonce,
+      _skyVia: 'ws',
+      on(ev, fn) { (hs[ev] = hs[ev] || []).push(fn); },
+      emit(ev, arg) { (hs[ev] || []).forEach((fn) => { try { fn(arg); } catch (e) {} }); },
+      send() {},
+      close() { this.open = false; this.emit('close'); },
+    };
+    accept(conn);
+    conn.emit('data', { t: 'hello', nonce: nonce || 'p3', name: 'P3' });
+    return session.remotes.find((r) => r.nonce === (nonce || 'p3')) || null;
+  };
+  session.debugBlip = () => {
+    const remote = session.remotes[0];
+    if (remote) holdRemote(remote);
+    return !!remote;
+  };
+  session.debugExpire = () => {
+    const remote = session.remotes.find((r) => r.holding) || session.remotes[0];
+    if (!remote) return false;
+    remote.holding = true;
+    remote.heldAt = performance.now() - REMOTE_GRACE_MS - 5;
+    expireHeld(performance.now());
+    return true;
   };
   session.destroy = () => {
     session._destroyed = true;
@@ -533,11 +658,17 @@ export function createGuest(code, handlers) {
     _opened: false,
     _failedOnce: false,
     _retried: false,
+    heardHost: false,
+    lastPeerAt: 0,
   };
   let peer = null;
   let conn = null;
   let relay = null;
   let lastHello = 0;
+  let lastPing = 0;
+  let pingN = 0;
+  const relayIndex = Number.isFinite(+h.relayIndex) ? (+h.relayIndex | 0) : 0;
+  const relayEpoch = Number.isFinite(+h.relayEpoch) ? (+h.relayEpoch | 0) : 0;
 
   function emit(kind) {
     const text = guestText();
@@ -546,7 +677,7 @@ export function createGuest(code, handlers) {
   }
 
   function guestText() {
-    if (session.connected) return '階段：已加入（' + how(session.via || session.pathKind || 'webrtc') + '）。';
+    if (session.connected && hostStillThere(session.lastPeerAt, performance.now())) return '階段：已加入（' + how(session.via || session.pathKind || 'webrtc') + '）。';
     if (session.failed) {
       return '階段：失敗。掃碼：' + (session.peerDetail || '沒有接通') + '。網頁中繼：' + (session.wsReason || '沒有接通') + '。';
     }
@@ -559,7 +690,8 @@ export function createGuest(code, handlers) {
   }
 
   function wsLine() {
-    if (session.wsOpen) return '網頁中繼已連上，等待車機回應…';
+    if (session.heardHost) return '網頁中繼：車機有回應，正在加入…';
+    if (session.wsOpen) return '網頁中繼：已連到伺服器，尚未跟車機確認';
     return '網頁中繼：' + (session.wsReason || '連線中');
   }
 
@@ -615,15 +747,27 @@ export function createGuest(code, handlers) {
   function take(data, via) {
     if (session._destroyed || !data || typeof data !== 'object') return;
     if (via === 'ws' && session.via && session.via !== 'ws') return;
+    if (data.t === 'pong' || data.t === 'broker') {
+      session.lastPeerAt = performance.now();
+      session.heardHost = true;
+      if (relay && Number.isFinite(+data.epoch)) relay.pin(data.relay, data.epoch | 0);
+      if (!session.connected) emit('wait');
+      return;
+    }
     if (data.t === 'welcome') {
+      session.lastPeerAt = performance.now();
+      session.heardHost = true;
       session.connected = true;
       session.failed = false;
+      session._failedOnce = false;
       session.via = via === 'ws' ? 'ws' : (session.pathKind || 'webrtc');
       if (session.via !== 'ws') retireRelay();
       else if (session.rtcGaveUp) retirePeer();
       emit('ok');
       try { if (h.onWelcome) h.onWelcome(data); } catch (e) {}
     } else if (data.t === 'state') {
+      session.lastPeerAt = performance.now();
+      session.heardHost = true;
       if (via === 'webrtc') session.via = session.pathKind || 'webrtc';
       else if (!session.via) session.via = 'ws';
       session.connected = true;
@@ -790,7 +934,7 @@ export function createGuest(code, handlers) {
     onStatus: (s) => {
       session.wsOpen = !!s.open;
       session.wsReason = s.open ? '' : (s.reason || '');
-      if (s.failed && !s.open) session.wsGaveUp = true;
+      session.wsGaveUp = false;
       if (!session.connected) checkDone();
     },
     onOpen: () => {
@@ -804,21 +948,33 @@ export function createGuest(code, handlers) {
       if (!msg || msg.from !== 'host') return;
       take(msg, 'ws');
     },
-  });
+  }, relayOpts(h, 'guest', relayIndex, relayEpoch));
 
   session.poll = (now) => {
     if (session._destroyed) return;
     runDue(deadlines, now);
     if (relay) relay.poll(now);
+    if (session.heardHost && !hostStillThere(session.lastPeerAt, now)) {
+      session.heardHost = false;
+      session.connected = false;
+      emit('warn');
+      helloRelay();
+      lastHello = now;
+    }
+    if (relay && relay.open && now - lastPing > 2000) {
+      lastPing = now;
+      pingN += 1;
+      try { relay.send({ t: 'ping', n: pingN, nonce, from: nonce }); } catch (e) {}
+    }
     if (!session.connected && relay && relay.open && now - lastHello > 2000) {
       lastHello = now;
       helloRelay();
     }
   };
-  session.destroy = () => {
+  session.destroy = (opts) => {
     if (session._destroyed) return;
     session._destroyed = true;
-    try { send({ t: 'bye', nonce }); } catch (e) {}
+    try { send({ t: 'bye', nonce, gone: !!(opts && opts.gone) }); } catch (e) {}
     try { if (conn) conn.close(); } catch (e) {}
     const dyingRelay = relay;
     const dying = peer;

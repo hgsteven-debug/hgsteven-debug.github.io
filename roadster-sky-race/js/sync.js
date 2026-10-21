@@ -6,6 +6,13 @@ export const INPUT_STALE_MS = 500;
 export const INTERP_DELAY_MS = 100;
 export const STATE_GAP_MS = 66;
 export const INPUT_GAP_MS = 50;
+export const LINK_STALE_MS = 5000;
+export const REMOTE_GRACE_MS = 45000;
+
+// 有收到對端訊息才算接上。只連上 MQTT 伺服器不算。
+export function hostStillThere(lastAt, now, stale = LINK_STALE_MS) {
+  return lastAt > 0 && now >= lastAt && now - lastAt <= stale;
+}
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const PUBLIC_ORIGIN = 'https://hgsteven-debug.github.io';
 
@@ -37,15 +44,21 @@ export function peerIdFor(code) {
 
 // 正式站走網站根目錄，讓現有的轉址把 ?join= 帶進遊戲。
 // 本機或預覽網址則開目前這頁，測試才連得到。
-export function joinUrl(code, loc) {
+export function joinUrl(code, loc, relay) {
   const c = normalizeCode(code);
   const host = loc && loc.hostname ? String(loc.hostname) : '';
+  let url;
   if (!host || host === 'hgsteven-debug.github.io' || host.endsWith('.github.io')) {
-    return PUBLIC_ORIGIN + '/?join=' + c;
+    url = PUBLIC_ORIGIN + '/?join=' + c;
+  } else {
+    const origin = loc.origin || '';
+    const path = loc.pathname || '/';
+    url = origin + path + '?join=' + c;
   }
-  const origin = loc.origin || '';
-  const path = loc.pathname || '/';
-  return origin + path + '?join=' + c;
+  if (relay && Number.isFinite(+relay.index)) {
+    url += '&relay=' + ((+relay.index) | 0) + '&epoch=' + ((+relay.epoch) | 0);
+  }
+  return url;
 }
 
 function round3(n) {

@@ -91,6 +91,23 @@ export function mqttTake(buf) {
   return { packets, rest: buf.slice(i) };
 }
 
+export const RELAY_BACKOFF_CAP = 8000;
+export const RELAY_FAIL_STREAK = 4;
+
+// 斷線重試同一台。次數愈多等愈久，最多 8 秒，不會停。
+export function relayBackoff(attempt) {
+  const n = Math.max(0, attempt | 0);
+  return Math.min(RELAY_BACKOFF_CAP, 400 * (2 ** Math.min(n, 5)));
+}
+
+// 房主選定的起點加上共同的 epoch，兩邊才會落在同一台。
+export function relaySlot(start, epoch, count) {
+  const n = count || RELAYS.length || 1;
+  const s = ((start % n) + n) % n;
+  const e = Math.max(0, epoch | 0);
+  return (s + e) % n;
+}
+
 export function mqttPayload(pkt) {
   if (!pkt || pkt.length < 2 || (pkt[0] & 0xf0) !== 0x30) return null;
   const rl = readRemLen(pkt, 1);
@@ -103,45 +120,103 @@ export function mqttPayload(pkt) {
   return new TextDecoder().decode(pkt.slice(start));
 }
 
-export function connectRelay(code, handlers) {
+export function connectRelay(code, handlers, opts) {
   const h = handlers || {};
+  const opt = opts || {};
+  const list = opt.relays && opt.relays.length ? opt.relays : RELAYS;
+  const n = list.length || 1;
+  // index 是現在要連的那一台（QR 上的絕對編號），epoch 是已經一起換過幾次。
+  // 不要把兩者再加一次，否則手機掃到的網址會落到另一台。
+  const given = Number.isFinite(+opt.index) ? ((+opt.index % n) + n) % n : 0;
+  let epoch = Number.isFinite(+opt.epoch) ? Math.max(0, +opt.epoch | 0) : 0;
+  let start = ((given - epoch) % n + n) % n;
+  let index = relaySlot(start, epoch, n);
+  const role = opt.role === 'host' ? 'host' : 'guest';
+  const failStreak = opt.failStreak || RELAY_FAIL_STREAK;
+  const backoff = typeof opt.backoff === 'function' ? opt.backoff : relayBackoff;
+  const helloTimeout = opt.helloTimeout || 6000;
+  const openSocket = opt.socket || ((url, protos) => new WebSocket(url, protos));
+  const schedule = opt.schedule || ((fn, ms) => setTimeout(fn, ms));
   const topic = 'skyroadster/v1/' + normalizeCode(code);
   const state = {
     open: false,
     failed: false,
     reason: '',
     label: '',
+    index,
+    epoch,
+    attempts: 0,
     _stop: false,
   };
   let ws = null;
   let buf = new Uint8Array(0);
-  let index = 0;
   let ping = 0;
   let attempts = 0;
+  let streak = 0;
+  let generation = 0;
+  let openedGen = -1;
+  let openedAt = 0;
+  let helloTimer = 0;
+
+  function clearHello() {
+    if (!helloTimer) return;
+    try { clearTimeout(helloTimer); } catch (e) {}
+    helloTimer = 0;
+  }
 
   function tell() {
-    try { if (h.onStatus) h.onStatus({ open: state.open, failed: state.failed, reason: state.reason, label: state.label }); }
+    state.index = index;
+    state.epoch = epoch;
+    state.attempts = attempts;
+    state.label = list[index] ? list[index].label : '';
+    try { if (h.onStatus) h.onStatus({ open: state.open, failed: false, reason: state.reason, label: state.label, index, epoch }); }
     catch (e) {}
   }
 
-  function fail(reason) {
+  function retry(delay, gen) {
+    if (state._stop) return;
+    schedule(() => {
+      if (state._stop || gen !== generation) return;
+      open();
+    }, delay);
+  }
+
+  function failHandshake(gen, reason) {
+    if (gen !== generation || state._stop) return;
+    generation += 1;
+    attempts += 1;
+    streak += 1;
     state.open = false;
-    state.failed = true;
+    state.failed = false;
     state.reason = reason;
+    if (role === 'host' && streak >= failStreak) {
+      epoch += 1;
+      streak = 0;
+      attempts = 0;
+      index = relaySlot(start, epoch, n);
+      state.reason = '中繼改接 ' + (list[index] ? list[index].label : '');
+      try { if (h.onFailover) h.onFailover({ index, epoch, label: list[index] ? list[index].label : '' }); } catch (e) {}
+    }
     tell();
+    retry(backoff(attempts), generation);
   }
 
   function onPacket(pkt) {
     if (pkt[0] === 0x20) {
       const codeByte = pkt.length > 3 ? pkt[3] : 0;
       if (codeByte !== 0) {
-        try { ws.close(); } catch (e) {}
+        try { if (ws) ws.close(); } catch (e) {}
         return;
       }
-      try { ws.send(mqttSubscribe(topic)); } catch (e) {}
+      try { if (ws) ws.send(mqttSubscribe(topic)); } catch (e) {}
       return;
     }
     if (pkt[0] === 0x90) {
+      clearHello();
+      attempts = 0;
+      streak = 0;
+      openedGen = generation;
+      openedAt = Date.now();
       state.open = true;
       state.failed = false;
       state.reason = '';
@@ -153,6 +228,9 @@ export function connectRelay(code, handlers) {
     if (!text) return;
     let msg = null;
     try { msg = JSON.parse(text); } catch (e) { return; }
+    if (msg && msg.t === 'broker' && role !== 'host' && Number.isFinite(+msg.epoch) && (+msg.epoch | 0) !== epoch) {
+      state.pin(+msg.relay, +msg.epoch | 0);
+    }
     try { if (h.onMessage) h.onMessage(msg); } catch (e) {}
   }
 
@@ -164,57 +242,57 @@ export function connectRelay(code, handlers) {
     for (const pkt of taken.packets) onPacket(pkt);
   }
 
-  function arm(delay) {
-    if (state._stop) return;
-    setTimeout(open, delay);
-  }
-
   function open() {
     if (state._stop) return;
-    if (attempts >= RELAYS.length * 2) {
-      fail(state.reason || '免費網頁中繼都連不上');
-      return;
-    }
-    const spec = RELAYS[index % RELAYS.length];
-    index += 1;
-    attempts += 1;
+    const spec = list[index];
+    const gen = ++generation;
     state.label = spec.label;
     state.open = false;
+    state.failed = false;
     state.reason = '正在連上 ' + spec.label;
     tell();
     let sock;
-    try { sock = new WebSocket(spec.url, ['mqtt']); }
+    try { sock = openSocket(spec.url, ['mqtt']); }
     catch (e) {
-      state.reason = spec.label + ' 無法開啟';
-      arm(400);
+      failHandshake(gen, spec.label + ' 無法開啟');
       return;
     }
     ws = sock;
     buf = new Uint8Array(0);
     sock.binaryType = 'arraybuffer';
-    const timer = setTimeout(() => {
-      if (sock === ws && !state.open) {
-        state.reason = spec.label + ' 超過 6 秒沒有回應';
-        try { sock.close(); } catch (e) {}
-      }
-    }, 6000);
+    clearHello();
+    helloTimer = schedule(() => {
+      if (gen !== generation || state._stop || state.open) return;
+      state.reason = spec.label + ' 超過 6 秒沒有回應';
+      try { sock.close(); } catch (e) {}
+    }, helloTimeout);
     sock.onopen = () => {
+      if (gen !== generation) return;
       const id = 'sky' + Math.random().toString(36).slice(2, 10);
       try { sock.send(mqttConnect(id, spec.username)); } catch (e) {}
     };
     sock.onmessage = (ev) => {
+      if (gen !== generation) return;
       const data = ev.data;
       if (data instanceof ArrayBuffer) feed(new Uint8Array(data));
       else if (ArrayBuffer.isView(data)) feed(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
     };
     sock.onerror = () => {};
     sock.onclose = () => {
-      clearTimeout(timer);
-      if (sock !== ws || state._stop) return;
+      clearHello();
+      if (gen !== generation || state._stop) return;
       state.open = false;
-      if (!state.reason || state.reason.indexOf('正在連上') === 0) state.reason = spec.label + ' 已中斷';
-      tell();
-      arm(500);
+      if (openedGen === gen) {
+        attempts = 0;
+        streak = 0;
+        openedGen = -1;
+        generation += 1;
+        state.reason = spec.label + ' 已中斷，重新連同一台';
+        tell();
+        retry(backoff(0), generation);
+        return;
+      }
+      failHandshake(gen, state.reason && state.reason.indexOf('正在連上') !== 0 ? state.reason : (spec.label + ' 已中斷'));
     };
   }
 
@@ -227,8 +305,30 @@ export function connectRelay(code, handlers) {
       return false;
     }
   };
+  state.pin = (nextIndex, nextEpoch) => {
+    const e = Math.max(0, nextEpoch | 0);
+    const i = Number.isFinite(+nextIndex) ? ((+nextIndex % n) + n) % n : relaySlot(start, e, n);
+    if (i === index && e === epoch) return;
+    epoch = e;
+    index = i;
+    start = ((i - e) % n + n) % n;
+    attempts = 0;
+    streak = 0;
+    openedGen = -1;
+    generation += 1;
+    state.open = false;
+    clearHello();
+    try { if (ws) ws.close(); } catch (e2) {}
+    ws = null;
+    tell();
+    retry(0, generation);
+  };
   state.poll = (now) => {
     if (state._stop || !state.open || !ws || ws.readyState !== 1) return;
+    if (openedAt && now - openedAt > 10000 && attempts) {
+      attempts = 0;
+      state.attempts = 0;
+    }
     if (!ping) ping = now;
     if (now - ping < 20000) return;
     ping = now;
