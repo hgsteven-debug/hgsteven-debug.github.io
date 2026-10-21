@@ -129,7 +129,7 @@ export class InputManager {
     window.addEventListener('blur', () => { this.keys.clear(); });
   }
 
-  _newCal() { return { done: false, t: 0, n: 0, samples: [], centre: {}, ignore: new Set(), hat: new Set(), still: {}, last: {} }; }
+  _newCal() { return { done: false, t: 0, n: 0, samples: [], centre: {}, ignore: new Set(), hat: new Set(), still: {}, last: {}, heal: {} }; }
   setInvertSteer(v) { this.invertSteer = !!v; store.set('invertSteer', this.invertSteer); }
   // 手動指定搖桿模式（auto / switch / xbox）；會覆寫自動偵測，存在 localStorage
   setPadMode(m) {
@@ -154,9 +154,13 @@ export class InputManager {
       if (Math.abs(m) > AXIS_LIMIT) { c.ignore.add(i); c.hat.add(i); continue; }   // hat（十字鍵）閒置值，如 1.2857
       // 連線當下就被推到底的軸視為中心 0（使用者可能正握著搖桿）
       const held = vals.every((v) => Math.abs(v) > 0.6);
-      if (held) c.centre[i] = 0;
+      // 取樣期間軸在動：多半是玩家正在推搖桿（瀏覽器常在「第一次動搖桿」時才公開搖桿，
+      // 所以首次進入遊戲時校正幾乎都發生在推桿途中）。這時中位數不可信 → 中心先當 0，
+      // 不可把軸忽略，否則方向會整局失效（v5 的「第一次進去方向無法控制」bug）。
+      const moving = Math.max(...vals) - Math.min(...vals) > 0.08;
+      if (held || moving) c.centre[i] = 0;
       else if (Math.abs(m) <= 0.4) c.centre[i] = m;
-      else c.ignore.add(i);                                                         // 閒置在非零位置（例如板機軸 -1）：不拿來轉向
+      else c.ignore.add(i);                                                         // 靜止在非零位置（例如板機軸 -1 或半推著不動）：暫不拿來轉向，回到中央後自動恢復（_healIgnored）
     }
     c.samples = []; c.done = true;
   }
@@ -208,6 +212,19 @@ export class InputManager {
       if (last === undefined || Math.abs(v - last) > 0.004) { c.still[i] = 0; continue; }
       c.still[i] = (c.still[i] || 0) + dt;
       if (c.still[i] > 1.2 && Math.abs(v - c.centre[i]) < 0.28 && Math.abs(v - c.centre[i]) > 0.002) c.centre[i] += (v - c.centre[i]) * Math.min(1, dt * 2.5);
+    }
+  }
+  // 被忽略的軸（非 hat）若之後在中央附近穩定靜止 0.4 秒，表示當初只是校正時被推著 → 以目前值為中心恢復使用
+  _healIgnored(gp, dt) {
+    const c = this.cal;
+    if (!c.done || !c.ignore.size) return;
+    for (const i of [...c.ignore]) {
+      if (c.hat.has(i)) continue;
+      const v = gp.axes[i], last = c.heal['l' + i];
+      c.heal['l' + i] = v;
+      if (!Number.isFinite(v) || Math.abs(v) > 0.2 || last === undefined || Math.abs(v - last) > 0.01) { c.heal[i] = 0; continue; }
+      c.heal[i] = (c.heal[i] || 0) + dt;
+      if (c.heal[i] >= 0.4) { c.ignore.delete(i); c.centre[i] = v; c.still[i] = 0; c.last[i] = v; }
     }
   }
   // 十字鍵：標準映射用按鈕 12–15；非標準映射用 hat 軸（-1=上、順時針每 2/7 一格；閒置 1.2857）
@@ -317,6 +334,7 @@ export class InputManager {
       this._calStep(gp, dt);
       const b = this.bindings, prof = this.profile;
       this._autoRecentre(gp, dt);
+      this._healIgnored(gp, dt);
       // 轉向：校正 + 放射死區 + 反應曲線；十字鍵（含 hat）當備用
       const steerRaw = b.steer.t === 'a' ? this.axisValue(gp, b.steer) : this.bindingValue(gp, b.steer);
       const dp = this.dpad(gp);
