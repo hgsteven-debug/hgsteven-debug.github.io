@@ -210,6 +210,19 @@ async function boot() {
           try { flushNet(true); } catch (e) {}
         },
         tick(dt) { syncCar(dt || (1 / 60)); },
+        debugJoin(nonce) { return hostNet && hostNet.debugJoin ? hostNet.debugJoin(nonce) : null; },
+        debugBlip() { return !!(hostNet && hostNet.debugBlip && hostNet.debugBlip()); },
+        debugExpire() { return !!(hostNet && hostNet.debugExpire && hostNet.debugExpire()); },
+        p3() {
+          const r = race && race.racers.find((x) => x.driver && x.driver.kind === 'remote' && !String(x.netId || '').endsWith('-done'));
+          if (!r) return null;
+          const remote = hostNet && hostNet.remotes && hostNet.remotes.find((x) => x.racer === r);
+          return {
+            x: r.veh.pos.x, z: r.veh.pos.z, fi: r.veh.attached ? r.veh.fi : r.veh.q1.fi,
+            lap: r.lap ? r.lap.n : 0, lapT: r.lap ? r.lap.t : 0, name: r.name,
+            holding: !!(remote && remote.holding), token: r._token || 0,
+          };
+        },
         get trackReady() { return guestTrackReady; },
         get sent() { return hostNet ? (hostNet.sent || 0) : 0; },
         get lastErr() { return (hostNet && hostNet.lastErr) || ''; },
@@ -633,7 +646,10 @@ function applyRemoteInputs() {
   const now = performance.now();
   for (const remote of hostNet.remotes) {
     if (!remote.driver) continue;
-    try { remote.driver.push(heldInput(remote, now)); } catch (e) {}
+    try {
+      if (remote.holding) remote.driver.push({ steer: 0, throttle: 0, brake: 1, lift: false, nitro: false, pitch: 0 });
+      else remote.driver.push(heldInput(remote, now));
+    } catch (e) {}
   }
 }
 function refreshRaceMode() {
@@ -877,23 +893,28 @@ function onGuestClose(info) {
 function onGuestStage(info) {
   if (!info) return;
   if (guestNet && guestNet.connected) {
-    if (guestLive) return;
+    if (guestLive) { showBanner(''); return; }
     const via = guestNet.via === 'ws' ? '網頁中繼' : guestNet.via === 'relay' ? 'TURN 中繼' : guestNet.via === 'direct' ? '裝置直連' : '已連上';
     setJoinStatus('階段：已加入（' + via + '）。等待房主開始。', 'ok');
     return;
   }
+  if (guestLive) showBanner('跟車機失去聯絡，正在重新接上…');
   setJoinStatus(info.text || '', info.kind === 'fail' ? 'bad' : 'wait');
 }
 function beginGuest() {
   if (!game.guest || netOff) return;
   if (guestNet) { try { guestNet.destroy(); } catch (e) {} guestNet = null; }
   setJoinStatus('階段：正在連上掃碼伺服器…', 'wait');
+  const relayIndex = Number(params.get('relay'));
+  const relayEpoch = Number(params.get('epoch'));
   guestNet = createGuest(joinCode, {
     onWelcome: onGuestWelcome,
     onState: onGuestState,
     onFail: onGuestFail,
     onClose: onGuestClose,
     onStatus: onGuestStage,
+    relayIndex: Number.isFinite(relayIndex) ? relayIndex : 0,
+    relayEpoch: Number.isFinite(relayEpoch) ? relayEpoch : 0,
   });
 }
 function retryGuest() {
@@ -903,7 +924,7 @@ function retryGuest() {
   beginGuest();
 }
 function leaveGuestRoom() {
-  try { if (guestNet) guestNet.destroy(); } catch (e) {}
+  try { if (guestNet) guestNet.destroy({ gone: true }); } catch (e) {}
   const u = new URL(location.href);
   u.searchParams.delete('join');
   location.href = u.toString();

@@ -178,19 +178,51 @@ function testIceList() {
   assert(relay.mqttPayload(pub) === '{"t":"ping"}', relay.mqttPayload(pub));
 }
 
+function probeRelay(spec) {
+  return new Promise((resolve) => {
+    let ws = null;
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      try { if (ws) ws.close(); } catch (e) {}
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), 4000);
+    try {
+      ws = new WebSocket(spec.url, ['mqtt']);
+      ws.onopen = () => { clearTimeout(timer); finish(true); };
+      ws.onerror = () => { clearTimeout(timer); finish(false); };
+    } catch (e) {
+      clearTimeout(timer);
+      finish(false);
+    }
+  });
+}
+
 async function testRelay() {
+  const up = [];
+  await Promise.all(relay.RELAYS.map(async (spec, i) => { if (await probeRelay(spec)) up.push(i); }));
+  if (!up.length) {
+    console.log('SKIP websocket relay (no public broker answered)');
+    return;
+  }
+  const index = up[0];
   const code = 'ZZ' + Math.random().toString(36).slice(2, 6);
   let got = null;
-  const b = relay.connectRelay(code, { onMessage: (m) => { if (m && m.from === 'a') got = m; } });
-  const a = relay.connectRelay(code, {});
+  const opt = { index, epoch: 0, role: 'guest' };
+  const b = relay.connectRelay(code, { onMessage: (m) => { if (m && m.from === 'a') got = m; } }, opt);
+  const a = relay.connectRelay(code, {}, opt);
   const start = Date.now();
   while ((!a.open || !b.open) && Date.now() - start < 12000) await new Promise((r) => setTimeout(r, 50));
-  assert(a.open && b.open, 'relay not open ' + a.reason + ' / ' + b.reason);
+  assert(a.open && b.open, 'relay not open ' + a.reason + ' / ' + b.reason + ' index ' + index);
+  assert(a.index === index && b.index === index, 'split brokers ' + a.index + ' ' + b.index);
   a.send({ t: 'ping', from: 'a', n: 7 });
   const wait = Date.now();
   while (!got && Date.now() - wait < 5000) await new Promise((r) => setTimeout(r, 50));
   a.close(); b.close();
   assert(got && got.n === 7, JSON.stringify(got));
+  console.log('relay broker', relay.RELAYS[index].label);
 }
 
 try { testIceList(); ok('ice servers / root redirect'); }
@@ -420,29 +452,39 @@ try {
       const s = window.__sky.net.latest && window.__sky.net.latest.self;
       return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
     }, { timeout: 8000, polling: 100 }, phoneAt);
+    await new Promise((r) => setTimeout(r, 250));
     const phoneMoved = await phone.page.evaluate((at) => {
       const sky = window.__sky;
       for (let i = 0; i < 10; i++) sky.net.tick(1 / 30);
       const p = sky.car.root.position;
       return Math.hypot(p.x - at.x, p.z - at.z);
     }, phoneAt);
-    if (!(phoneMoved > 0.4)) throw new Error('phone view froze ' + phoneMoved);
+    if (!(phoneMoved > 0.4)) {
+      const diag = {
+        phoneMoved,
+        phone: await phone.page.evaluate(() => {
+          const s = window.__sky.net.latest && window.__sky.net.latest.self;
+          const p = window.__sky.car.root.position;
+          return {
+            state: window.__sky.game.state, live: window.__sky.net.live, connected: window.__sky.net.connected,
+            sx: s && s.x, sz: s && s.z, x: p.x, z: p.z,
+            track: window.__sky.net.latest && window.__sky.net.latest.track,
+          };
+        }),
+        host: await host.page.evaluate(() => {
+          const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
+          return {
+            p3: window.__sky.net.p3(),
+            x: r && r.veh.pos.x, z: r && r.veh.pos.z, fi: r && r.veh.fi,
+            thr: r && r.driver.state.throttle, brk: r && r.driver.state.brake,
+          };
+        }),
+      };
+      throw new Error('phone view froze ' + JSON.stringify(diag));
+    }
     await phone.page.waitForFunction(() => window.__sky.net.ghosts >= 1 && window.__sky.net.latest && window.__sky.net.latest.standings && window.__sky.net.latest.standings.length >= 2, { timeout: 8000 });
     await phone.page.evaluate(() => window.__sky.net.disconnect());
-    const dropped = await host.page.waitForFunction(() => window.__sky.net.remotes === 0, { timeout: 8000, polling: 200 }).then(() => true).catch(() => false);
-    if (!dropped) {
-      const dump = await host.page.evaluate(() => ({
-        remotes: window.__sky.net.remotes,
-        status: (document.getElementById('phoneStatus') || {}).textContent,
-        sent: window.__sky.net.sent,
-        err: window.__sky.net.lastErr,
-      }));
-      const phoneDump = await phone.page.evaluate(() => ({
-        via: window.__sky.net && window.__sky.input && (document.getElementById('joinStatus') || {}).textContent,
-        connected: window.__sky.net.connected,
-      }));
-      throw new Error('remote stayed ' + JSON.stringify({ dump, phoneDump }));
-    }
+    await new Promise((r) => setTimeout(r, 500));
     const after = await host.page.evaluate(() => {
       const sky = window.__sky;
       sky.game.freeze = true;
@@ -457,7 +499,7 @@ try {
         remote: sky.race.racers.some((r) => r.driver.kind === 'remote' && !r.parked),
       };
     });
-    if (after.remote || !(after.dist > 2)) throw new Error('host stalled after drop ' + JSON.stringify(after));
+    if (!(after.dist > 2)) throw new Error('host stalled after drop ' + JSON.stringify(after));
     if (after.state !== 'race' && !(after.state === 'paused' && after.hidden)) throw new Error('host stalled after drop ' + JSON.stringify(after));
     await host.page.bringToFront();
     await host.page.evaluate(() => {
@@ -497,7 +539,12 @@ try {
     await host.page.close();
   } else {
     await host.page.evaluate(() => window.__sky.startGame());
+    await host.page.waitForFunction(() => {
+      const t = (document.getElementById('phoneStatus') || {}).textContent || '';
+      return t.indexOf('已連到伺服器') >= 0;
+    }, { timeout: 45000 });
     const meta = await host.page.evaluate(() => ({ url: window.__sky.net.url }));
+    if (!/[?&]relay=\d+/.test(meta.url) || !/[?&]epoch=\d+/.test(meta.url)) throw new Error('join url missing broker ' + meta.url);
     const phoneUrl = new URL(meta.url);
     phoneUrl.searchParams.set('track', 'canyon');
     phoneUrl.searchParams.set('noadapt', '1');
@@ -568,6 +615,47 @@ try {
   }
 } catch (e) {
   bad('phone relay throttle', e);
+}
+
+try {
+  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1');
+  await host.page.waitForFunction(() => window.__sky && window.__sky.net && window.__sky.net.role === 'host', { timeout: 20000 });
+  await host.page.evaluate(() => window.__sky.startGame());
+  const kept = await host.page.evaluate(() => {
+    const sky = window.__sky;
+    const remote = sky.net.debugJoin('same-player');
+    const r = sky.race.racers.find((x) => x.driver && x.driver.kind === 'remote');
+    if (!remote || !r) return { err: 'no remote' };
+    const startFi = r.veh.fi;
+    r._token = 7;
+    r.lap.n = 4;
+    r.lap.t = 18;
+    r.veh.placeOnTrack(40, 1.5, 20);
+    const placed = r.veh.fi;
+    sky.net.debugBlip();
+    sky.sim(0.35);
+    const held = sky.net.p3();
+    const again = sky.net.debugJoin('same-player');
+    const back = sky.net.p3();
+    sky.net.debugExpire();
+    const gone = sky.net.p3();
+    sky.net.debugJoin('same-player');
+    const fresh = sky.net.p3();
+    return { startFi, placed, held, back, gone, fresh, same: again === remote || !!(back && back.token === 7) };
+  });
+  if (kept.err) throw new Error(kept.err);
+  if (!kept.held || kept.held.lap !== 4 || !kept.held.holding) throw new Error('blip dropped the car ' + JSON.stringify(kept));
+  if (Math.abs(kept.held.fi - kept.placed) > 18) throw new Error('blip teleported ' + JSON.stringify(kept));
+  if (Math.abs(kept.held.fi - kept.startFi) < 12) throw new Error('blip returned to the start ' + JSON.stringify(kept));
+  if (!kept.back || kept.back.lap !== 4 || kept.back.token !== 7 || kept.back.holding) throw new Error('rejoin reset P3 ' + JSON.stringify(kept));
+  if (Math.abs(kept.back.fi - kept.placed) > 18) throw new Error('rejoin moved P3 ' + JSON.stringify(kept));
+  if (kept.gone) throw new Error('grace did not expire ' + JSON.stringify(kept));
+  if (!kept.fresh || kept.fresh.lap !== 1 || kept.fresh.token !== 0) throw new Error('new join after grace ' + JSON.stringify(kept));
+  if (Math.abs(kept.fresh.fi - kept.startFi) > 2) throw new Error('new join was not at the start ' + JSON.stringify(kept));
+  await host.page.close();
+  ok('phone blip keeps P3 laps');
+} catch (e) {
+  bad('phone blip keeps P3 laps', e);
 }
 
 await browser.close();
