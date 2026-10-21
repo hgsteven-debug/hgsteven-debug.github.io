@@ -66,6 +66,9 @@ h2 { margin:0 0 .8rem; font-size:1.8rem; } h3 { margin:.2rem 0 .6rem; font-size:
 .sub { color:var(--dim); margin:.2rem 0 1rem; }
 .notice { background:rgba(255,190,40,.12); border:1px solid rgba(255,190,40,.55); color:#ffe29a; padding:.8rem 1rem; border-radius:.6rem; margin:.6rem 0 1rem; line-height:1.6; font-size:.95rem; }
 .padline { font-size:.9rem; color:var(--dim); margin-bottom:1rem; } .padline.ok { color:#7dffa0; }
+.padlist { font:.82rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--dim); margin:-.35rem 0 .7rem; word-break:break-word; }
+.padlist .p1 { color:#7dffa0; } .padlist .p2 { color:#9fd4ff; } .padlist .virt { color:#ffe29a; }
+.padhint { font-size:.95rem; color:#cfe9ff; margin:.15rem 0 .55rem; font-weight:650; }
 .phonejoin { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; margin:.2rem 0 .8rem; }
 .phonejoin .grow { flex:1; min-width:0; }
 .phonejoin .padline { margin-bottom:.25rem; }

@@ -183,6 +183,149 @@ async function testPads() {
   await page.close();
 }
 
+async function testTeslaSlots() {
+  const { page, errors } = await open('?q=low&noadapt=1&nopauseblur=1&ai=0');
+  const report = await page.evaluate(() => {
+    const sky = window.__sky;
+    const XID = 'Xbox Wireless Controller (Vendor: 045e Product: 02fd)';
+    const VID = 'Tesla Virtual Gamepad (Vendor: 28de Product: 0001)';
+    const mk = (index, id, mapping) => ({
+      index, id, mapping, connected: true,
+      axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+    });
+    const resetLobby = () => {
+      sky.leaveP2();
+      sky.input.lockPad(null);
+      sky.lobby.prev.clear();
+    };
+    let slots = [];
+    navigator.getGamepads = () => slots;
+
+    // 虛擬手把占在 index 0，兩支相同 id 的 Xbox 在 2 和 3。P1 必須是第一支真手把。
+    const virt0 = mk(0, VID, 'standard');
+    virt0.buttons[0].pressed = true; virt0.buttons[0].value = 1; virt0.axes = [1, -1, 0, 0];
+    const lateA = mk(2, XID, 'standard');
+    const lateB = mk(3, XID, 'standard');
+    slots = [virt0, null, lateA, lateB];
+    resetLobby();
+    sky.input.poll(1 / 60); sky.pollLobby();
+    sky.input.poll(1 / 60); sky.pollLobby();
+    const virtP1 = sky.input.padInfo.index;
+    const virtNotP2 = sky.lobby.p2 == null;
+    lateB.buttons[0].pressed = true; lateB.buttons[0].value = 1;
+    sky.input.poll(1 / 60); sky.pollLobby();
+    const virtJoin = sky.lobby.p2 && sky.lobby.p2.index;
+    const virtP1Stuck = sky.input.padInfo.index;
+
+    // 車主照片：index 0 Xbox、index 1 空、index 2 Xbox（同一支 id）、index 3 Tesla Virtual。
+    const virt = mk(3, VID, 'standard');
+    virt.buttons[0].pressed = true; virt.buttons[0].value = 1; virt.axes = [1, -1, 1, 0];
+    const pad0 = mk(0, XID, 'standard');
+    const pad2 = mk(2, XID, '');
+    slots = [pad0, null, null, virt];
+    resetLobby();
+    sky.input.poll(1 / 60); sky.pollLobby();
+    sky.input.poll(1 / 60); sky.pollLobby();
+    sky.input.poll(1 / 60); sky.pollLobby();
+    const quiet = {
+      p1: sky.input.padInfo.index,
+      p1id: sky.input.padInfo.id,
+      p2: sky.lobby.p2,
+      hint: document.getElementById('startP2Hint').textContent,
+      list: document.getElementById('startPads').textContent,
+    };
+    // 第一次按下才出現的第二支：這一幀不能被吃成 P1。
+    pad2.buttons[0].pressed = true; pad2.buttons[0].value = 1;
+    slots = [pad0, null, pad2, virt];
+    sky.input.poll(1 / 60);
+    const p1AfterReveal = sky.input.padInfo.index;
+    sky.pollLobby();
+    const revealed = sky.lobby.p2 && { index: sky.lobby.p2.index, id: sky.lobby.p2.id };
+    const listRevealed = document.getElementById('startPads').textContent;
+    pad2.buttons[0].pressed = false; pad2.buttons[0].value = 0;
+    sky.pollLobby();
+    pad2.buttons[8].pressed = true; pad2.buttons[8].value = 1;
+    sky.pollLobby();
+    const leftReveal = sky.lobby.p2 == null && sky.input.padIndex == null;
+    pad2.buttons[8].pressed = false; pad2.buttons[8].value = 0;
+    sky.input.poll(1 / 60); sky.pollLobby();
+    // 類比按鈕：pressed 為 false，value 只到 0.62。
+    pad2.buttons[1] = { pressed: false, value: 0.62 };
+    sky.input.poll(1 / 60); sky.pollLobby();
+    const analog = sky.lobby.p2 && sky.lobby.p2.index;
+    const p1DuringAnalog = sky.input.padIndex;
+    pad2.buttons[1] = { pressed: false, value: 0 };
+    sky.pollLobby();
+    pad2.buttons[8].pressed = true; pad2.buttons[8].value = 1;
+    sky.pollLobby();
+    pad2.buttons[8].pressed = false; pad2.buttons[8].value = 0;
+    sky.pollLobby();
+    // 只推搖桿、沒有按鈕。
+    pad2.axes[0] = 0.82;
+    sky.pollLobby();
+    const stick = sky.lobby.p2 && sky.lobby.p2.index;
+    pad2.axes[0] = 0;
+    sky.pollLobby();
+    pad2.buttons[8].pressed = true; pad2.buttons[8].value = 1;
+    sky.pollLobby();
+    pad2.buttons[8].pressed = false; pad2.buttons[8].value = 0;
+    sky.pollLobby();
+    // 按鈕是數字而不是 {pressed,value}。
+    pad2.buttons = [0, 0, 1, 0, 0, 0, 0, 0, 0];
+    sky.pollLobby();
+    const numeric = sky.lobby.p2 && sky.lobby.p2.index;
+    pad2.buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+    pad2.mapping = 'standard';
+    sky.input.poll(1 / 60);
+    sky.startGame();
+    sky.game.freeze = true;
+    sky.game.state = 'race';
+    const p2r = sky.race.locals()[1];
+    for (let i = 0; i < 30; i++) {
+      pad0.axes[0] = -0.2;
+      pad2.axes[0] = 0.2;
+      virt.axes[0] = -1;
+      sky.sim(1 / 60);
+    }
+    pad0.axes[0] = -1;
+    pad2.axes[0] = 1;
+    virt.axes[0] = -1;
+    sky.sim(0.7);
+    return {
+      virtP1, virtNotP2, virtJoin, virtP1Stuck,
+      quiet, p1AfterReveal, revealed, listRevealed, leftReveal, analog, p1DuringAnalog, stick, numeric,
+      split: sky.game.split === true,
+      locals: sky.race.locals().length,
+      p1Race: sky.input.padIndex,
+      p2Race: p2r && p2r.input.padIndex,
+      steer0: sky.input.state.steer,
+      steer1: p2r && p2r.input.state.steer,
+    };
+  });
+  if (errors.length) throw new Error(errors.join('\n'));
+  if (report.virtP1 !== 2 || !report.virtNotP2) throw new Error('virtual stole P1/P2 ' + JSON.stringify(report));
+  if (report.virtJoin !== 3 || report.virtP1Stuck !== 2) throw new Error('virtual-at-0 join ' + JSON.stringify(report));
+  if (report.quiet.p1 !== 0 || report.quiet.p2) throw new Error('quiet lobby ' + JSON.stringify(report.quiet));
+  if (report.quiet.p1id.indexOf('Xbox') < 0) throw new Error('P1 id ' + report.quiet.p1id);
+  if (report.quiet.hint !== '第二支搖桿：按任一鍵加入 P2') throw new Error('hint ' + report.quiet.hint);
+  const list = report.quiet.list;
+  if (!list.includes('[1]') || !list.includes('（空）')) throw new Error('empty slot ' + list);
+  if (!list.includes('[3]') || !list.includes('車機虛擬（不使用）')) throw new Error('virtual line ' + list);
+  if (!list.includes('Tesla Virtual Gamepad')) throw new Error('virtual id ' + list);
+  if (report.p1AfterReveal !== 0) throw new Error('reveal stole P1 ' + JSON.stringify(report));
+  if (!report.revealed || report.revealed.index !== 2 || report.revealed.id !== 'Xbox Wireless Controller (Vendor: 045e Product: 02fd)') throw new Error('reveal join ' + JSON.stringify(report.revealed));
+  if (!report.listRevealed.includes('P2') || !report.listRevealed.includes('（非標準）')) throw new Error('list after join ' + report.listRevealed);
+  if (!report.leftReveal) throw new Error('leave ' + JSON.stringify(report));
+  if (report.analog !== 2 || report.p1DuringAnalog !== 0) throw new Error('analog ' + JSON.stringify(report));
+  if (report.stick !== 2) throw new Error('stick ' + JSON.stringify(report));
+  if (report.numeric !== 2) throw new Error('numeric ' + JSON.stringify(report));
+  if (!report.split || report.locals !== 2) throw new Error('roster ' + JSON.stringify(report));
+  if (report.p1Race !== 0 || report.p2Race !== 2) throw new Error('race pads ' + JSON.stringify(report));
+  if (!(report.steer0 < -0.35 && report.steer1 > 0.35)) throw new Error('steer ' + JSON.stringify(report));
+  await page.close();
+}
+
 async function testKeys() {
   const { page, errors } = await open('?ai=0&q=low&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
   const report = await page.evaluate(() => {
@@ -231,6 +374,7 @@ try {
     ['loop physics', testLoop],
     ['keyboard touch', testKeys],
     ['two gamepads', testPads],
+    ['tesla pad slots', testTeslaSlots],
     ['gamepad test page', testPadPage],
     ['ai lap', testAi],
     ['ai stunt loop', testAiStunt],

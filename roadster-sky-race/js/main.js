@@ -5,7 +5,7 @@ import { CarModel, paintsOf } from './car.js';
 import { VEHICLES, DEFAULT_VEHICLE, vehicleById } from './vehicles.js';
 import { TRACKS, DEFAULT_TRACK, trackById } from './tracks.js';
 import { Vehicle } from './physics.js';
-import { InputManager } from './input.js';
+import { InputManager, isVirtualPad, padButtonDown, padStickHot } from './input.js';
 import { UI, shortPadName } from './ui.js';
 import { Hud } from './hud.js';
 import { GameAudio } from './audio.js';
@@ -1210,13 +1210,23 @@ function checkResults() {
     flushNet(true);
   }
 }
+function escPad(s) {
+  return String(s).replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+}
+function mappingLabel(gp) {
+  if (!gp || gp.mapping == null || gp.mapping === '') return '（非標準）';
+  return gp.mapping === 'standard' ? 'standard' : String(gp.mapping);
+}
 function updateLobby() {
   const p1 = $('startP1'), p2 = $('startP2');
   if (!p1 || !p2 || !input) return;
   const pi = input.padInfo;
-  const t1 = pi.connected ? `P1：手把 ${pi.index}　${shortPadName(pi.id)}` : 'P1：鍵盤、觸控（沒有第二支手把時也是你）';
+  const p1real = pi.connected && !isVirtualPad(pi.id);
+  const t1 = p1real ? `P1：手把 ${pi.index}　${shortPadName(pi.id)}` : 'P1：鍵盤、觸控（沒有第二支手把時也是你）';
   if (p1.textContent !== t1) p1.textContent = t1;
-  p1.className = 'padline' + (pi.connected ? ' ok' : '');
+  p1.className = 'padline' + (p1real ? ' ok' : '');
+  const hint = $('startP2Hint');
+  if (hint && hint.textContent !== '第二支搖桿：按任一鍵加入 P2') hint.textContent = '第二支搖桿：按任一鍵加入 P2';
   if (lobby.p2) {
     const t2 = `P2：手把 ${lobby.p2.index}　${shortPadName(lobby.p2.id)}（上下分屏）。按 Back／Select／－ 離開。`;
     if (p2.textContent !== t2) p2.textContent = t2;
@@ -1226,6 +1236,28 @@ function updateLobby() {
     if (p2.textContent !== t2) p2.textContent = t2;
     p2.className = 'padline';
   }
+  const box = $('startPads');
+  if (!box) return;
+  const slots = input.getPadList();
+  const lines = [];
+  if (!slots.length) lines.push('<div>（尚未回報手把槽）</div>');
+  for (let i = 0; i < slots.length; i++) {
+    const gp = slots[i];
+    if (!gp || gp.connected === false) {
+      lines.push(`<div>[${i}] （空）</div>`);
+      continue;
+    }
+    const virt = isVirtualPad(gp);
+    let role = '未加入';
+    let cls = '';
+    if (virt) { role = '車機虛擬（不使用）'; cls = 'virt'; }
+    else if (p1real && pi.index === gp.index) { role = 'P1'; cls = 'p1'; }
+    else if (lobby.p2 && lobby.p2.index === gp.index) { role = 'P2'; cls = 'p2'; }
+    const idx = Number.isFinite(gp.index) ? gp.index : i;
+    lines.push(`<div class="${cls}">[${idx}] ${escPad(gp.id || '（無 id）')}　${escPad(mappingLabel(gp))}　${role}</div>`);
+  }
+  const html = lines.join('');
+  if (box.innerHTML !== html) box.innerHTML = html;
 }
 function leaveP2() {
   lobby.p2 = null;
@@ -1234,11 +1266,12 @@ function leaveP2() {
 }
 function joinPad(index) {
   if (lobby.p2 || !input) return false;
-  const pads = input.getPads();
+  const pads = input.getPadList();
   const gp = pads.find((g) => g && g.index === index);
-  if (!gp) return false;
-  if ((input.padInfo.connected && input.padInfo.index === index) || (input.pad && input.pad.index === index)) return false;
-  if (input.padInfo.connected && input.padInfo.index >= 0) input.lockPad(input.padInfo.index);
+  if (!gp || isVirtualPad(gp)) return false;
+  const p1idx = input.padInfo.connected && !isVirtualPad(input.padInfo.id) ? input.padInfo.index : -1;
+  if (p1idx === index || (input.pad && input.pad.index === index && !isVirtualPad(input.pad))) return false;
+  if (p1idx >= 0) input.lockPad(p1idx);
   else input.lockPad(-2);
   lobby.p2 = { index: gp.index, id: gp.id || '' };
   updateLobby();
@@ -1246,19 +1279,44 @@ function joinPad(index) {
 }
 function pollLobby() {
   if (!input || game.state !== 'menu') return;
-  const pads = input.getPads();
-  const menuIdx = input.padInfo.index;
-  for (const gp of pads) {
-    const prev = lobby.prev.get(gp.index) || [];
-    const btns = (gp.buttons || []).map((b) => !!(b && (b.pressed || b.value > 0.5)));
-    lobby.prev.set(gp.index, btns);
-    const edge = btns.some((v, i) => v && !prev[i]);
-    if (lobby.p2 && gp.index === lobby.p2.index) {
-      if (btns[8] && !prev[8]) leaveP2();
+  // 走每一格，包含 null。P2 不是 index 1；Tesla 上第二支 Xbox 在 index 2，index 1 是空的。
+  const slots = input.getPadList();
+  const menuIdx = input.padInfo.connected && !isVirtualPad(input.padInfo.id) ? input.padInfo.index : -1;
+  let firstReal = null;
+  let joinIdx = null;
+  const seen = new Set();
+  for (let i = 0; i < slots.length; i++) {
+    const gp = slots[i];
+    if (!gp || gp.connected === false) {
+      lobby.prev.delete(i);
       continue;
     }
-    if (!lobby.p2 && edge && gp.index !== menuIdx) joinPad(gp.index);
+    const idx = Number.isFinite(gp.index) ? gp.index : i;
+    seen.add(idx);
+    const prev = lobby.prev.get(idx) || { btns: [], axes: [] };
+    const prevBtns = Array.isArray(prev.btns) ? prev.btns : [];
+    const prevAxes = Array.isArray(prev.axes) ? prev.axes : [];
+    const buttons = gp.buttons || [];
+    const btns = [];
+    for (let b = 0; b < buttons.length; b++) btns.push(padButtonDown(buttons[b]));
+    const src = gp.axes || [];
+    const axes = [];
+    for (let a = 0; a < src.length; a++) axes.push(Number.isFinite(src[a]) ? src[a] : 0);
+    const edge = btns.some((v, bi) => v && !prevBtns[bi]);
+    const stick = padStickHot(axes, prevAxes);
+    lobby.prev.set(idx, { btns, axes });
+    if (isVirtualPad(gp)) continue;
+    if (firstReal == null) firstReal = idx;
+    const reserved = menuIdx >= 0 ? menuIdx : firstReal;
+    if (lobby.p2 && idx === lobby.p2.index) {
+      if (btns[8] && !prevBtns[8]) leaveP2();
+      continue;
+    }
+    // 同一幀有多支在動時，取 index 最小、還沒被 P1 占用的那支。id 相同也分開算。
+    if (!lobby.p2 && joinIdx == null && idx !== reserved && (edge || stick)) joinIdx = idx;
   }
+  for (const k of [...lobby.prev.keys()]) if (!seen.has(k)) lobby.prev.delete(k);
+  if (joinIdx != null && !lobby.p2) joinPad(joinIdx);
   updateLobby();
 }
 

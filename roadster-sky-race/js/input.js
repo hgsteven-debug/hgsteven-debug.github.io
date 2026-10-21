@@ -88,6 +88,34 @@ const AXIS_LIMIT = 1.05;            // 超過這個絕對值（例如十字鍵 h
 const CAL_TIME = 0.3;               // 連線後的校正取樣時間（秒）
 const median = (a) => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : 0; };
 
+// 車機瀏覽器會多回報一支「Tesla Virtual Gamepad」（實測在 index 3）。那是車子自己的虛擬輸入，不能當玩家。
+export function isVirtualPad(gp) {
+  const id = typeof gp === 'string' ? gp : (gp && gp.id);
+  return /tesla virtual/i.test(String(id || ''));
+}
+// 按鈕可能是 {pressed,value}，也可能是 0–1 的數字；類比值超過 0.4 就算按下。
+export function padButtonDown(b) {
+  if (b == null) return false;
+  if (typeof b === 'number') return Number.isFinite(b) && b > 0.4;
+  if (b.pressed) return true;
+  const v = typeof b.value === 'number' && Number.isFinite(b.value) ? b.value : 0;
+  return v > 0.4;
+}
+// 明確的搖桿推動。略過 hat 閒置值，以及板機靜止在 -1 附近。
+export function padStickHot(axes, prev) {
+  const a = axes || [];
+  const p = prev || [];
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i];
+    if (!Number.isFinite(v) || Math.abs(v) > AXIS_LIMIT) continue;
+    if (v <= -0.85) continue;
+    if (Math.abs(v) > 0.55) return true;
+    const was = Number.isFinite(p[i]) ? p[i] : 0;
+    if (Math.abs(was) <= AXIS_LIMIT && Math.abs(v - was) > 0.45 && Math.abs(v) > 0.35) return true;
+  }
+  return false;
+}
+
 // 每位玩家一個 InputManager。padIndex 指定搖桿；null = 自動選擇。
 // keys:false 時不監聽鍵盤（給 P2，避免和 P1 搶按鍵）。exclusive 時不會改抓別支搖桿。
 // 目前畫面只接兩位本地玩家；同一個建構子之後可以再長到四位。
@@ -284,16 +312,33 @@ export class InputManager {
   }
   setBinding(id, b) { this.bindings[id] = b; this.saveBindings(); }
 
-  getPads() {
+  // 保留空位。Tesla 上第二支手把在 index 2，index 1 常常是 null。
+  getPadList() {
     let list = [];
     try { list = (navigator.getGamepads ? navigator.getGamepads() : []) || []; } catch (e) { list = []; }
-    return Array.from(list).filter((g) => g && g.connected !== false);
+    const n = list.length || 0;
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) out[i] = list[i] || null;
+    return out;
+  }
+  getPads() {
+    return this.getPadList().filter((g) => g && g.connected !== false);
   }
   refreshPads() {
     const pads = this.getPads();
     let gp = null;
-    if (this.padIndex != null) gp = pads.find((g) => g.index === this.padIndex) || null;
-    if (!gp && !this.exclusive) gp = pads.find((g) => g.mapping === 'standard') || pads[0] || null;
+    if (this.padIndex != null) {
+      const held = pads.find((g) => g.index === this.padIndex) || null;
+      // 虛擬手把不能占住 P1。exclusive 時維持鎖定，否則放開這個 index 改挑真正的手把。
+      if (held && !isVirtualPad(held)) gp = held;
+      else if (!this.exclusive) this.padIndex = null;
+    }
+    // 不挑「第一個 standard」：虛擬手把也可能是 standard，而且兩支 Xbox 的 id 相同。
+    // 固定在第一支真正的手把，後出現或剛按下的另一支才不會把 P1 搶走。
+    if (!gp && !this.exclusive) {
+      gp = pads.find((g) => !isVirtualPad(g)) || null;
+      if (gp) this.padIndex = gp.index;
+    }
     this.pad = gp;
     const profile = gp ? resolveProfile(this.padMode, gp.id) : this.profile;
     const info = gp ? { connected: true, id: gp.id, mapping: gp.mapping, index: gp.index, profile: profile.id } : { connected: false, id: '', mapping: '', index: -1, profile: this.profile.id };
