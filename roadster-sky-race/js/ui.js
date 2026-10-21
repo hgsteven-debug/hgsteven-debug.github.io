@@ -1,11 +1,28 @@
 // 選單、設定、按鍵對應畫面與觸控按鍵
 import { ACTIONS, DEFAULT_BINDINGS, bindingText, buttonNames, hintsFor, PROFILES } from './input.js';
+import { viewportDeltaToUi } from './sync.js';
 import { paintsOf } from './car.js';
 import { VEHICLES, DEFAULT_VEHICLE, vehicleById, statsOf, STAT_LABELS } from './vehicles.js';
 import { TRACKS, DEFAULT_TRACK, trackById } from './tracks.js';
 import { store } from './util.js';
 
 const $ = (id) => document.getElementById(id);
+
+// 元素本地的 +x／+y 在視窗裡指向哪。旋轉在祖先（body）上時也要算進去。
+function uiBasis(el) {
+  let a = 1, b = 0, c = 0, d = 1;
+  for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+    const t = getComputedStyle(node).transform;
+    if (!t || t === 'none') continue;
+    const m = new DOMMatrix(t);
+    const na = m.a * a + m.c * b;
+    const nb = m.b * a + m.d * b;
+    const nc = m.a * c + m.c * d;
+    const nd = m.b * c + m.d * d;
+    a = na; b = nb; c = nc; d = nd;
+  }
+  return { a, b, c, d };
+}
 
 export function shortPadName(id) {
   if (!id) return '';
@@ -139,88 +156,99 @@ export class UI {
       }
     });
     $('btnFull').addEventListener('click', () => this.h.onFullscreen());
-    this.wireStick();
-    // 觸控按鍵（Pointer Events，支援多點）。Android Chrome 會把按住誤判成捲動並送 pointercancel，
-    // 那一聲不能放開油門，否則加速鍵一按就沒了。
-    for (const b of document.querySelectorAll('[data-t]')) this.wireHold(b, b.dataset.t);
-    for (const b of document.querySelectorAll('[data-p]')) {
-      b.addEventListener('pointerdown', (e) => {
-        if (e.cancelable) e.preventDefault();
-        this.h.onTouchPress(b.dataset.p);
-      });
-      b.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
-    }
+    this.wirePad();
   }
 
-  wireHold(el, key) {
-    const ids = new Set();
-    const down = (e) => {
-      if (e.cancelable) e.preventDefault();
-      ids.add(e.pointerId);
-      this.input.touch[key] = true;
-      el.classList.add('on');
-      try { el.setPointerCapture(e.pointerId); } catch (_) { /* */ }
-    };
-    const up = (e) => {
-      if (e && e.pointerId != null) ids.delete(e.pointerId);
-      if (ids.size) return;
-      this.input.touch[key] = false;
-      el.classList.remove('on');
-    };
-    el.addEventListener('pointerdown', down);
-    el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', () => { /* 保持按住 */ });
-    el.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
-    el.addEventListener('touchend', (e) => {
-      if (e.cancelable) e.preventDefault();
-      ids.clear();
-      up(null);
-    }, { passive: false });
+  // 手指下的那個元素才算數（CSS 轉 90° 之後，用矩形自己算會點到隔壁鍵）。
+  padTarget(clientX, clientY) {
+    const root = $('touch');
+    const under = document.elementFromPoint(clientX, clientY);
+    const el = under && under.closest ? under.closest('[data-t],[data-p],#stick') : null;
+    if (!el || !root || !root.contains(el)) return null;
+    return el;
   }
 
-  // 左搖桿：和右邊的板機、面鍵分開抓指標，可以同時轉向和加速。
-  wireStick() {
+  // 觸控按鍵（Pointer Events，支援多點）。Android Chrome 會把按住誤判成捲動並送 pointercancel，
+  // 那一聲不能放開油門，否則加速鍵一按就沒了。
+  // 搖桿的位移要換成畫面上的右／下，不能直接用視窗的 clientX（直向轉正時兩者差 90°）。
+  wirePad() {
+    const root = $('touch');
     const stick = $('stick');
-    if (!stick) return;
+    if (!root || !stick) return;
     const knob = stick.querySelector('.knob');
-    const active = new Set();
+    const held = new Map();
+    const holds = new Map();
+    const setHold = (key, on) => {
+      this.input.touch[key] = on;
+      const el = root.querySelector(`[data-t="${key}"]`);
+      if (el) el.classList.toggle('on', on);
+    };
     const place = (e) => {
       const rect = stick.getBoundingClientRect();
-      const dx = (e.clientX - (rect.left + rect.width / 2)) / (rect.width * 0.38);
-      const dy = (e.clientY - (rect.top + rect.height / 2)) / (rect.height * 0.38);
+      const basis = uiBasis(stick);
+      const local = viewportDeltaToUi(
+        e.clientX - (rect.left + rect.width / 2),
+        e.clientY - (rect.top + rect.height / 2),
+        basis.a, basis.b, basis.c, basis.d,
+      );
+      const w = stick.offsetWidth || rect.width || 1;
+      const h = stick.offsetHeight || rect.height || 1;
       const dead = (v) => Math.abs(v) < 0.14 ? 0 : Math.max(-1, Math.min(1, v));
-      const steer = dead(dx), pitch = dead(dy);
+      const steer = dead(local.x / (w * 0.38));
+      const pitch = dead(local.y / (h * 0.38));
       this.input.touch.stick = true;
       this.input.touch.steer = steer;
       this.input.touch.pitch = pitch;
       if (knob) knob.style.transform = `translate(-50%, -50%) translate(${steer * 34}%, ${pitch * 34}%)`;
     };
-    const clear = (e) => {
-      active.delete(e.pointerId);
-      if (active.size) return;
+    const releaseStick = () => {
       this.input.touch.stick = false;
       this.input.touch.steer = 0;
       this.input.touch.pitch = 0;
       if (knob) knob.style.transform = 'translate(-50%, -50%)';
     };
-    stick.addEventListener('pointerdown', (e) => {
+    const down = (e) => {
+      const el = this.padTarget(e.clientX, e.clientY);
+      if (!el) return;
       if (e.cancelable) e.preventDefault();
-      active.add(e.pointerId);
-      try { stick.setPointerCapture(e.pointerId); } catch (_) { /* */ }
-      place(e);
-    });
-    stick.addEventListener('pointermove', (e) => { if (active.has(e.pointerId)) place(e); });
-    stick.addEventListener('pointerup', clear);
-    stick.addEventListener('pointercancel', () => { /* 搖桿按住時被當成捲動也不能鬆開 */ });
-    stick.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
-    stick.addEventListener('touchend', (e) => {
-      if (e.cancelable) e.preventDefault();
-      active.clear();
-      this.input.touch.stick = false;
-      this.input.touch.steer = 0;
-      this.input.touch.pitch = 0;
-      if (knob) knob.style.transform = 'translate(-50%, -50%)';
-    }, { passive: false });
+      if (el.id === 'stick') {
+        held.set(e.pointerId, { type: 'stick' });
+        try { stick.setPointerCapture(e.pointerId); } catch (_) { /* */ }
+        place(e);
+        return;
+      }
+      if (el.dataset.p) {
+        if (this.h.onTouchPress) this.h.onTouchPress(el.dataset.p);
+        else this.input.noteTouchPress(el.dataset.p);
+        el.classList.add('on');
+        held.set(e.pointerId, { type: 'press', el });
+        return;
+      }
+      const key = el.dataset.t;
+      if (!key) return;
+      holds.set(key, (holds.get(key) || 0) + 1);
+      setHold(key, true);
+      held.set(e.pointerId, { type: 'hold', key });
+      try { el.setPointerCapture(e.pointerId); } catch (_) { /* */ }
+    };
+    const up = (e) => {
+      const h = held.get(e.pointerId);
+      if (!h) return;
+      held.delete(e.pointerId);
+      if (h.type === 'press') { h.el.classList.remove('on'); return; }
+      if (h.type === 'hold') {
+        const n = (holds.get(h.key) || 1) - 1;
+        if (n <= 0) { holds.delete(h.key); setHold(h.key, false); }
+        else holds.set(h.key, n);
+        return;
+      }
+      if (![...held.values()].some((x) => x.type === 'stick')) releaseStick();
+    };
+    root.addEventListener('pointerdown', down);
+    root.addEventListener('pointermove', (e) => { if (held.get(e.pointerId)?.type === 'stick') place(e); });
+    root.addEventListener('pointerup', up);
+    root.addEventListener('pointercancel', () => { /* 按住時被當成捲動也不能鬆開 */ });
+    root.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
   }
 
   // ---------- 設定 ----------

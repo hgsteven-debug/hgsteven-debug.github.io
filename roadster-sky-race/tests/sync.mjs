@@ -140,6 +140,19 @@ function testGuestSmooth() {
   assert(sync.wantCssRotate({ type: '', sw: 844, sh: 430 }, 'native') === false, 'url bar jitter');
   assert(sync.wantCssRotate({ type: '', sw: 390, sh: 760 }, 'css') === true);
   assert(sync.wantCssRotate({ type: '', sw: 844, sh: 390 }, 'css') === false);
+  // 瀏覽器已橫向就不要再 CSS 轉。angle 和 window.orientation 不一致時也不要轉兩次。
+  assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 90, win: 0, iw: 915, ih: 412 }, 'css') === false, 'angle landscape, portrait type');
+  assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 0, win: 90, iw: 800, ih: 760 }, 'css') === false, 'window.orientation landscape');
+  assert(sync.wantCssRotate({ type: 'landscape-secondary', angle: 270, win: 90, iw: 390, ih: 844 }, 'css') === false, 'type landscape wins');
+  assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 0, win: 90, iw: 412, ih: 915 }, '') === true, 'layout still portrait');
+  const right = sync.viewportDeltaToUi(0, 40, 0, 1, -1, 0);
+  const left = sync.viewportDeltaToUi(0, -40, 0, 1, -1, 0);
+  const up = sync.viewportDeltaToUi(30, 0, 0, 1, -1, 0);
+  const ident = sync.viewportDeltaToUi(25, -10, 1, 0, 0, 1);
+  assert(right.x > 30 && Math.abs(right.y) < 1, JSON.stringify(right));
+  assert(left.x < -30 && Math.abs(left.y) < 1, JSON.stringify(left));
+  assert(up.y < -20 && Math.abs(up.x) < 1, JSON.stringify(up));
+  assert(Math.abs(ident.x - 25) < 1e-6 && Math.abs(ident.y + 10) < 1e-6, JSON.stringify(ident));
   const packed = sync.packSelf({ x: 1.239, y: 2, z: 3, vx: 10.129, vy: 0, vz: 0, onRoad: false, speed: 12.3456, qw: 1 });
   assert(packed.x === 1.24 && packed.speed === 12.35 && packed.onRoad === false, JSON.stringify(packed));
   assert(JSON.stringify(packed).length < 400, 'self payload ' + JSON.stringify(packed).length);

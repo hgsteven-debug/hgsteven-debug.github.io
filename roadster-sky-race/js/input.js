@@ -136,6 +136,7 @@ export class InputManager {
     this.onProfileChange = () => {};
     this.state = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
     this.pressed = { camera: false, reset: false, pause: false };
+    this._touchEdge = { camera: false, reset: false, pause: false };
     this.nav = { up: false, down: false, left: false, right: false, confirm: false, back: false };
     this._prev = {};
     this._navPrev = {};
@@ -184,6 +185,10 @@ export class InputManager {
 
   _newCal() { return { done: false, t: 0, n: 0, samples: [], centre: {}, ignore: new Set(), hat: new Set(), still: {}, last: {}, heal: {} }; }
   setInvertSteer(v) { this.invertSteer = !!v; store.set('invertSteer', this.invertSteer); }
+  // 觸控面鍵是點一下，不是按住。先記著，等 poll 跟鍵盤一起變成本幀的 pressed。
+  noteTouchPress(name) {
+    if (name === 'camera' || name === 'reset' || name === 'pause') this._touchEdge[name] = true;
+  }
   // 手動指定搖桿模式（auto / switch / xbox）；會覆寫自動偵測，存在 localStorage
   setPadMode(m) {
     if (!['auto', 'switch', 'xbox'].includes(m)) return;
@@ -457,9 +462,12 @@ export class InputManager {
     st.nitro = !!st.padNitro || this.isKey('ShiftLeft', 'ShiftRight') || this.touch.nitro;
     const touchPitch = this.touch.stick ? clamp(this.touch.pitch || 0, -1, 1) : 0;
     st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)) + touchPitch, -1, 1);
-    pr.camera = pr.camera || this.consumeKey('KeyC');
-    pr.reset = pr.reset || this.consumeKey('KeyR');
-    pr.pause = pr.pause || this.consumeKey('Escape') || this.consumeKey('KeyP');
+    pr.camera = pr.camera || this.consumeKey('KeyC') || !!this._touchEdge.camera;
+    pr.reset = pr.reset || this.consumeKey('KeyR') || !!this._touchEdge.reset;
+    pr.pause = pr.pause || this.consumeKey('Escape') || this.consumeKey('KeyP') || !!this._touchEdge.pause;
+    this._touchEdge.camera = false;
+    this._touchEdge.reset = false;
+    this._touchEdge.pause = false;
     if (this.override) Object.assign(st, this.override);
     this.pressed = pr;
     this.keyPressedQueue.clear();
