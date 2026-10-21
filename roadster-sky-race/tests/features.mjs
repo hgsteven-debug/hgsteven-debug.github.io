@@ -490,6 +490,113 @@ async function testStuntDrive() {
   if (report.fuzz.length) throw new Error('fuzz ' + JSON.stringify(report.fuzz.slice(0, 6)));
 }
 
+function overlap(a, b) {
+  return a.x < b.x + b.w - 0.5 && a.x + a.w > b.x + 0.5 && a.y < b.y + b.h - 0.5 && a.y + a.h > b.y + 0.5;
+}
+
+async function measurePad(page) {
+  return page.evaluate(() => {
+    const box = (sel) => {
+      const el = document.querySelector(sel);
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height, t: (el.textContent || '').replace(/\s+/g, '') };
+    };
+    const gas = box('[data-t="gas"]');
+    const brake = box('[data-t="brake"]');
+    const faces = ['y', 'x', 'b', 'a'].map((k) => box('.gpad.face.' + k));
+    const stick = box('#stick');
+    const hit = (b) => {
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      const node = document.elementFromPoint(cx, cy);
+      const host = node && node.closest ? node.closest('[data-t],[data-p],#stick') : null;
+      return {
+        cx, cy,
+        key: host && (host.dataset.t || host.dataset.p || (host.id === 'stick' ? 'stick' : '')),
+        inside: cx >= 2 && cy >= 2 && cx <= innerWidth - 2 && cy <= innerHeight - 2,
+      };
+    };
+    const sky = window.__sky;
+    const gasEl = document.querySelector('[data-t="gas"]');
+    gasEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 4, clientX: gas.x + 8, clientY: gas.y + 8, pointerType: 'touch' }));
+    gasEl.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true, pointerId: 4, pointerType: 'touch' }));
+    sky.input.poll(1 / 60);
+    sky.veh.followHost = true;
+    sky.veh.events.respawn = false;
+    sky.veh.pos.y = -80;
+    sky.veh.step(1 / 30, { steer: 0, throttle: 1, brake: 0, lift: false, nitro: false, pitch: 0 });
+    const eased = sky.sync.easeGuestPose(
+      { x: sky.veh.pos.x, y: 0, z: sky.veh.pos.z, ready: true, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 0 },
+      { x: sky.veh.pos.x + 4, y: 0, z: sky.veh.pos.z, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 20 },
+      1 / 60,
+    );
+    const early = sky.sync.hostOffroadWarn({ known: true, onRoad: true, since: 0, toastAt: 0 }, false, 1000);
+    const late = sky.sync.hostOffroadWarn(early.state, false, 1600);
+    return {
+      w: innerWidth, h: innerHeight, gas, brake, faces, stick,
+      hitG: hit(gas), hitB: hit(brake),
+      held: sky.input.touch.gas === true, throttle: sky.input.state.throttle,
+      respawn: !!sky.veh.events.respawn, why: sky.veh.events.why || '',
+      step: eased.step, snapped: !!eased.snapped,
+      early: !!early.warn, late: !!late.warn,
+      toast: (document.getElementById('toast').textContent || ''),
+      forced: document.documentElement.classList.contains('force-landscape'),
+    };
+  });
+}
+
+async function testPhonePad() {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  page.on('console', (msg) => { if (msg.type() === 'error') errors.push('console: ' + msg.text()); });
+  await page.setViewport({ width: 800, height: 360, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
+  await page.goto(BASE + '?join=ABC234&q=low&noadapt=1&nopauseblur=1&nonet=1', { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForFunction(() => window.__sky && window.__sky.track && window.__sky.game.state !== 'loading', { timeout: 90000 });
+  await page.evaluate(() => {
+    document.querySelectorAll('.screen').forEach((s) => s.classList.remove('show'));
+    document.getElementById('touch').classList.remove('hidden');
+    document.getElementById('hud').classList.remove('hidden');
+    window.__sky.game.state = 'race';
+  });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const sizes = [[800, 360], [851, 393], [915, 412], [844, 390]];
+  for (const [w, h] of sizes) {
+    await page.setViewport({ width: w, height: h, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const box = await measurePad(page);
+    if (errors.length) throw new Error(errors.join('\n'));
+    if (box.gas.t !== '加速') throw new Error('label ' + JSON.stringify(box.gas));
+    if (box.brake.t !== '煞車') throw new Error('brake label ' + box.brake.t);
+    if (!(box.gas.x > w * 0.55 && box.gas.y + box.gas.h > h * 0.7)) throw new Error('gas not lower right ' + JSON.stringify(box));
+    if (!(box.brake.x < w * 0.4 && box.brake.y > h * 0.55)) throw new Error('brake not lower left ' + JSON.stringify(box));
+    if (!box.hitG.inside || box.hitG.key !== 'gas') throw new Error('gas hit ' + JSON.stringify(box.hitG));
+    if (!box.hitB.inside || box.hitB.key !== 'brake') throw new Error('brake hit ' + JSON.stringify(box.hitB));
+    for (const f of box.faces) {
+      if (f.y < 0 || f.x < 0 || f.x + f.w > w || f.y + f.h > h) throw new Error('face offscreen ' + JSON.stringify(f));
+      if (overlap(f, box.gas)) throw new Error('face overlaps gas ' + JSON.stringify({ f, gas: box.gas }));
+    }
+    if (overlap(box.stick, box.brake)) throw new Error('stick overlaps brake ' + JSON.stringify(box));
+    if (!box.held || !(box.throttle > 0.5)) throw new Error('hold ' + JSON.stringify(box));
+    if (box.respawn || box.why) throw new Error('local off-track respawn ' + JSON.stringify(box));
+    if (!(box.step < 1.5) || box.snapped) throw new Error('smooth ' + JSON.stringify(box));
+    if (box.early || !box.late) throw new Error('warn debounce ' + JSON.stringify(box));
+  }
+  await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
+  await page.evaluate(() => {
+    document.documentElement.classList.add('force-landscape');
+    document.body.style.width = '844px';
+    document.body.style.height = '390px';
+  });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const turned = await measurePad(page);
+  if (!turned.hitG.inside || turned.hitG.key !== 'gas') throw new Error('rotated gas ' + JSON.stringify(turned));
+  if (!turned.hitB.inside || turned.hitB.key !== 'brake') throw new Error('rotated brake ' + JSON.stringify(turned));
+  if (turned.gas.t !== '加速') throw new Error('rotated label ' + turned.gas.t);
+  const pr = await page.evaluate(() => window.__sky.renderer.getPixelRatio());
+  if (!(pr <= 1.05)) throw new Error('dpr ' + pr);
+  await page.close();
+}
+
 async function testPadPage() {
   const page = await browser.newPage();
   const errors = [];
@@ -508,6 +615,7 @@ try {
   const tests = [
     ['loop physics', testLoop],
     ['keyboard touch', testKeys],
+    ['phone accel pad', testPhonePad],
     ['two gamepads', testPads],
     ['tesla pad slots', testTeslaSlots],
     ['gamepad test page', testPadPage],

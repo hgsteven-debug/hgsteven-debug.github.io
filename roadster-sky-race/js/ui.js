@@ -140,16 +140,42 @@ export class UI {
     });
     $('btnFull').addEventListener('click', () => this.h.onFullscreen());
     this.wireStick();
-    // 觸控按鍵（Pointer Events，支援多點）
-    for (const b of document.querySelectorAll('[data-t]')) {
-      const k = b.dataset.t;
-      const on = (v) => (e) => { e.preventDefault(); this.input.touch[k] = v; b.classList.toggle('on', v); if (v) try { b.setPointerCapture(e.pointerId); } catch (_) { /* */ } };
-      b.addEventListener('pointerdown', on(true));
-      b.addEventListener('pointerup', on(false)); b.addEventListener('pointercancel', on(false)); b.addEventListener('lostpointercapture', on(false));
-    }
+    // 觸控按鍵（Pointer Events，支援多點）。Android Chrome 會把按住誤判成捲動並送 pointercancel，
+    // 那一聲不能放開油門，否則加速鍵一按就沒了。
+    for (const b of document.querySelectorAll('[data-t]')) this.wireHold(b, b.dataset.t);
     for (const b of document.querySelectorAll('[data-p]')) {
-      b.addEventListener('pointerdown', (e) => { e.preventDefault(); this.h.onTouchPress(b.dataset.p); });
+      b.addEventListener('pointerdown', (e) => {
+        if (e.cancelable) e.preventDefault();
+        this.h.onTouchPress(b.dataset.p);
+      });
+      b.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
     }
+  }
+
+  wireHold(el, key) {
+    const ids = new Set();
+    const down = (e) => {
+      if (e.cancelable) e.preventDefault();
+      ids.add(e.pointerId);
+      this.input.touch[key] = true;
+      el.classList.add('on');
+      try { el.setPointerCapture(e.pointerId); } catch (_) { /* */ }
+    };
+    const up = (e) => {
+      if (e && e.pointerId != null) ids.delete(e.pointerId);
+      if (ids.size) return;
+      this.input.touch[key] = false;
+      el.classList.remove('on');
+    };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', () => { /* 保持按住 */ });
+    el.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+    el.addEventListener('touchend', (e) => {
+      if (e.cancelable) e.preventDefault();
+      ids.clear();
+      up(null);
+    }, { passive: false });
   }
 
   // 左搖桿：和右邊的板機、面鍵分開抓指標，可以同時轉向和加速。
@@ -178,15 +204,23 @@ export class UI {
       if (knob) knob.style.transform = 'translate(-50%, -50%)';
     };
     stick.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
       active.add(e.pointerId);
       try { stick.setPointerCapture(e.pointerId); } catch (_) { /* */ }
       place(e);
     });
     stick.addEventListener('pointermove', (e) => { if (active.has(e.pointerId)) place(e); });
     stick.addEventListener('pointerup', clear);
-    stick.addEventListener('pointercancel', clear);
-    stick.addEventListener('lostpointercapture', clear);
+    stick.addEventListener('pointercancel', () => { /* 搖桿按住時被當成捲動也不能鬆開 */ });
+    stick.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+    stick.addEventListener('touchend', (e) => {
+      if (e.cancelable) e.preventDefault();
+      active.clear();
+      this.input.touch.stick = false;
+      this.input.touch.steer = 0;
+      this.input.touch.pitch = 0;
+      if (knob) knob.style.transform = 'translate(-50%, -50%)';
+    }, { passive: false });
   }
 
   // ---------- 設定 ----------
