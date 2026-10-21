@@ -441,11 +441,45 @@ async function testStuntDrive() {
       }
       if (bad) fuzz.push({ trial, i, sp: Math.round(sp), bad, y: Math.round(veh.pos.y) });
     }
-    return { maxDy: +maxDy.toFixed(2), maxTurn: +maxTurn.toFixed(2), worst, cap: Math.round(cap), drives, fuzz, cps: (tr.checkpoints || []).length, arrows: !!(sky.world && sky.world.stuntArrows) };
+    const HALF = 12.2;
+    let minDotR = 1, minDotN = 1, maxEdge = 0;
+    const edgeAt = (i, side) => {
+      const p = tr.surface(i, side * HALF);
+      return [p.x, p.y, p.z];
+    };
+    for (let i = 0; i < tr.N; i++) {
+      const j = (i + 1) % tr.N;
+      const dr = tr.rx[i] * tr.rx[j] + tr.ry[i] * tr.ry[j] + tr.rz[i] * tr.rz[j];
+      const dn = tr.nx[i] * tr.nx[j] + tr.ny[i] * tr.ny[j] + tr.nz[i] * tr.nz[j];
+      if (dr < minDotR) minDotR = dr;
+      if (dn < minDotN) minDotN = dn;
+      for (const side of [-1, 1]) {
+        const a = edgeAt(i, side), b = edgeAt(j, side);
+        const e = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+        if (e > maxEdge) maxEdge = e;
+      }
+    }
+    let cross = null;
+    for (let i = 0; i < tr.N && !cross; i += 2) {
+      for (let j = i + 9; j < tr.N; j += 2) {
+        const gap = Math.min(j - i, tr.N - (j - i));
+        if (gap <= 8) continue;
+        const d = Math.hypot(tr.px[i] - tr.px[j], tr.py[i] - tr.py[j], tr.pz[i] - tr.pz[j]);
+        if (d < 6) { cross = { i, j, d: +d.toFixed(2) }; break; }
+      }
+    }
+    return {
+      maxDy: +maxDy.toFixed(2), maxTurn: +maxTurn.toFixed(2), worst, cap: Math.round(cap), drives, fuzz,
+      cps: (tr.checkpoints || []).length, arrows: !!(sky.world && sky.world.stuntArrows),
+      minDotR: +minDotR.toFixed(3), minDotN: +minDotN.toFixed(3), maxEdge: +maxEdge.toFixed(2), cross,
+    };
   });
   if (errors.length) throw new Error(errors.join('\n'));
   if (!(report.maxDy < 4)) throw new Error('cliff ' + JSON.stringify(report));
   if (!(report.maxTurn < 0.75)) throw new Error('kink ' + JSON.stringify(report));
+  if (!(report.minDotR > 0.9 && report.minDotN > 0.9)) throw new Error('frame twist ' + JSON.stringify(report));
+  if (!(report.maxEdge < 6)) throw new Error('seam ' + JSON.stringify(report));
+  if (report.cross) throw new Error('loop crosses the road ' + JSON.stringify(report.cross));
   if (report.cps < 4) throw new Error('checkpoints ' + JSON.stringify(report));
   if (!report.arrows) throw new Error('no guide arrows');
   for (const d of report.drives) {
