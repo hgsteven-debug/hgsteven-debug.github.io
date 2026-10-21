@@ -22,7 +22,9 @@ export class Hud {
     this.resize();
   }
   resize() {
-    const w = Math.max(2, Math.round(innerWidth * this.fxScale)), h = Math.max(2, Math.round(innerHeight * this.fxScale));
+    const forced = document.documentElement.classList.contains('force-landscape');
+    const vw = forced ? innerHeight : innerWidth, vh = forced ? innerWidth : innerHeight;
+    const w = Math.max(2, Math.round(vw * this.fxScale)), h = Math.max(2, Math.round(vh * this.fxScale));
     this.el.fx.width = w; this.el.fx.height = h;
   }
   setText(key, el, v) { if (this._last[key] !== v) { this._last[key] = v; el.textContent = v; } }

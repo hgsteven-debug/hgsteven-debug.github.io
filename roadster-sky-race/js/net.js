@@ -254,6 +254,8 @@ export function createHost(handlers) {
         drop(remote, 'close');
       } else if (data.t === 'reset') {
         try { if (h.onReset) h.onReset(remote); } catch (e) {}
+      } else if (data.t === 'car') {
+        try { if (h.onCar) h.onCar(remote, data); } catch (e) {}
       }
     });
     conn.on('close', () => drop(session.remotes.find((r) => r.conn === conn), 'close'));

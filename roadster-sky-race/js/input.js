@@ -125,7 +125,7 @@ export class InputManager {
     this.keys = new Set();
     this.useKeyboard = keys !== false;
     this.exclusive = !!exclusive;
-    this.touch = { left: false, right: false, gas: false, brake: false, lift: false, nitro: false };
+    this.touch = { left: false, right: false, gas: false, brake: false, lift: false, nitro: false, stick: false, steer: 0, pitch: 0 };
     this.padIndex = padIndex;       // null = 自動選擇
     this.pad = null;                // 目前使用的 Gamepad 物件
     this.padInfo = { connected: false, id: '', mapping: '', index: -1, profile: 'switch' };
@@ -447,6 +447,7 @@ export class InputManager {
     const kt = (kr ? 1 : 0) - (kl ? 1 : 0);
     const rate = kt === 0 ? 9 : 5;
     this._kbSteer += clamp(kt - this._kbSteer, -rate * dt, rate * dt);
+    if (this.touch.stick) this._kbSteer = clamp(this.touch.steer || 0, -1, 1);
     const kThr = this.isKey('ArrowUp', 'KeyW') || this.touch.gas ? 1 : 0;
     const kBrk = this.isKey('ArrowDown', 'KeyS') || this.touch.brake ? 1 : 0;
     st.steer = clamp(this._padSteer + this._kbSteer, -1, 1) * (this.invertSteer ? -1 : 1);
@@ -454,7 +455,8 @@ export class InputManager {
     st.brake = Math.max(st.padBrake || 0, kBrk);
     st.lift = !!st.padLift || this.isKey('Space') || this.touch.lift;
     st.nitro = !!st.padNitro || this.isKey('ShiftLeft', 'ShiftRight') || this.touch.nitro;
-    st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)), -1, 1);
+    const touchPitch = this.touch.stick ? clamp(this.touch.pitch || 0, -1, 1) : 0;
+    st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)) + touchPitch, -1, 1);
     pr.camera = pr.camera || this.consumeKey('KeyC');
     pr.reset = pr.reset || this.consumeKey('KeyR');
     pr.pause = pr.pause || this.consumeKey('Escape') || this.consumeKey('KeyP');

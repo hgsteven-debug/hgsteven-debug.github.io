@@ -170,6 +170,7 @@ function lerpPose(a, b, u) {
   o.kind = b.kind || a.kind;
   o.name = b.name || a.name;
   o.paint = b.paint || a.paint;
+  o.vehicle = b.vehicle || a.vehicle;
   o.fi = b.fi;
   o.lap = b.lap;
   o.finish = b.finish;

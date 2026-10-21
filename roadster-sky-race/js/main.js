@@ -60,11 +60,18 @@ function fail(msg, err) {
 }
 
 function baseDpr() { return Math.min(window.devicePixelRatio || 1, 2); }
+function viewSize() {
+  const forced = document.documentElement.classList.contains('force-landscape');
+  return forced
+    ? { w: window.innerHeight, h: window.innerWidth }
+    : { w: window.innerWidth, h: window.innerHeight };
+}
 function applySize() {
   const pr = baseDpr() * Q.scale * game.dyn;
+  const { w, h } = viewSize();
   renderer.setPixelRatio(pr);
-  renderer.setSize(innerWidth, innerHeight, false);
-  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
   if (hud) hud.resize();
 }
 
@@ -123,7 +130,11 @@ async function boot() {
     renderer.render(scene, camera);
     $('loadBar').style.width = '100%';
 
-    window.addEventListener('resize', applySize);
+    window.addEventListener('resize', () => { syncPhoneOrientation(); applySize(); });
+    window.addEventListener('orientationchange', () => { syncPhoneOrientation(); applySize(); });
+    for (const ev of ['pointerdown', 'touchend', 'click']) {
+      window.addEventListener(ev, () => { tryLockLandscape(); }, { passive: true });
+    }
     window.addEventListener('pagehide', (ev) => {
       if (ev.persisted) return;
       try { if (guestNet && !guestNet._destroyed) guestNet.destroy(); } catch (e) {}
@@ -166,7 +177,10 @@ async function boot() {
       ui.show('join');
       const jc = $('joinCode');
       if (jc) jc.textContent = formatCode(joinCode);
+      const pg = $('btnPauseGarage'); if (pg) pg.classList.remove('hidden');
+      paintJoinCar();
       setJoinStatus('階段：正在連上掃碼伺服器…', 'wait');
+      syncPhoneOrientation();
       if (!netOff) beginGuest();
     } else {
       ui.show('start');
@@ -200,12 +214,54 @@ function savedPaint(vid) {
   const list = paintsOf(vid), k = store.get('paint.' + vid, null);
   return list.some((p) => p.key === k) ? k : list[0].key;
 }
-// 換車：重建車輛模型、套用該車的物理調校；paintKey 省略時使用該車上次選的車漆
-function setVehicle(id, paintKey) {
+function validPaint(vid, paint) {
+  const list = paintsOf(vid);
+  return list.some((p) => p.key === paint) ? paint : list[0].key;
+}
+function paintJoinCar() {
+  const el = $('joinCar');
+  if (!el || !car) return;
+  const def = vehicleById(car.vehicleId);
+  const pd = paintsOf(def.id).find((p) => p.key === car.paintKey);
+  el.textContent = `這台車：${def.name}・${pd ? pd.name : ''}`;
+}
+let guestCarPick = null;
+let orientLockTried = false;
+function syncPhoneOrientation() {
+  if (!game.guest) {
+    document.documentElement.classList.remove('force-landscape');
+    return;
+  }
+  const portrait = window.innerHeight > window.innerWidth + 40;
+  document.documentElement.classList.toggle('force-landscape', portrait);
+}
+async function tryLockLandscape() {
+  if (!game.guest || orientLockTried) return;
+  orientLockTried = true;
+  const el = document.documentElement;
+  try {
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req && !document.fullscreenElement) await req.call(el);
+  } catch (e) { /* iOS Safari 沒有頁面全螢幕 */ }
+  try {
+    if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+  } catch (e) { /* 鎖不住就用 CSS 把整個畫面轉成橫向 */ }
+  syncPhoneOrientation();
+  applySize();
+}
+// 換車：重建車輛模型、套用該車的物理調校；paintKey 省略時使用該車上次選的車漆。
+// 手機加入時，房主指定的車不寫進這支手機自己的車庫；玩家自己換車才會通知房主。
+function setVehicle(id, paintKey, opts) {
+  const opt = opts || {};
+  const persist = opt.persist !== false;
+  const notify = opt.notify !== false;
   const def = vehicleById(id);
-  const pk = paintKey || savedPaint(def.id);
-  store.set('vehicle', def.id);
-  if (car.vehicleId === def.id) { car.setPaint(pk); store.set('paint.' + def.id, car.paintKey); return car; }
+  const pk = validPaint(def.id, paintKey || (persist ? savedPaint(def.id) : car.paintKey));
+  if (car.vehicleId === def.id && car.paintKey === pk) {
+    if (notify && game.guest) rememberGuestCar(def.id, pk);
+    paintJoinCar();
+    return car;
+  }
   const prevCar = car;
   scene.remove(car.root, car.blob); car.dispose();
   car = new CarModel(Q, def.id, pk); car.setPaint(pk);
@@ -213,12 +269,18 @@ function setVehicle(id, paintKey) {
   if (race) { const p = race.racers[0]; if (p && p.car === prevCar) p.car = car; }
   if (window.__sky) window.__sky.car = car;
   veh.setTune(def.tune);
-  veh.energy = 100;
-  store.set('vehicle', def.id); store.set('paint.' + def.id, car.paintKey);
+  if (!opt.keepEnergy) veh.energy = 100;
+  if (persist) { store.set('vehicle', def.id); store.set('paint.' + def.id, car.paintKey); }
+  if (notify && game.guest) rememberGuestCar(def.id, car.paintKey);
   game.camSnap = true;
   syncCar(0);
+  paintJoinCar();
   try { renderer.compile(scene, camera); } catch (e) { /* */ }
   return car;
+}
+function rememberGuestCar(id, paint) {
+  guestCarPick = { vehicle: id, paint };
+  try { if (guestNet && guestNet.connected) guestNet.send({ t: 'car', vehicle: id, paint }); } catch (e) {}
 }
 
 // ---------------- 狀態控制 ----------------
@@ -384,11 +446,30 @@ function quit() {
   flushNet(true);
 }
 
+function paintForRemote(def, slot) {
+  const list = paintsOf(def.id).map((p) => p.key);
+  const hostPaint = car && car.paintKey;
+  const prefer = ['blue', 'red', 'white', 'black', 'silver', 'steel'];
+  for (const k of prefer) if (list.includes(k) && k !== hostPaint) return k;
+  return list[(slot || 0) % list.length] || list[0];
+}
+function ensureRemoteCar(remote) {
+  if (!remote) return;
+  if (remote.vehicle && remote.paint) {
+    remote.paint = validPaint(remote.vehicle, remote.paint);
+    remote.vehicle = vehicleById(remote.vehicle).id;
+    return;
+  }
+  const def = vehicleById(store.get('vehicle', DEFAULT_VEHICLE));
+  remote.vehicle = def.id;
+  remote.paint = paintForRemote(def, remote.slot || 0);
+}
 function welcomeFor(remote) {
   const opt = raceOptions();
-  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+  ensureRemoteCar(remote);
   return {
-    t: 'welcome', track: track.id, vehicle: vid, ai: opt.count, diff: opt.diff,
+    t: 'welcome', track: track.id, vehicle: remote.vehicle, paint: remote.paint,
+    ai: opt.count, diff: opt.diff,
     laps: RACE_LAPS, slot: remote.slot, name: remote.name,
   };
 }
@@ -399,6 +480,7 @@ function poseOf(r) {
     id: r.netId || r.name,
     name: r.name,
     kind: r.driver && r.driver.kind,
+    vehicle: r.car && r.car.vehicleId,
     paint: r.car && r.car.paintKey,
     x: n(v.pos.x), y: n(v.pos.y), z: n(v.pos.z),
     qx: n(v.q.x), qy: n(v.q.y), qz: n(v.q.z), qw: n(v.q.w, 1),
@@ -431,9 +513,11 @@ function netStateFor(remote) {
     const L = remote.racer.lap;
     selfLap = L ? { n: L.n, t: L.t, last: L.last, best: L.best } : null;
   }
+  ensureRemoteCar(remote);
   return {
     t: 'state', now: performance.now(), race: game.state, cd: game.countdown, track: track.id,
     ack: remote.seq | 0, selfId, self, selfLap, standings, cars,
+    selfVehicle: remote.vehicle, selfPaint: remote.paint,
   };
 }
 function flushNet(force) {
@@ -457,13 +541,35 @@ function refreshRaceMode() {
   if (active.length < 2 && !anyFinish) race.raceMode = false;
   else race.raceMode = race.racers.length > 1;
 }
+function mountRemoteCar(remote) {
+  ensureRemoteCar(remote);
+  const def = vehicleById(remote.vehicle);
+  const rcar = new CarModel(QUALITY.low, def.id, remote.paint);
+  rcar.setPaint(remote.paint);
+  scene.add(rcar.root); scene.add(rcar.blob);
+  if (remote.racer) {
+    const old = remote.racer.car;
+    if (old && old !== car) {
+      scene.remove(old.root, old.blob);
+      try { old.dispose(); } catch (e) {}
+    }
+    remote.racer.car = rcar;
+    remote.racer.veh.setTune(def.tune);
+  }
+  return rcar;
+}
+function onRemoteCar(remote, data) {
+  if (!remote || !data) return;
+  const def = vehicleById(data.vehicle);
+  remote.vehicle = def.id;
+  remote.paint = validPaint(def.id, data.paint);
+  if (remote.racer) mountRemoteCar(remote);
+}
 function attachRemoteRacer(remote) {
   if (!race || !remote || remote.racer) return remote.racer;
-  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
-  const tune = vehicleById(vid).tune;
-  const paints = ['steel', 'blue', 'white', 'black'];
-  const rcar = new CarModel(QUALITY.low, vid, paints[remote.slot % paints.length]);
-  scene.add(rcar.root); scene.add(rcar.blob);
+  const def = vehicleById(remote.vehicle || store.get('vehicle', DEFAULT_VEHICLE));
+  const tune = def.tune;
+  const rcar = mountRemoteCar(remote);
   const rveh = new Vehicle(track);
   rveh.setTune(tune);
   const r = makeRacer({
@@ -544,6 +650,7 @@ function beginHost() {
       if (why !== 'replaced' && hud && (game.state === 'race' || game.state === 'countdown')) hud.toast('手機玩家已離開，比賽繼續', 1800);
     },
     onReset: (remote) => { try { if (remote.racer) resetRacer(remote.racer); } catch (e) {} },
+    onCar: onRemoteCar,
     welcome: welcomeFor,
     state: (remote) => {
       if (game.state === 'loading') return null;
@@ -579,6 +686,11 @@ function onGuestWelcome(msg) {
     return;
   }
   guestTrackReady = true;
+  if (guestCarPick) {
+    setVehicle(guestCarPick.vehicle, guestCarPick.paint, { persist: false, keepEnergy: true });
+  } else if (msg && msg.vehicle) {
+    setVehicle(msg.vehicle, msg.paint, { persist: false, notify: false, keepEnergy: true });
+  }
   const via = guestNet.via === 'ws' ? '網頁中繼' : guestNet.via === 'relay' ? 'TURN 中繼' : guestNet.via === 'direct' ? '裝置直連' : '已連上';
   setJoinStatus('階段：已加入（' + via + '）。等待房主開始。', 'ok');
 }
@@ -586,6 +698,7 @@ function onGuestState(msg) {
   if (!guestNet || !msg) return;
   guestNet.latest = msg;
   guestNet.connected = true;
+  if (!guestCarPick && msg.selfVehicle) setVehicle(msg.selfVehicle, msg.selfPaint, { persist: false, notify: false, keepEnergy: true });
   const cars = (msg.cars || []).filter((c) => c && c.id !== msg.selfId);
   guestBuf.push(performance.now(), cars);
   if (msg.selfLap) {
@@ -763,13 +876,17 @@ function syncGhosts(dt) {
   const poses = guestBuf.sample(performance.now());
   guestPoses = poses;
   const seen = new Set();
-  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+  const fallback = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
   for (const pose of poses) {
     if (!pose || !pose.id) continue;
     seen.add(pose.id);
+    const vid = vehicleById(pose.vehicle || fallback).id;
+    const paint = validPaint(vid, pose.paint || 'white');
     let g = ghosts.get(pose.id);
-    if (!g) {
-      const c = new CarModel(QUALITY.low, vid, pose.paint || 'white');
+    if (!g || g.car.vehicleId !== vid || g.car.paintKey !== paint) {
+      if (g) releaseRemoteCar({ car: g.car });
+      const c = new CarModel(QUALITY.low, vid, paint);
+      c.setPaint(paint);
       scene.add(c.root); scene.add(c.blob);
       g = { car: c };
       ghosts.set(pose.id, g);
@@ -961,7 +1078,8 @@ function updateCamera(dt, subject, cam, decay = true) {
     cam.position.copy(camPos);
     cam.lookAt(v.pos.x, v.pos.y + ly, v.pos.z);
     cam.fov = damp(cam.fov, 45, 5, dt);
-    cam.setViewOffset(innerWidth, innerHeight, -innerWidth * 0.27, 0, innerWidth, innerHeight);
+    const vs = viewSize();
+    cam.setViewOffset(vs.w, vs.h, -vs.w * 0.27, 0, vs.w, vs.h);
     cam.updateProjectionMatrix();
     return;
   }
