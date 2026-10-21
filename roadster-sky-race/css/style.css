@@ -66,6 +66,16 @@ h2 { margin:0 0 .8rem; font-size:1.8rem; } h3 { margin:.2rem 0 .6rem; font-size:
 .sub { color:var(--dim); margin:.2rem 0 1rem; }
 .notice { background:rgba(255,190,40,.12); border:1px solid rgba(255,190,40,.55); color:#ffe29a; padding:.8rem 1rem; border-radius:.6rem; margin:.6rem 0 1rem; line-height:1.6; font-size:.95rem; }
 .padline { font-size:.9rem; color:var(--dim); margin-bottom:1rem; } .padline.ok { color:#7dffa0; }
+.phonejoin { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; margin:.2rem 0 .8rem; }
+.phonejoin .grow { flex:1; min-width:0; }
+.phonejoin .padline { margin-bottom:.25rem; }
+#phoneQr { width:8.6rem; height:8.6rem; background:#fff; border-radius:.4rem; flex:none; }
+.roomcode { font:800 1.35rem/1.2 ui-monospace, SFMono-Regular, monospace; letter-spacing:.14em; color:var(--accent); margin:.15rem 0 .35rem; }
+#phoneUrl { word-break:break-all; margin:.1rem 0 .3rem; }
+.small.bad, .sub.bad { color:#ff9a8a; } .small.warn { color:#ffe29a; } .sub.ok { color:#7dffa0; }
+#netbanner { position:fixed; left:50%; top:.6rem; transform:translateX(-50%); z-index:12; background:rgba(90,30,12,.92); color:#ffe29a;
+  padding:.45rem .9rem; border-radius:.5rem; font-size:.9rem; max-width:92vw; text-align:center; pointer-events:none; }
+#netbanner.hidden { display:none; }
 .menu { display:flex; flex-wrap:wrap; gap:.7rem; margin:1rem 0 .4rem; } .menu.col { flex-direction:column; }
 .btn { pointer-events:auto; display:inline-block; text-align:center; text-decoration:none; cursor:pointer; color:var(--fg); font:inherit; font-size:1.05rem; font-weight:600;
   background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.18); border-radius:.7rem; padding:.7rem 1.4rem; min-height:3.2rem; }

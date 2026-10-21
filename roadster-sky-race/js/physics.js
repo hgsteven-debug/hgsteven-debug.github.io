@@ -512,6 +512,67 @@ export class Vehicle {
     }
     if (this.tr.hasRibbon && !this.attached) this._tryAttach();
   }
+
+  // 給手機對帳：房主把這包狀態傳出去，手機可整包貼回再重播尚未確認的輸入。
+  exportState() {
+    const n = (v, d = 0) => (Number.isFinite(v) ? v : d);
+    return {
+      x: n(this.pos.x), y: n(this.pos.y), z: n(this.pos.z),
+      qx: n(this.q.x), qy: n(this.q.y), qz: n(this.q.z), qw: n(this.q.w, 1),
+      vx: n(this.vel.x), vy: n(this.vel.y), vz: n(this.vel.z),
+      nx: n(this.n.x), ny: n(this.n.y, 1), nz: n(this.n.z),
+      heading: n(this.heading), yawRate: n(this.yawRate), steerAngle: n(this.steerAngle),
+      energy: n(this.energy, 100), hover: n(this.hover, 9),
+      grounded: !!this.grounded, thrusting: !!this.thrusting, nitroOn: !!this.nitroOn,
+      accel: n(this.accel), latAccel: n(this.latAccel), speedF: n(this.speedF),
+      thrust: n(this.thrust), lift: n(this.lift), braking: !!this.braking,
+      groundY: n(this.groundY), airTime: n(this.airTime), pitchView: n(this.pitchView),
+      onRoad: !!this.onRoad, alt: n(this.alt),
+      fi: n(this.fi), lat: n(this.lat), attached: !!this.attached,
+      flipAssist: !!this.flipAssist, detachCool: n(this.detachCool), vlat: n(this.vlat),
+      sawCeiling: !!this.sawCeiling, sawInvert: !!this.sawInvert,
+      prevL: n(this._prevL),
+    };
+  }
+  importState(s) {
+    if (!s) return;
+    const n = (v, d = 0) => (Number.isFinite(v) ? v : d);
+    this.pos.set(n(s.x), n(s.y), n(s.z));
+    this.vel.set(n(s.vx), n(s.vy), n(s.vz));
+    this.q.set(n(s.qx), n(s.qy), n(s.qz), n(s.qw, 1)).normalize();
+    this.n.set(n(s.nx), n(s.ny, 1), n(s.nz));
+    if (this.n.lengthSq() < 1e-6) this.n.set(0, 1, 0); else this.n.normalize();
+    this.heading = n(s.heading);
+    this.yawRate = n(s.yawRate);
+    this.steerAngle = n(s.steerAngle);
+    this.energy = n(s.energy, 100);
+    this.hover = n(s.hover, 9);
+    this.grounded = !!s.grounded;
+    this.thrusting = !!s.thrusting;
+    this.nitroOn = !!s.nitroOn;
+    this.accel = n(s.accel);
+    this.latAccel = n(s.latAccel);
+    this.speedF = n(s.speedF);
+    this.thrust = n(s.thrust);
+    this.lift = n(s.lift);
+    this.braking = !!s.braking;
+    this.groundY = n(s.groundY);
+    this.airTime = n(s.airTime);
+    this.pitchView = n(s.pitchView);
+    this.onRoad = s.onRoad !== false;
+    this.alt = n(s.alt);
+    this.fi = n(s.fi);
+    this.lat = n(s.lat);
+    this.attached = !!s.attached;
+    this.flipAssist = !!s.flipAssist;
+    this.detachCool = n(s.detachCool);
+    this.vlat = n(s.vlat);
+    this.sawCeiling = !!s.sawCeiling;
+    this.sawInvert = !!s.sawInvert;
+    this._prevL = n(s.prevL);
+    this.events.impact = 0; this.events.wall = 0; this.events.respawn = false; this.events.offroad = false;
+    if (this.attached) this._syncQuery();
+  }
 }
 
 export { ENERGY_MAX };
