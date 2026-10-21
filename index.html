@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<title>天空飛馳 Sky Roadster</title>
+<script>
+(function () {
+  var target = "/roadster-sky-race/" + location.search + location.hash;
+  try { location.replace(target); } catch (e) {}
+})();
+</script>
+<noscript><meta http-equiv="refresh" content="0; url=/roadster-sky-race/"></noscript>
+</head>
+<body>
+<p><a id="go" href="/roadster-sky-race/">進入天空飛馳 Sky Roadster</a></p>
+<script>
+(function () {
+  var a = document.getElementById("go");
+  if (a) a.href = "/roadster-sky-race/" + location.search + location.hash;
+})();
+</script>
+</body>
+</html>
