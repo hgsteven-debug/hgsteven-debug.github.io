@@ -18,7 +18,7 @@ export function shortPadName(id) {
 export class UI {
   constructor(input, handlers) {
     this.input = input; this.h = handlers;
-    this.screens = { loading: $('s-loading'), start: $('s-start'), pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'), garage: $('s-garage'), tracks: $('s-tracks') };
+    this.screens = { loading: $('s-loading'), start: $('s-start'), pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'), garage: $('s-garage'), tracks: $('s-tracks'), results: $('s-results') };
     this.current = 'loading';
     this.stack = [];           // 返回用
     this.focusEl = null;
@@ -116,6 +116,8 @@ export class UI {
       if (b.dataset.v != null) { this.h.onVolume(parseFloat(b.dataset.v)); this.syncSettings(); return; }
       if (b.dataset.r != null) { this.input.setRumbleEnabled(b.dataset.r === '1'); if (b.dataset.r === '1') this.input.rumble(0.6, 0.6, 250, true); this.syncSettings(); return; }
       if (b.dataset.tc) { this.touchMode = b.dataset.tc; store.set('touch', b.dataset.tc); this.h.onTouchMode(); this.syncSettings(); return; }
+      if (b.dataset.ai != null) { store.set('aicount', b.dataset.ai); this.syncSettings(); return; }
+      if (b.dataset.diff) { store.set('aidiff', b.dataset.diff); this.syncSettings(); return; }
       if (b.dataset.row) { this.startLearn(b.dataset.row); return; }
       switch (act) {
         case 'start': this.h.onStart(); break;
@@ -219,6 +221,10 @@ export class UI {
     for (const b of document.querySelectorAll('[data-v]')) b.classList.toggle('sel', Math.abs(parseFloat(b.dataset.v) - vol) < 0.01);
     for (const b of document.querySelectorAll('[data-r]')) b.classList.toggle('sel', (b.dataset.r === '1') === this.input.rumbleEnabled);
     for (const b of document.querySelectorAll('[data-tc]')) b.classList.toggle('sel', b.dataset.tc === this.touchMode);
+    const ac = String(store.get('aicount', '0'));
+    for (const b of document.querySelectorAll('[data-ai]')) b.classList.toggle('sel', b.dataset.ai === ac);
+    const ad = store.get('aidiff', 'normal');
+    for (const b of document.querySelectorAll('[data-diff]')) b.classList.toggle('sel', b.dataset.diff === ad);
     this.refreshGarage();
     $('qinfo').textContent = '低：不使用陰影、解析度 62%，適合效能較弱的車機；中：預設；高：2048 陰影、完整解析度。';
   }

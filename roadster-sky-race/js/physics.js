@@ -1,8 +1,9 @@
 // 車輛物理：地面（準擬真）＋ 推進器飛行
 import * as THREE from 'three';
-import { clamp, lerp, damp } from './util.js';
-import { ROAD_HALF_K } from './track.js';
+import { clamp, lerp, damp, wrapAngle } from './util.js';
+import { ROAD_HALF, ROAD_HALF_K } from './track.js';
 import { VEHICLES, fullTune } from './vehicles.js';
+import { KIND, ribbonCompression } from './stunts.js';
 
 const G = 9.81;
 const ENERGY_MAX = 100;
@@ -37,6 +38,15 @@ export class Vehicle {
     this.alt = 0;
     this.respawnT = 0;
     this._prevL = 0;
+    this.fi = 0;
+    this.lat = 0;
+    this.attached = false;
+    this.flipAssist = false;
+    this.detachCool = 0;
+    this.vlat = 0;
+    this.sawCeiling = false;
+    this.sawInvert = false;
+    this._jumpArmed = false;
   }
 
   // 套用車輛調校（見 vehicles.js）
@@ -47,16 +57,161 @@ export class Vehicle {
 
   placeOnTrack(i, lat = 0, speed = 0, yOffset = 0.0) {
     const tr = this.tr;
+    i = tr.wrap(Math.round(i));
+    this.fi = i;
+    this.lat = lat;
+    this.detachCool = 0;
+    this.flipAssist = false;
+    this.vlat = 0;
+    this.speedF = speed;
+    this.yawRate = 0; this.steerAngle = 0;
+    this.airTime = 0; this.thrusting = false;
+    if (tr.kind && tr.kind[i] && tr.kind[i] !== KIND.FLY) {
+      this.attached = true;
+      this.grounded = true;
+      const f = tr.frame(i, this._blankFrame());
+      this.pos.copy(f.pos).addScaledVector(f.right, lat).addScaledVector(f.normal, 0.32 + yOffset);
+      this.vel.copy(f.tangent).multiplyScalar(speed);
+      this.n.copy(f.normal);
+      this._orientFrame(f, 1);
+      this._syncQuery();
+      return;
+    }
+    this.attached = false;
     tr.surface(i, lat, this.pos); this.pos.y += yOffset;
     this.heading = tr.headingAt(i);
     this.vel.set(-Math.sin(this.heading), 0, -Math.cos(this.heading)).multiplyScalar(speed);
-    this.yawRate = 0; this.steerAngle = 0;
-    this.grounded = true; this.airTime = 0; this.thrusting = false;
     this.n.set(0, 1, 0);
     this.probe();
     this.pos.y = this.groundY;
     this.snapOrientation();
-    this.q1.l = 0;
+    this.q1.l = lat;
+    this.fi = this.q1.fi || i;
+  }
+
+  _blankFrame() {
+    return this._fr || (this._fr = {
+      pos: new THREE.Vector3(), tangent: new THREE.Vector3(), normal: new THREE.Vector3(), right: new THREE.Vector3(),
+    });
+  }
+  _syncQuery() {
+    const q = this.q1;
+    q.fi = this.fi; q.i = Math.floor(this.fi); q.near = true;
+    q.l = this.lat; q.al = Math.abs(this.lat); q.gap = false; q.y = this.pos.y;
+  }
+  _orientFrame(f, dt) {
+    _f.copy(f.tangent); _r.copy(f.right); this.n.copy(f.normal);
+    _m.makeBasis(_r, this.n, _f.clone().negate());
+    _qT.setFromRotationMatrix(_m);
+    this.q.slerp(_qT, 1 - Math.exp(-18 * dt));
+    this.heading = Math.atan2(-f.tangent.x, -f.tangent.z);
+  }
+  _detachRibbon(fly) {
+    const f = this.tr.frame(this.fi, this._blankFrame());
+    this.attached = false;
+    this.detachCool = 1.05;
+    this.vel.copy(f.tangent).multiplyScalar(this.speedF || 0).addScaledVector(f.right, this.vlat || 0);
+    this.n.copy(f.normal);
+    if (fly || f.normal.y < 0.55) {
+      this.grounded = false;
+      this.flipAssist = f.normal.y < 0.82;
+      this.pos.addScaledVector(f.normal, 0.45);
+    } else {
+      this.grounded = true;
+      this.flipAssist = false;
+    }
+    this._syncQuery();
+  }
+  _skipsRibbon(a, b) {
+    const tr = this.tr;
+    if (!tr.kind || a == null || b == null) return false;
+    let d = b - a;
+    if (d > tr.N / 2) d -= tr.N;
+    if (d < -tr.N / 2) d += tr.N;
+    if (d < 10) return false;
+    const dir = d > 0 ? 1 : -1;
+    const steps = Math.min(Math.ceil(Math.abs(d)), tr.N);
+    for (let k = 1; k < steps; k += 2) {
+      const kind = tr.kind[tr.wrap(Math.floor(a + dir * k))];
+      if (kind === KIND.LOOP || kind === KIND.INVERT || kind === KIND.FLY) return true;
+    }
+    return false;
+  }
+  _tryAttach() {
+    const tr = this.tr;
+    if (!tr.hasRibbon || this.attached || this.detachCool > 0 || !tr.kind) return;
+    const i = Math.round(this.fi || this.q1.fi || 0);
+    for (let k = 0; k <= 8; k++) {
+      const j = tr.wrap(i + k);
+      const kind = tr.kind[j];
+      if (!kind || kind === KIND.FLY) continue;
+      const f = tr.frame(j, this._blankFrame());
+      const dx = this.pos.x - f.pos.x, dy = this.pos.y - f.pos.y, dz = this.pos.z - f.pos.z;
+      if (dx * dx + dy * dy + dz * dz > 280) continue;
+      const sp = Math.max(this.speed, Math.abs(this.speedF || 0));
+      const stick = ribbonCompression(f.normal.y, f.kn, sp);
+      // 吸地力不夠就不要貼上（否則高速墜落也會被倒吊段吸回去）
+      if (stick < 1.2) continue;
+      this.attached = true;
+      this.fi = j;
+      this.lat = clamp(this.q1.near ? this.q1.l : 0, -(ROAD_HALF - 0.5), ROAD_HALF - 0.5);
+      this.speedF = sp;
+      this.vlat = 0;
+      this.grounded = true;
+      this.flipAssist = false;
+      return;
+    }
+  }
+  _stepAttached(dt, inp) {
+    const tr = this.tr, ev = this.events, t = this.t;
+    const f0 = tr.frame(this.fi, this._blankFrame());
+    let vf = this.speedF || 0;
+    let vlat = this.vlat || 0;
+    const thr = inp.throttle || 0, brk = inp.brake || 0;
+    let af = 0;
+    if (thr > 0.01) af += thr * t.accel * Math.max(0, 1 - Math.max(0, vf) / t.vRef);
+    if (brk > 0.01 && vf > 0.5) af -= brk * t.brake;
+    af -= t.drag * vf * Math.abs(vf);
+    af += -9.81 * f0.tangent.y;
+    this.nitroOn = !!inp.nitro && this.energy > 0.5 && (thr > 0.1 || vf > 5);
+    if (this.nitroOn) {
+      af += t.nitro * Math.max(0, 1 - vf / (t.vRef * 1.35));
+      this.energy -= 22 * t.nitroDrain / t.eCap * dt;
+    } else this.energy += 4 / t.eCap * dt;
+    this.energy = clamp(this.energy, 0, ENERGY_MAX);
+    vf += af * dt;
+    vlat += -9.81 * f0.right.y * dt;
+    const c = ribbonCompression(f0.normal.y, f0.kn, vf);
+    const maxA = t.grip * Math.max(0.2, c);
+    vlat += clamp(-vlat * 10, -maxA, maxA) * dt;
+    const steer = inp.steer || 0;
+    this.steerAngle = damp(this.steerAngle, steer * t.maxSteer, 14, dt);
+    // 和地面相同：steer 為正＝向右，橫向（左為正）因此減少
+    vlat = damp(vlat, -vf * Math.tan(this.steerAngle), 5, dt);
+    this.lat = clamp((this.lat || 0) + vlat * dt, -ROAD_HALF - 0.3, ROAD_HALF + 0.3);
+    this.fi = tr.wrapF(this.fi + (vf * dt) / Math.max(0.3, f0.arc));
+    const f = tr.frame(this.fi, f0);
+    this.speedF = vf;
+    this.vlat = vlat;
+    this.accel = af;
+    this.thrust = clamp((thr > 0.01 ? thr : 0) * 0.35 + (this.nitroOn ? 1 : 0), 0, 1);
+    this.lift = 0;
+    this.braking = brk > 0.2;
+    this.grounded = true;
+    this.onRoad = true;
+    this.airTime = 0;
+    this.pos.copy(f.pos).addScaledVector(f.right, this.lat).addScaledVector(f.normal, 0.32);
+    this.vel.copy(f.tangent).multiplyScalar(vf).addScaledVector(f.right, vlat);
+    this.groundY = this.pos.y;
+    this.alt = 0;
+    this._orientFrame(f, dt);
+    this._syncQuery();
+    if (f.kind === KIND.LOOP && f.normal.y < -0.45) this.sawCeiling = true;
+    if (f.kind === KIND.INVERT && f.normal.y < -0.45) this.sawInvert = true;
+    const offEdge = Math.abs(this.lat) > ROAD_HALF + 0.05;
+    const leave = c < 0.45 || offEdge || f.kind === KIND.FLY || f.kind === KIND.GROUND;
+    if (leave) this._detachRibbon(f.kind !== KIND.GROUND);
+    if (this.pos.y < -30) ev.respawn = true;
   }
 
   snapOrientation() {
@@ -94,6 +249,12 @@ export class Vehicle {
   }
 
   step(dt, inp) {
+    if (this.detachCool > 0) this.detachCool -= dt;
+    if (this.tr.hasRibbon) {
+      if (this.attached) { this._stepAttached(dt, inp); return; }
+      this._tryAttach();
+      if (this.attached) { this._stepAttached(dt, inp); return; }
+    }
     const tr = this.tr, ev = this.events, t = this.t;
     const h = this.heading;
     const sp0 = this.vel.length();
@@ -235,6 +396,16 @@ export class Vehicle {
     // ---------- 積分 ----------
     const px = this.pos.x, pz = this.pos.z;
     this.pos.addScaledVector(this.vel, dt);
+    if (tr.jumpBoost) {
+      const bq = tr.query(this.pos.x, this.pos.z, this.q1);
+      const b = tr.jumpBoost(bq.fi);
+      if (b && wasGrounded && !this._jumpArmed) {
+        this.vel.y = Math.max(this.vel.y, b);
+        this.pos.y += 0.35;
+        this._jumpArmed = true;
+      }
+      if (!b) this._jumpArmed = false;
+    }
     const gy = this.probe();
     const n = this.n;
     const vn = this.vel.dot(n);
@@ -248,6 +419,14 @@ export class Vehicle {
       this.grounded = false;
     } else if (this.pos.y <= gy) {
       this.pos.y = gy;
+      if (this.flipAssist) {
+        _up.set(0, 1, 0).applyQuaternion(this.q);
+        if (_up.y < 0.2) {
+          ev.impact = Math.max(ev.impact, 12);
+          this.vel.multiplyScalar(0.4);
+        }
+        this.flipAssist = false;
+      }
       if (vn < 0) {
         if (!wasGrounded || vn < -2.5) ev.impact = Math.max(ev.impact, -vn);
         this.vel.addScaledVector(n, -vn * 1.0);
@@ -294,11 +473,35 @@ export class Vehicle {
     if (q2.near && tr.pitEdge(q2.fi) > 0.5 && this.pos.y < q2.y - 7.5) {
       ev.respawn = true;
     }
+    if (tr.obstacles && this.pos.y < 80) {
+      for (let oi = 0; oi < tr.obstacles.length; oi++) {
+        const o = tr.obstacles[oi];
+        const dx = this.pos.x - o.x, dz = this.pos.z - o.z;
+        if (dx * dx + dz * dz < o.r * o.r && Math.abs(this.pos.y - o.y) < o.h) {
+          this.vel.multiplyScalar(0.42);
+          this.vel.y = Math.max(this.vel.y, 3);
+          ev.impact = Math.max(ev.impact, 8);
+          ev.wall = Math.max(ev.wall, 5);
+          this.grounded = false;
+        }
+      }
+    }
+    if (!this.attached) {
+      const next = this.q1.fi || this.fi;
+      this.fi = this._skipsRibbon(this.fi, next) ? this.fi : next;
+    }
 
     // ---------- 姿態 ----------
     if (this.grounded) {
       this.computeGroundBasis(_qT);
       this.q.slerp(_qT, 1 - Math.exp(-18 * dt));
+    } else if (this.flipAssist) {
+      _e.set(clamp((inp.pitch || 0) * 0.25, -0.45, 0.45), this.heading, 0, 'YXZ');
+      _qT.setFromEuler(_e);
+      const pull = (inp.lift ? 2.6 : 0) + Math.abs(inp.pitch || 0) * 1.3;
+      if (pull > 0) this.q.slerp(_qT, 1 - Math.exp(-pull * dt));
+      _up.set(0, 1, 0).applyQuaternion(this.q);
+      if (_up.y > 0.94) this.flipAssist = false;
     } else {
       const hs = Math.hypot(this.vel.x, this.vel.z);
       const pitchT = clamp(Math.atan2(this.vel.y, Math.max(hs, 8)) * 0.85 + inp.pitch * 0.22, -0.6, 0.6);
@@ -307,6 +510,7 @@ export class Vehicle {
       _qT.setFromEuler(_e);
       this.q.slerp(_qT, 1 - Math.exp(-6 * dt));
     }
+    if (this.tr.hasRibbon && !this.attached) this._tryAttach();
   }
 }
 

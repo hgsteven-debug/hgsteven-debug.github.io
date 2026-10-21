@@ -17,6 +17,7 @@
 <div id="flash"></div>
 
 <div id="hud" class="hidden">
+  <div id="standings" class="panel hidden"></div>
   <div id="lapbox" class="panel">
     <div class="row"><span class="lbl">圈數</span><b id="lapN">1</b></div>
     <div class="row big"><span class="lbl">本圈</span><b id="lapT">0:00.000</b></div>
@@ -39,6 +40,7 @@
 </div>
 
 <div id="count"></div>
+<div id="splitbar" class="hidden"></div>
 
 <div id="touch" class="hidden">
   <div class="tgroup left">
@@ -78,6 +80,24 @@
     <div id="startCar" class="carline">目前車輛：—</div>
     <div id="startTrack" class="carline">目前賽道：—</div>
     <div id="startPad" class="padline">🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵</div>
+    <div id="startP1" class="padline">P1：鍵盤、觸控，或第一支手把</div>
+    <div id="startP2" class="padline">P2：用另一支手把按任意鍵加入，上下分屏</div>
+    <div class="setrow"><span>電腦對手</span>
+      <div class="seg" id="aiCount">
+        <button class="btn" data-ai="0">0</button>
+        <button class="btn" data-ai="1">1</button>
+        <button class="btn" data-ai="2">2</button>
+        <button class="btn" data-ai="3">3</button>
+      </div>
+    </div>
+    <div class="setrow"><span>對手難度</span>
+      <div class="seg" id="aiDiff">
+        <button class="btn" data-diff="easy">簡單</button>
+        <button class="btn" data-diff="normal">普通</button>
+        <button class="btn" data-diff="hard">困難</button>
+      </div>
+    </div>
+    <p class="small dim">兩人同樂是兩支手把、畫面上下各一半。沒有第二支手把時，鍵盤和觸控都是 P1。電腦對手可以一起跑。</p>
     <div class="menu">
       <button class="btn primary" data-act="start">開始遊戲</button>
       <button class="btn" data-act="tracks" id="btnTracks">選擇賽道</button>
@@ -123,6 +143,18 @@
     <div class="setrow"><span>車色</span><div class="seg" id="vpaints"></div></div>
     <div class="menu"><button class="btn primary" data-act="back">完成</button></div>
     <p class="small dim">搖桿：十字鍵／左搖桿選擇，確認鍵選取，返回鍵離開。選擇會自動儲存。所有車型皆為原創造型，沒有任何商標或標誌。</p>
+  </div>
+</div>
+
+<div id="s-results" class="screen">
+  <div class="card center narrow">
+    <h2>名次</h2>
+    <p class="sub">兩圈衝刺</p>
+    <div id="resultsList" class="results"></div>
+    <div class="menu col">
+      <button class="btn primary" data-act="restart">再比一場</button>
+      <button class="btn" data-act="quit">回主選單</button>
+    </div>
   </div>
 </div>
 

@@ -10,7 +10,8 @@ export const PIT_DEPTH = 11;
 const GAP_LEN = 40, RAMP_LEN = 24, RAMP_H = 2.4;
 
 import { TRACKS, trackById, THEMES, DEFAULT_TRACK } from './tracks.js';
-export { TRACKS, trackById, THEMES, DEFAULT_TRACK };
+import { applyStunts, KIND } from './stunts.js';
+export { TRACKS, trackById, THEMES, DEFAULT_TRACK, KIND };
 
 class Grid {
   constructor(track, cell, step, radius) {
@@ -34,6 +35,8 @@ class Grid {
       if (!a) continue;
       for (let n = 0; n < a.length; n++) {
         const i = a[n];
+        const kind = this.track.kind ? this.track.kind[i] : 0;
+        if (kind === KIND.LOOP || kind === KIND.INVERT || kind === KIND.FLY) continue;
         const ddx = px[i] - x, ddz = pz[i] - z;
         const d = ddx * ddx + ddz * ddz;
         if (d < bd) { bd = d; best = i; }
@@ -141,29 +144,126 @@ export class Track {
     this.bounds = { minX, maxX, minZ, maxZ };
     this._q = this.newQuery();
     this._q2 = this.newQuery();
+    this.kind = null;
+    this.hasRibbon = false;
+    this.obstacles = [];
+    this.stunt = null;
+    applyStunts(this);
+  }
+
+  // 特技賽道把樣本換成含迴圈的 3D 點列後，重新建立索引。
+  _loadPoints(pts) {
+    const N = pts.length;
+    this.N = N;
+    this.wrap = (i) => ((i % N) + N) % N;
+    const px = this.px = new Float32Array(N), py = this.py = new Float32Array(N), pz = this.pz = new Float32Array(N);
+    const tx = this.tx = new Float32Array(N), ty = this.ty = new Float32Array(N), tz = this.tz = new Float32Array(N);
+    const nx = this.nx = new Float32Array(N), ny = this.ny = new Float32Array(N), nz = this.nz = new Float32Array(N);
+    const rx = this.rx = new Float32Array(N), ry = this.ry = new Float32Array(N), rz = this.rz = new Float32Array(N);
+    const bank = this.bank = new Float32Array(N);
+    const arc = this.arc = new Float32Array(N);
+    const kn = this.kn = new Float32Array(N);
+    const kind = this.kind = new Uint8Array(N);
+    let length = 0;
+    let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
+    for (let i = 0; i < N; i++) {
+      const p = pts[i];
+      px[i] = p.x; py[i] = p.y; pz[i] = p.z;
+      tx[i] = p.tx; ty[i] = p.ty; tz[i] = p.tz;
+      nx[i] = p.nx; ny[i] = p.ny; nz[i] = p.nz;
+      rx[i] = p.rx; ry[i] = p.ry; rz[i] = p.rz;
+      bank[i] = p.bank || 0;
+      arc[i] = p.arc;
+      kn[i] = p.kn;
+      kind[i] = p.kind || 0;
+      length += p.arc;
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    this.length = length;
+    this.ds = length / N;
+    this.bounds = { minX, maxX, minZ, maxZ };
+    this.hasRibbon = true;
+    this.fine = new Grid(this, 30, 1, 3);
+    this.coarse = new Grid(this, 150, 6, 3);
+    this._q = this.newQuery();
+    this._q2 = this.newQuery();
+  }
+
+  wrapF(fi) {
+    const N = this.N;
+    let x = fi % N;
+    if (x < 0) x += N;
+    return x;
+  }
+
+  frame(fi, out) {
+    const N = this.N;
+    fi = this.wrapF(fi);
+    const i0 = Math.floor(fi) % N, i1 = (i0 + 1) % N, f = fi - Math.floor(fi);
+    const o = out || (this._fr || (this._fr = {
+      pos: new THREE.Vector3(), tangent: new THREE.Vector3(), normal: new THREE.Vector3(), right: new THREE.Vector3(),
+    }));
+    const L = (arr) => arr[i0] + (arr[i1] - arr[i0]) * f;
+    o.pos.set(L(this.px), L(this.py), L(this.pz));
+    o.tangent.set(L(this.tx), this.ty ? L(this.ty) : 0, L(this.tz));
+    if (this.nx) o.normal.set(L(this.nx), L(this.ny), L(this.nz));
+    else o.normal.set(0, 1, 0);
+    if (this.ry) o.right.set(L(this.rx), L(this.ry), L(this.rz));
+    else o.right.set(L(this.rx), 0, L(this.rz));
+    if (o.tangent.lengthSq() < 1e-8) o.tangent.set(0, 0, 1);
+    o.tangent.normalize();
+    o.normal.normalize();
+    o.right.crossVectors(o.tangent, o.normal);
+    if (o.right.lengthSq() < 1e-8) o.right.set(1, 0, 0);
+    o.right.normalize();
+    o.normal.crossVectors(o.right, o.tangent).normalize();
+    o.kind = this.kind ? this.kind[i0] : 0;
+    o.kn = this.kn ? L(this.kn) : 0;
+    o.arc = this.arc ? Math.max(0.25, L(this.arc)) : this.ds;
+    o.i0 = i0;
+    return o;
   }
 
   newQuery() {
     return { i: 0, fi: 0, l: 0, al: 0, y: 0, bank: 0, tx: 0, tz: 0, rx: 0, rz: 0, d: 0, near: false, gap: false };
   }
 
+  gapSpan(g) { return g && g.len ? g.len : this.gapLen; }
   isGapIdx(fi) {
     // fi：浮點索引；回傳該位置是否在缺口（沒有路面）
     for (const g of this.gaps) {
       let a = fi - g.g0;
       if (a < -this.N / 2) a += this.N;
       if (a > this.N / 2) a -= this.N;
-      if (a > 0 && a < this.gapLen) return true;
+      if (a > 0 && a < this.gapSpan(g)) return true;
     }
     return false;
+  }
+  // 進入特技大跳躍起點時給一點向上速度（只有標了 boost 的缺口）
+  jumpBoost(fi) {
+    for (const g of this.gaps) {
+      if (!g.boost) continue;
+      let a = fi - g.g0;
+      if (a < -this.N / 2) a += this.N;
+      if (a > this.N / 2) a -= this.N;
+      if (a > -1 && a < 8) return g.boost;
+    }
+    return 0;
+  }
+  hiddenRoad(i) {
+    const k = this.kind ? this.kind[this.wrap(Math.floor(i))] : 0;
+    if (k === KIND.FLY) return true;
+    return this.isGapIdx(i + 0.5);
   }
   pitEdge(fi) {
     let e = 0;
     for (const g of this.gaps) {
+      const len = this.gapSpan(g);
       let a = fi - g.g0;
       if (a < -this.N / 2) a += this.N;
       if (a > this.N / 2) a -= this.N;
-      if (a > 0 && a < this.gapLen) e = Math.max(e, smoothstep(0, 3, a) * (1 - smoothstep(this.gapLen - 3, this.gapLen, a)));
+      if (a > 0 && a < len) e = Math.max(e, smoothstep(0, 3, a) * (1 - smoothstep(len - 3, len, a)));
     }
     return e;
   }
@@ -179,12 +279,37 @@ export class Track {
     out.i = i;
     if (!out.near) { out.d = Math.sqrt(r.d2); out.al = out.d; out.l = out.d; out.fi = i; out.y = this.py[i]; out.bank = 0; out.gap = false; return out; }
     const along = dx * this.tx[i] + dz * this.tz[i];
+    const side0 = dx * this.rx[i] + dz * this.rz[i];
+    // 迴圈／倒吊沒進地面索引時，最近的地面點可能在切線很遠的地方。
+    // 不能把那種點當成腳下的路面，否則慢車會被「吸」在半空。
+    if (Math.abs(along) > this.ds * 1.8) {
+      out.fi = i;
+      out.y = this.py[i];
+      out.bank = this.bank[i] || 0;
+      out.tx = this.tx[i]; out.tz = this.tz[i];
+      out.rx = this.rx[i]; out.rz = this.rz[i];
+      out.l = side0;
+      out.al = Math.hypot(along, side0);
+      out.d = out.al;
+      out.gap = false;
+      out.near = true;
+      return out;
+    }
     const off = clamp(along / this.ds, -1, 1);
     let fi = i + off;
     out.fi = fi < 0 ? fi + N : fi;
     const i0 = Math.floor(out.fi) % N, i1 = (i0 + 1) % N, f = out.fi - Math.floor(out.fi);
-    out.y = lerp(this.py[i0], this.py[i1], f);
-    out.bank = lerp(this.bank[i0], this.bank[i1], f);
+    const upRibbon = (k) => k === KIND.LOOP || k === KIND.INVERT || k === KIND.FLY;
+    const k0 = this.kind ? this.kind[i0] : 0, k1 = this.kind ? this.kind[i1] : 0;
+    if (upRibbon(k0) || upRibbon(k1)) {
+      const ig = upRibbon(k0) ? i1 : i0;
+      out.y = this.py[ig];
+      out.bank = this.bank[ig] || 0;
+      out.fi = ig;
+    } else {
+      out.y = lerp(this.py[i0], this.py[i1], f);
+      out.bank = lerp(this.bank[i0], this.bank[i1], f);
+    }
     out.tx = lerp(this.tx[i0], this.tx[i1], f); out.tz = lerp(this.tz[i0], this.tz[i1], f);
     const tl = Math.hypot(out.tx, out.tz); out.tx /= tl; out.tz /= tl;
     out.rx = -out.tz; out.rz = out.tx;
@@ -250,7 +375,11 @@ export class Track {
   // 路面上索引 i、橫向 l 的世界座標
   surface(i, l, out = new THREE.Vector3()) {
     i = this.wrap(i);
-    out.set(this.px[i] + this.rx[i] * l, this.py[i] - l * Math.tan(this.bank[i]), this.pz[i] + this.rz[i] * l);
+    if (this.hasRibbon && this.kind && this.kind[i] !== KIND.GROUND && this.kind[i] !== KIND.FLY) {
+      out.set(this.px[i] + this.rx[i] * l, this.py[i] + this.ry[i] * l, this.pz[i] + this.rz[i] * l);
+      return out;
+    }
+    out.set(this.px[i] + this.rx[i] * l, this.py[i] - l * Math.tan(this.bank[i] || 0), this.pz[i] + this.rz[i] * l);
     return out;
   }
   // 路面朝向（forward = (-sin h, 0, -cos h)）
@@ -259,6 +388,10 @@ export class Track {
     return Math.atan2(-this.tx[i], -this.tz[i]);
   }
   hasRail(fi) {
+    if (this.kind) {
+      const k = this.kind[this.wrap(Math.floor(fi))];
+      if (k === KIND.LOOP || k === KIND.INVERT || k === KIND.FLY) return false;
+    }
     return !this.isGapIdx(fi);
   }
 }
