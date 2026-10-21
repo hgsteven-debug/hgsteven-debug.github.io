@@ -150,7 +150,7 @@ async function boot() {
       onTrack: (id) => { store.set('track', id); const u = new URL(location.href); u.searchParams.delete('track'); location.href = u.toString(); },
       onQuality: (q) => { store.set('quality', q); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u.toString(); },
       getQuality: () => qname, onVolume: (v) => audio.setVolume(v), getVolume: () => audio.volume,
-      onTouchMode: () => {}, onTouchPress: (p) => { input.pressed[p] = true; game.touchPressed = p; },
+      onTouchMode: () => {}, onTouchPress: (p) => { input.noteTouchPress(p); game.touchPressed = p; },
       onBackTop: () => { if (game.state === 'paused') resume(); },
       onJoinRetry: retryGuest, onJoinLeave: leaveGuestRoom,
     });
@@ -276,7 +276,22 @@ function paintJoinCar() {
 let guestCarPick = null;
 let orientLockTried = false;
 function orientSample() {
-  const type = (typeof screen !== 'undefined' && screen.orientation && screen.orientation.type) || '';
+  if (typeof window !== 'undefined' && window.__skyOrient) {
+    const o = window.__skyOrient;
+    return {
+      type: o.type || '',
+      angle: Number.isFinite(+o.angle) ? +o.angle : null,
+      win: Number.isFinite(+o.win) ? +o.win : null,
+      sw: o.sw || 0,
+      sh: o.sh || 0,
+      iw: o.iw || window.innerWidth,
+      ih: o.ih || window.innerHeight,
+    };
+  }
+  const ori = (typeof screen !== 'undefined' && screen.orientation) || null;
+  const type = (ori && ori.type) || '';
+  const angle = ori && Number.isFinite(ori.angle) ? ori.angle : null;
+  const win = typeof window.orientation === 'number' ? window.orientation : null;
   let sw = (typeof screen !== 'undefined' && screen.width) || 0;
   let sh = (typeof screen !== 'undefined' && screen.height) || 0;
   if (!type) {
@@ -289,7 +304,7 @@ function orientSample() {
       sh = ih;
     }
   }
-  return { type, sw, sh, iw: window.innerWidth, ih: window.innerHeight };
+  return { type, angle, win, sw, sh, iw: window.innerWidth, ih: window.innerHeight };
 }
 function syncPhoneOrientation() {
   if (!game.guest) {
@@ -1330,8 +1345,11 @@ function frame(now) {
       if (game.state === 'race') {
         if (!game.freeze) {
           if (pressed.reset) {
-            if (game.guest && guestNet) guestNet.send({ t: 'reset' });
-            else resetToTrack();
+            if (game.guest) {
+              if (game.outbox) game.outbox.push({ t: 'reset' });
+              if (guestNet) guestNet.send({ t: 'reset' });
+              else if (!game.outbox) resetToTrack();
+            } else resetToTrack();
           }
           const p2 = race && race.locals()[1];
           if (p2 && p2.input && p2.input.pressed.reset) resetRacer(p2);

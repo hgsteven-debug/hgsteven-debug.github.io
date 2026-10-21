@@ -97,7 +97,15 @@ export function roundNet(v, d = 0) {
   return Math.round(x * 100) / 100;
 }
 
+function normAngle(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return ((Math.round(n) % 360) + 360) % 360;
+}
+
 // 橫向鎖定失敗時才用 CSS 轉正。看螢幕方向或螢幕邊長，不看會跟著網址列跳的 innerHeight。
+// 瀏覽器已經是橫向（方向 API，或視窗比螢幕寬）就不要再轉一次，否則搖桿和按鍵會再偏 90°。
+// screen.orientation.angle 和 window.orientation 不一致時，以「畫面是不是已經橫向」為準。
 // sticky 讓一次誤判沒辦法立刻翻回去：要明顯超過 80px 才換邊。
 export function wantCssRotate(sample, sticky) {
   const type = (sample && sample.type) || '';
@@ -105,9 +113,13 @@ export function wantCssRotate(sample, sticky) {
   const ih = (sample && sample.ih) || 0;
   const viewLandscape = iw > ih + 80;
   const viewPortrait = ih > iw + 80;
+  const angle = normAngle(sample && sample.angle);
+  const win = normAngle(sample && sample.win);
+  const reportedLandscape = type.indexOf('landscape') === 0 || angle === 90 || angle === 270 || win === 90 || win === 270;
   if (type.indexOf('landscape') === 0) return false;
-  if (type.indexOf('portrait') === 0) return !viewLandscape;
   if (viewLandscape) return false;
+  if (reportedLandscape && !viewPortrait) return false;
+  if (type.indexOf('portrait') === 0) return true;
   if (viewPortrait) {
     if (sticky === 'native') return false;
     return true;
@@ -117,6 +129,18 @@ export function wantCssRotate(sample, sticky) {
   if (sticky === 'css') return !(sw > sh + 80);
   if (sticky === 'native') return sh > sw + 80;
   return sh > sw + 40;
+}
+
+// 把視窗上的位移換算成元素自己的軸。CSS matrix(a, b, c, d, tx, ty) 的線性部分：
+// 元素 +x（畫面上的右）落到視窗 (a, b)，元素 +y（畫面上的下）落到視窗 (c, d)。
+// 沒有旋轉時就是單位矩陣，視窗往右仍是往右。
+export function viewportDeltaToUi(vx, vy, a, b, c, d) {
+  const det = a * d - b * c;
+  if (!(Math.abs(det) > 1e-8)) return { x: vx, y: vy };
+  return {
+    x: (d * vx - c * vy) / det,
+    y: (-b * vx + a * vy) / det,
+  };
 }
 
 // 手機畫面追房主姿態。一幀最多吃掉一部分誤差，重生那種大跳才直接對齊。
