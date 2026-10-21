@@ -390,7 +390,7 @@ export class Track {
   hasRail(fi) {
     if (this.kind) {
       const k = this.kind[this.wrap(Math.floor(fi))];
-      if (k === KIND.LOOP || k === KIND.INVERT || k === KIND.FLY) return false;
+      if (k === KIND.LOOP || k === KIND.INVERT || k === KIND.FLY || k === KIND.DECK) return false;
     }
     return !this.isGapIdx(fi);
   }

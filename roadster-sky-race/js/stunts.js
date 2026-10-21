@@ -40,7 +40,8 @@ function buildFrames(pts) {
     const p = pts[i];
     let tx = p.tx, ty = p.ty, tz = p.tz;
     let nx, ny, nz;
-    if (p.kind === KIND.LOOP) {
+    // ax 只有舊的垂直圓才會設。向前翻滾的迴旋用 roll，法線才跟路面連續。
+    if (p.kind === KIND.LOOP && p.ax) {
       const th = p.th, ax = p.ax, az = p.az;
       nx = -ax * Math.sin(th);
       ny = Math.cos(th);
@@ -104,29 +105,27 @@ export function applyStunts(tr) {
   }
 
   const loopAt = Math.min(N0 - 20, Math.max(iB + 10, Math.round(spec.loop * N0)));
-  const a = pts[Math.max(0, loopAt - 3)], b = pts[Math.min(pts.length - 1, loopAt + 3)];
-  let tax = b.x - a.x, taz = b.z - a.z;
-  const tl = Math.hypot(tax, taz) || 1;
-  tax /= tl; taz /= tl;
   const R = spec.loopR || 22;
-  const steps = Math.max(56, Math.round((2 * Math.PI * R) / 2.1));
-  const ex = pts[loopAt].x, ey = pts[loopAt].y, ez = pts[loopAt].z;
-  const loop = [];
-  for (let s = 1; s < steps; s++) {
-    const th = (s / steps) * Math.PI * 2;
-    loop.push({
-      x: ex + tax * R * Math.sin(th),
-      y: ey + R * (1 - Math.cos(th)),
-      z: ez + taz * R * Math.sin(th),
-      kind: KIND.LOOP, roll: 0, bank: 0, th, ax: tax, az: taz,
-    });
+  // 沿既有中線抬成駝峰，同時翻滾一圈。進出口坡度與側傾都回到 0。
+  // 垂直圓一定會折返：下降的半圈疊在進彎車道上，紅白路肩變成橫在路中的斜板，車就卡在那裡。
+  const loopLen = R * 5.2;
+  const loopEnd = Math.min(pts.length - 8, walk(pts, loopAt, loopLen));
+  const span = Math.max(1, loopEnd - loopAt);
+  for (let i = loopAt; i <= loopEnd; i++) {
+    const u = (i - loopAt) / span;
+    const s = Math.sin(Math.PI * u);
+    pts[i].y += R * 1.15 * s * s;
+    pts[i].roll = Math.PI * 2 * smooth01(u);
+    pts[i].kind = (u > 0.03 && u < 0.97) ? KIND.LOOP : KIND.GROUND;
+    pts[i].ax = 0;
+    pts[i].az = 0;
+    pts[i].th = 0;
   }
-  pts.splice(loopAt + 1, 0, ...loop);
-  const loop0 = loopAt + 1;
-  const loop1 = loopAt + loop.length;
+  let loop0 = loopAt;
+  while (loop0 < loopEnd && pts[loop0].kind !== KIND.LOOP) loop0++;
+  let loop1 = loopEnd;
+  while (loop1 > loop0 && pts[loop1].kind !== KIND.LOOP) loop1--;
   let loopTop = loop0;
-  let bestNy = 1;
-  for (let i = loop0; i <= loop1; i++) if (Math.cos(pts[i].th) < bestNy) { bestNy = Math.cos(pts[i].th); loopTop = i; }
 
   // 迴圈之後先留一段平路，再以緩坡抬上倒吊直道，最後緩坡落地。
   // 舊版在倒吊結束處有約 14 公尺的垂直斷面，車子會卡在斷面下，垂直速度一直累加。
@@ -188,6 +187,8 @@ export function applyStunts(tr) {
 
   retangent(pts);
   buildFrames(pts);
+  let bestNy = 1;
+  for (let i = loop0; i <= loop1; i++) if (pts[i].ny < bestNy) { bestNy = pts[i].ny; loopTop = i; }
   tr._loadPoints(pts);
 
   const glen = Math.max(4, jump1 - jump0);
