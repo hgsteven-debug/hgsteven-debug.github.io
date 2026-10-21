@@ -1,5 +1,9 @@
 // 同步單元測試（不需要網路）＋ 兩個瀏覽器情境的手機加入（PeerJS 連得到才跑）。
+import fs from 'fs';
+import crypto from 'crypto';
 import * as sync from '../js/sync.js';
+import * as ice from '../js/ice.js';
+import * as relay from '../js/relay.js';
 import puppeteer from '/tmp/pptr/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
 
 const fails = [];
@@ -99,6 +103,43 @@ catch (e) { bad('reconcile / slerp', e); }
 try { testBuffer(); ok('snapshot interpolation'); }
 catch (e) { bad('snapshot interpolation', e); }
 
+function testIceList() {
+  const now = 1792669800000;
+  const list = ice.iceServers(now);
+  const blob = JSON.stringify(list);
+  assert(blob.includes('stun:stun.l.google.com:19302'), blob);
+  assert(blob.includes('transport=tcp'), blob);
+  assert(!blob.includes('turn.peerjs.com'), blob);
+  const turn = list.find((s) => s.username);
+  const expect = crypto.createHmac('sha1', 'openrelayprojectsecret').update(turn.username).digest('base64');
+  assert(turn.credential === expect, turn.credential);
+  assert(String(turn.urls).includes(':443'), turn.urls);
+  const root = fs.readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  assert(root.includes('location.search + location.hash'), 'root redirect dropped the query');
+  const pub = relay.mqttPublish('skyroadster/v1/ABC', '{"t":"ping"}');
+  assert(relay.mqttPayload(pub) === '{"t":"ping"}', relay.mqttPayload(pub));
+}
+
+async function testRelay() {
+  const code = 'ZZ' + Math.random().toString(36).slice(2, 6);
+  let got = null;
+  const b = relay.connectRelay(code, { onMessage: (m) => { if (m && m.from === 'a') got = m; } });
+  const a = relay.connectRelay(code, {});
+  const start = Date.now();
+  while ((!a.open || !b.open) && Date.now() - start < 12000) await new Promise((r) => setTimeout(r, 50));
+  assert(a.open && b.open, 'relay not open ' + a.reason + ' / ' + b.reason);
+  a.send({ t: 'ping', from: 'a', n: 7 });
+  const wait = Date.now();
+  while (!got && Date.now() - wait < 5000) await new Promise((r) => setTimeout(r, 50));
+  a.close(); b.close();
+  assert(got && got.n === 7, JSON.stringify(got));
+}
+
+try { testIceList(); ok('ice servers / root redirect'); }
+catch (e) { bad('ice servers / root redirect', e); }
+try { await testRelay(); ok('websocket relay'); }
+catch (e) { bad('websocket relay', e); }
+
 const BASE = process.env.SKY_BASE || 'http://127.0.0.1:8137/';
 const browser = await puppeteer.launch({
   executablePath: '/usr/bin/google-chrome',
@@ -146,7 +187,7 @@ async function waitLink(hostPage, phonePage, ms) {
 }
 
 function ownErrors(errors) {
-  return errors.filter((e) => /main\.js|net\.js|sync\.js|physics\.js|race\.js|qrcode/.test(e) && !/favicon/i.test(e));
+  return errors.filter((e) => /main\.js|net\.js|sync\.js|physics\.js|race\.js|qrcode|ice\.js|relay\.js/.test(e) && !/favicon/i.test(e));
 }
 
 try {
@@ -205,10 +246,12 @@ try {
     await host.page.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 22000 });
     signal = await host.page.evaluate(() => window.__sky.net.ready ? 'ready' : ('fail:' + window.__sky.net.failMsg));
   } catch (e) { signal = 'timeout'; }
-  if (!signal.startsWith('ready')) {
+    if (!signal.startsWith('ready')) {
     console.log('SKIP phone webrtc', signal);
     await host.page.close();
   } else {
+    const hostStage = await host.page.evaluate(() => (document.getElementById('phoneStatus') || {}).textContent || '');
+    if (!hostStage.startsWith('階段：')) throw new Error('host status ' + hostStage);
     const meta = await host.page.evaluate(() => {
       const c = document.getElementById('phoneQr');
       const ctx = c.getContext('2d');
@@ -225,12 +268,16 @@ try {
     phoneUrl.searchParams.set('nopauseblur', '1');
     const phone = await openPage(phoneUrl.toString());
     await phone.page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await phone.page.waitForFunction(() => {
+      const t = (document.getElementById('joinStatus') || {}).textContent || '';
+      return t.startsWith('階段：') && t.indexOf('正在連上房間') < 0;
+    }, { timeout: 8000 });
     const linked = await waitLink(host.page, phone.page, 45000);
     if (!linked.ok) throw new Error('peers did not connect ' + JSON.stringify(linked));
     await host.page.bringToFront();
     await host.page.evaluate(() => window.__sky.startGame());
     try {
-      await phone.page.waitForFunction(() => window.__sky.game.state === 'race' || window.__sky.game.state === 'countdown', { timeout: 15000 });
+      await phone.page.waitForFunction(() => window.__sky && (window.__sky.game.state === 'race' || window.__sky.game.state === 'countdown'), { timeout: 15000, polling: 200 });
     } catch (e) {
       const dump = {
         phone: await phone.page.evaluate(() => ({
@@ -255,7 +302,7 @@ try {
       };
       throw new Error('phone did not enter race ' + JSON.stringify(dump));
     }
-    await phone.page.waitForFunction(() => window.__sky.game.state === 'race', { timeout: 15000 });
+    await phone.page.waitForFunction(() => window.__sky && window.__sky.game.state === 'race', { timeout: 15000, polling: 200 });
     await phone.page.bringToFront();
     const view = await phone.page.evaluate(() => {
       const sky = window.__sky;
@@ -285,7 +332,20 @@ try {
     }, { timeout: 10000 });
     await phone.page.waitForFunction(() => window.__sky.net.ghosts >= 1 && window.__sky.net.latest && window.__sky.net.latest.standings && window.__sky.net.latest.standings.length >= 2, { timeout: 8000 });
     await phone.page.evaluate(() => window.__sky.net.disconnect());
-    await host.page.waitForFunction(() => window.__sky.net.remotes === 0, { timeout: 8000 });
+    const dropped = await host.page.waitForFunction(() => window.__sky.net.remotes === 0, { timeout: 8000, polling: 200 }).then(() => true).catch(() => false);
+    if (!dropped) {
+      const dump = await host.page.evaluate(() => ({
+        remotes: window.__sky.net.remotes,
+        status: (document.getElementById('phoneStatus') || {}).textContent,
+        sent: window.__sky.net.sent,
+        err: window.__sky.net.lastErr,
+      }));
+      const phoneDump = await phone.page.evaluate(() => ({
+        via: window.__sky.net && window.__sky.input && (document.getElementById('joinStatus') || {}).textContent,
+        connected: window.__sky.net.connected,
+      }));
+      throw new Error('remote stayed ' + JSON.stringify({ dump, phoneDump }));
+    }
     const after = await host.page.evaluate(() => {
       const sky = window.__sky;
       sky.game.freeze = true;

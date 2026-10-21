@@ -126,7 +126,7 @@ async function boot() {
     window.addEventListener('resize', applySize);
     window.addEventListener('pagehide', (ev) => {
       if (ev.persisted) return;
-      try { if (guestNet && !guestNet._destroyed) guestNet.send({ t: 'bye' }); } catch (e) {}
+      try { if (guestNet && !guestNet._destroyed) guestNet.destroy(); } catch (e) {}
     });
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.init(), { passive: true });
     document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'race') pause(); });
@@ -166,7 +166,7 @@ async function boot() {
       ui.show('join');
       const jc = $('joinCode');
       if (jc) jc.textContent = formatCode(joinCode);
-      setJoinStatus('正在連上房間 ' + formatCode(joinCode) + '…', 'wait');
+      setJoinStatus('階段：正在連上掃碼伺服器…', 'wait');
       if (!netOff) beginGuest();
     } else {
       ui.show('start');
@@ -516,7 +516,8 @@ function paintHostStatus(info) {
   if (urlEl) urlEl.textContent = info.url || '';
   if (st) {
     st.textContent = info.text || '';
-    st.className = 'padline' + (info.kind === 'joined' || info.kind === 'ready' ? ' ok' : '');
+    const flag = info.kind === 'joined' || info.kind === 'ready' ? ' ok' : info.kind === 'fail' ? ' bad' : info.kind === 'warn' ? ' warn' : '';
+    st.className = 'padline' + flag;
   }
   const hint = $('phoneHint');
   if (hint) hint.className = 'small dim' + (info.kind === 'fail' ? ' bad' : info.kind === 'warn' ? ' warn' : '');
@@ -578,7 +579,8 @@ function onGuestWelcome(msg) {
     return;
   }
   guestTrackReady = true;
-  setJoinStatus('已加入房間 ' + formatCode(joinCode) + '，等待房主開始', 'ok');
+  const via = guestNet.via === 'ws' ? '網頁中繼' : guestNet.via === 'relay' ? 'TURN 中繼' : guestNet.via === 'direct' ? '裝置直連' : '已連上';
+  setJoinStatus('階段：已加入（' + via + '）。等待房主開始。', 'ok');
 }
 function onGuestState(msg) {
   if (!guestNet || !msg) return;
@@ -638,15 +640,8 @@ function onGuestState(msg) {
 function onGuestFail(msg) {
   if (guestNet) { guestNet.failed = true; guestNet.failMsg = msg; }
   setJoinStatus(msg, 'bad');
-  showBanner(msg);
-  if (!msg || msg.indexOf('已經有一位') >= 0 || msg.indexOf('不支援') >= 0) return;
-  if (guestNet && guestNet.connected) return;
-  if (guestRetryTimer || guestTries > 3) return;
-  guestRetryTimer = setTimeout(() => {
-    guestRetryTimer = null;
-    if (guestNet && guestNet.connected) return;
-    retryGuest();
-  }, 900);
+  if (guestLive) showBanner(msg);
+  else showBanner('');
 }
 function onGuestClose(info) {
   if (!guestNet || guestNet._destroyed) return;
@@ -665,26 +660,32 @@ function onGuestClose(info) {
     retryGuest();
   }, 800);
 }
+function onGuestStage(info) {
+  if (!info) return;
+  if (guestNet && guestNet.connected) {
+    if (guestLive) return;
+    const via = guestNet.via === 'ws' ? '網頁中繼' : guestNet.via === 'relay' ? 'TURN 中繼' : guestNet.via === 'direct' ? '裝置直連' : '已連上';
+    setJoinStatus('階段：已加入（' + via + '）。等待房主開始。', 'ok');
+    return;
+  }
+  setJoinStatus(info.text || '', info.kind === 'fail' ? 'bad' : 'wait');
+}
 function beginGuest() {
   if (!game.guest || netOff) return;
   if (guestNet) { try { guestNet.destroy(); } catch (e) {} guestNet = null; }
-  setJoinStatus('正在連上房間 ' + formatCode(joinCode) + '…', 'wait');
+  setJoinStatus('階段：正在連上掃碼伺服器…', 'wait');
   guestNet = createGuest(joinCode, {
     onWelcome: onGuestWelcome,
     onState: onGuestState,
     onFail: onGuestFail,
     onClose: onGuestClose,
+    onStatus: onGuestStage,
   });
 }
 function retryGuest() {
   if (!game.guest) return;
-  guestTries += 1;
-  if (guestTries > 3) {
-    const msg = '連不上這個房間。請確認代碼與網路。嚴格的防火牆或對稱 NAT 可能擋下點對點連線。';
-    setJoinStatus(msg, 'bad');
-    showBanner(guestLive ? msg : '');
-    return;
-  }
+  guestTries = 0;
+  if (guestRetryTimer) { clearTimeout(guestRetryTimer); guestRetryTimer = null; }
   beginGuest();
 }
 function leaveGuestRoom() {
@@ -1037,6 +1038,8 @@ function frame(now) {
   if (!(dt > 0)) return;
   dt = Math.min(dt, 0.1);
   game.time += dt;
+  try { if (hostNet && hostNet.poll) hostNet.poll(now); } catch (e) {}
+  try { if (guestNet && guestNet.poll) guestNet.poll(now); } catch (e) {}
   if (!game.freeze) {
     if (race && game.state !== 'menu') race.pollHumans(dt);
     else input.poll(dt);
