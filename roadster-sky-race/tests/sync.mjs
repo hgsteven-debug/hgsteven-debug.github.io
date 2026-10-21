@@ -106,7 +106,21 @@ catch (e) { bad('snapshot interpolation', e); }
 function testGuestSmooth() {
   const vis = { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 0, ready: true };
   const moved = sync.easeGuestPose(vis, { x: 4, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 10 }, 1 / 60);
-  assert(moved.step < 1.5 && moved.step > 0.2 && !moved.snapped, JSON.stringify(moved));
+  assert(moved.step < 0.4 && moved.step > 0.05 && !moved.snapped, JSON.stringify(moved));
+  const fwd = sync.easeGuestPose(
+    { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 0, ready: true },
+    { x: 0, y: 0, z: -4, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 40 },
+    1 / 60,
+  );
+  assert(fwd.step > moved.step && fwd.step < 1.5 && fwd.z < -0.4, JSON.stringify(fwd));
+  const wobble = { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 30, ready: true };
+  let sideStep = 0;
+  for (let i = 0; i < 20; i++) {
+    const before = wobble.x;
+    sync.easeGuestPose(wobble, { x: i % 2 ? 1 : -1, y: 0, z: -i * 0.7, heading: 0, qw: 1, speed: 40 }, 1 / 60);
+    sideStep = Math.max(sideStep, Math.abs(wobble.x - before));
+  }
+  assert(sideStep < 0.12 && wobble.z < -3, JSON.stringify({ sideStep, z: wobble.z }));
   const far = sync.easeGuestPose({ x: 0, y: 0, z: 0, ready: true, qx: 0, qy: 0, qz: 0, qw: 1 }, { x: 40, y: 0, z: 0, qw: 1 }, 1 / 60);
   assert(far.snapped && far.x === 40, JSON.stringify(far));
   const road = { known: false, onRoad: true, since: 0, toastAt: 0 };

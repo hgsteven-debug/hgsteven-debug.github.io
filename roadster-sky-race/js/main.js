@@ -1175,7 +1175,7 @@ function sampleGuestView(dt) {
     guestVis.on = false;
     return null;
   }
-  const poses = guestSelfBuf.sample(performance.now());
+  const poses = guestSelfBuf.sample(performance.now(), 0);
   const p = poses && poses[0];
   if (!p || !Number.isFinite(p.x)) { guestVis.on = false; return null; }
   easeGuestPose(guestEase, p, dt);
@@ -1235,7 +1235,7 @@ function updateCamera(dt, subject, cam, decay = true, viewVeh) {
     return;
   }
   if (cam.view && cam.view.enabled) cam.clearViewOffset();
-  const lam = snap ? 999 : mode === 2 ? 40 : v.grounded ? 5.5 : 3.5;
+  const lam = snap ? 999 : mode === 2 ? 40 : viewVeh ? 2.2 : (v.grounded ? 5.5 : 3.5);
   const yaw0 = st ? st.yaw : game.camYaw;
   const yaw = yaw0 + wrapAngle(v.heading - yaw0) * (1 - Math.exp(-lam * dt));
   if (st) st.yaw = yaw; else game.camYaw = yaw;
@@ -1255,7 +1255,10 @@ function updateCamera(dt, subject, cam, decay = true, viewVeh) {
     const h = [2.5, 1.5, 0, 5.2][mode] * cv.height + clamp(v.alt, 0, 40) * 0.12;
     const tx = v.pos.x - dir.x * dist, tz = v.pos.z - dir.z * dist, ty = v.pos.y + h;
     if (snap) cpos.set(tx, ty, tz);
-    else { cpos.x = damp(cpos.x, tx, 16, dt); cpos.z = damp(cpos.z, tz, 16, dt); cpos.y = damp(cpos.y, ty, 7, dt); }
+    else {
+      const follow = viewVeh ? 6 : 16;
+      cpos.x = damp(cpos.x, tx, follow, dt); cpos.z = damp(cpos.z, tz, follow, dt); cpos.y = damp(cpos.y, ty, viewVeh ? 4 : 7, dt);
+    }
     const gy = track.groundHeight(cpos.x, cpos.z) + 0.8;
     if (cpos.y < gy) cpos.y = gy;
     cam.position.copy(cpos);
@@ -1263,7 +1266,7 @@ function updateCamera(dt, subject, cam, decay = true, viewVeh) {
     cam.lookAt(v.pos.x + dir.x * ahead, v.pos.y + [1.2, 1.0, 0, 1.0][mode] * cv.height + clamp(v.alt, 0, 40) * 0.04, v.pos.z + dir.z * ahead);
   }
   const noise = game.guest ? 0 : (smoothstep(40, 110, sp) * 0.012 + (v.nitroOn ? 0.012 : 0) + (v.thrusting ? 0.004 : 0));
-  const k = noise + game.shake * 0.05;
+  const k = game.guest ? 0 : noise + game.shake * 0.05;
   if (k > 0.0005 && game.state === 'race') {
     cam.position.x += (Math.random() - 0.5) * k * 2;
     cam.position.y += (Math.random() - 0.5) * k * 2 - game.kick;

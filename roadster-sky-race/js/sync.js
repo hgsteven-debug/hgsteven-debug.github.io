@@ -142,19 +142,30 @@ export function easeGuestPose(vis, target, dt) {
     o.snapped = true;
     return o;
   }
-  const k = 1 - Math.exp(-8 * Math.max(0, dt || 0));
-  o.x += dx * k;
-  o.y += dy * k;
-  o.z += dz * k;
+  // 前進要跟上車速。左右和上下抖動（封包把車身左右甩）吃得慢，畫面才不會左右晃。
+  const dtv = Math.max(0, dt || 0);
+  const kf = 1 - Math.exp(-12 * dtv);
+  const kl = 1 - Math.exp(-2.2 * dtv);
+  const h = o.heading || 0;
+  const fx = -Math.sin(h), fz = -Math.cos(h);
+  const along = dx * fx + dz * fz;
+  const lx = dx - fx * along;
+  const lz = dz - fz * along;
+  const sx = fx * along * kf + lx * kl;
+  const sz = fz * along * kf + lz * kl;
+  const sy = dy * kl;
+  o.x += sx;
+  o.y += sy;
+  o.z += sz;
   let dh = (target.heading || 0) - (o.heading || 0);
   while (dh > Math.PI) dh -= Math.PI * 2;
   while (dh < -Math.PI) dh += Math.PI * 2;
-  o.heading = (o.heading || 0) + dh * k;
-  const q = slerpQuat(o, target, k);
+  o.heading = (o.heading || 0) + dh * kl;
+  const q = slerpQuat(o, target, kl);
   o.qx = q.qx; o.qy = q.qy; o.qz = q.qz; o.qw = q.qw;
-  o.speed = (o.speed || 0) + ((target.speed || 0) - (o.speed || 0)) * k;
+  o.speed = (o.speed || 0) + ((target.speed || 0) - (o.speed || 0)) * kf;
   o.ready = true;
-  o.step = dist * k;
+  o.step = Math.hypot(sx, sy, sz);
   o.snapped = false;
   return o;
 }
@@ -267,6 +278,12 @@ export function slerpQuat(a, b, t) {
 }
 
 function lerpNum(a, b, u) { return a + (b - a) * u; }
+function lerpAngle(a, b, u) {
+  let d = (b || 0) - (a || 0);
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return (a || 0) + d * u;
+}
 
 function shiftPose(p, dt) {
   const o = Object.assign({}, p);
@@ -290,7 +307,7 @@ function lerpPose(a, b, u) {
     vx: lerpNum(a.vx || 0, b.vx || 0, u),
     vy: lerpNum(a.vy || 0, b.vy || 0, u),
     vz: lerpNum(a.vz || 0, b.vz || 0, u),
-    heading: lerpNum(a.heading || 0, b.heading || 0, u),
+    heading: lerpAngle(a.heading || 0, b.heading || 0, u),
     speed: lerpNum(a.speed || 0, b.speed || 0, u),
     gy: lerpNum(a.gy == null ? (a.y || 0) : a.gy, b.gy == null ? (b.y || 0) : b.gy, u),
     nx: lerpNum(a.nx || 0, b.nx || 0, u),
@@ -342,14 +359,14 @@ export class StateBuffer {
     this.packets.push({ t, cars: Array.isArray(cars) ? cars : [] });
     if (this.packets.length > 30) this.packets.shift();
   }
-  sample(now) {
+  sample(now, maxExtra = 0.08) {
     const pk = this.packets;
     if (!pk.length) return [];
     const target = now - this.delay;
     if (target <= pk[0].t) return pk[0].cars.map((c) => Object.assign({}, c));
     const last = pk[pk.length - 1];
     if (target >= last.t) {
-      const extra = Math.min(0.08, Math.max(0, (target - last.t) / 1000));
+      const extra = Math.min(maxExtra, Math.max(0, (target - last.t) / 1000));
       return last.cars.map((c) => shiftPose(c, extra));
     }
     let j = 0;
