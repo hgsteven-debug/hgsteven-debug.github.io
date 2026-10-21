@@ -13,7 +13,7 @@ export class LocalDriver {
   sample() { return this.input.state; }
 }
 
-// 遠端選手的接點：之後網路封包呼叫 push()，車子仍用同一套 step。這次沒有接上網路。
+// 遠端選手：手機封包呼叫 push()，車子仍用同一套 step。沒有新封包時維持最後的輸入。
 export class RemoteDriver {
   constructor() {
     this.kind = 'remote';
@@ -53,11 +53,16 @@ export class Race {
 
   step(dt) {
     const all = this.racers;
+    const coast = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
     for (let i = 0; i < all.length; i++) {
       const r = all[i];
+      if (r.parked) continue;
       r.others = all;
-      const inp = r.driver.kind === 'ai' ? r.driver.sample(dt, r) : r.driver.sample();
-      r.veh.step(dt, inp || r.driver.sample());
+      let inp = null;
+      try {
+        inp = r.driver && r.driver.kind === 'ai' ? r.driver.sample(dt, r) : r.driver.sample();
+      } catch (e) { inp = null; }
+      r.veh.step(dt, inp || coast);
     }
     this.collide();
     this.updateLaps(dt);
@@ -68,6 +73,7 @@ export class Race {
     const min = 2.35;
     for (let i = 0; i < rs.length; i++) {
       for (let j = i + 1; j < rs.length; j++) {
+        if (rs[i].parked || rs[j].parked) continue;
         const a = rs[i].veh, b = rs[j].veh;
         if (Math.abs(a.pos.y - b.pos.y) > 2.4) continue;
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;

@@ -18,7 +18,7 @@ export function shortPadName(id) {
 export class UI {
   constructor(input, handlers) {
     this.input = input; this.h = handlers;
-    this.screens = { loading: $('s-loading'), start: $('s-start'), pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'), garage: $('s-garage'), tracks: $('s-tracks'), results: $('s-results') };
+    this.screens = { loading: $('s-loading'), start: $('s-start'), pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'), garage: $('s-garage'), tracks: $('s-tracks'), results: $('s-results'), join: $('s-join') };
     this.current = 'loading';
     this.stack = [];           // 返回用
     this.focusEl = null;
@@ -35,7 +35,7 @@ export class UI {
 
   show(name, push = false) {
     if (push) this.stack.push(this.current);
-    for (const [k, el] of Object.entries(this.screens)) el.classList.toggle('show', k === name);
+    for (const [k, el] of Object.entries(this.screens)) if (el) el.classList.toggle('show', k === name);
     this.current = name;
     if (name === 'mapping') this.refreshMapping();
     if (name === 'settings') this.syncSettings();
@@ -44,7 +44,7 @@ export class UI {
     this.setFocus(this.firstFocus());
   }
   hideAll() {
-    for (const el of Object.values(this.screens)) el.classList.remove('show');
+    for (const el of Object.values(this.screens)) if (el) el.classList.remove('show');
     this.current = null; this.stack = [];
     this.setFocus(null);
   }
@@ -130,6 +130,8 @@ export class UI {
         case 'tracks': this.show('tracks', true); break;
         case 'fullscreen': this.h.onFullscreen(); break;
         case 'back': this.back(); break;
+        case 'join-retry': if (this.h.onJoinRetry) this.h.onJoinRetry(); break;
+        case 'join-leave': if (this.h.onJoinLeave) this.h.onJoinLeave(); break;
         case 'calibrate': this.input.calibrate(); this.updateCalState(); break;
         case 'mapReset': this.input.resetBindings(); this.refreshMapping(); break;
         case 'learnCancel': this.cancelLearn(); break;

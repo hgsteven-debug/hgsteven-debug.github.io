@@ -82,6 +82,15 @@
     <div id="startPad" class="padline">🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵</div>
     <div id="startP1" class="padline">P1：鍵盤、觸控，或第一支手把</div>
     <div id="startP2" class="padline">P2：用另一支手把按任意鍵加入，上下分屏</div>
+    <div id="phoneJoin" class="phonejoin">
+      <div class="grow">
+        <div id="phoneStatus" class="padline">P3：用手機掃碼加入，在自己的螢幕開車</div>
+        <div id="phoneCode" class="roomcode">——</div>
+        <p id="phoneUrl" class="small dim"></p>
+        <p id="phoneHint" class="small dim">車機畫面仍是一人或上下兩人。第三人用手機加入同一場。連不上時，這台比賽照常進行。</p>
+      </div>
+      <canvas id="phoneQr" class="hidden" width="168" height="168" aria-label="加入比賽的 QR code"></canvas>
+    </div>
     <div class="setrow"><span>電腦對手</span>
       <div class="seg" id="aiCount">
         <button class="btn" data-ai="0">0</button>
@@ -97,7 +106,7 @@
         <button class="btn" data-diff="hard">困難</button>
       </div>
     </div>
-    <p class="small dim">兩人同樂是兩支手把、畫面上下各一半。沒有第二支手把時，鍵盤和觸控都是 P1。電腦對手可以一起跑。</p>
+    <p class="small dim">車機上最多兩人、畫面上下各一半。第三人用手機掃碼，在自己的螢幕開同一場。沒有第二支手把時，鍵盤和觸控都是 P1。電腦對手可以一起跑。</p>
     <div class="menu">
       <button class="btn primary" data-act="start">開始遊戲</button>
       <button class="btn" data-act="tracks" id="btnTracks">選擇賽道</button>
@@ -157,6 +166,22 @@
     </div>
   </div>
 </div>
+
+<!-- 手機加入 -->
+<div id="s-join" class="screen">
+  <div class="card center narrow">
+    <h2>加入比賽</h2>
+    <p id="joinStatus" class="sub">正在連線…</p>
+    <div id="joinCode" class="roomcode"></div>
+    <p class="small dim">你是 P3，用這支手機的觸控鍵開車。車機上的玩家不會被你的連線卡住。</p>
+    <div class="menu col">
+      <button class="btn primary" data-act="join-retry">重新連線</button>
+      <button class="btn" data-act="join-leave">離開，自己開一場</button>
+    </div>
+  </div>
+</div>
+
+<div id="netbanner" class="hidden"></div>
 
 <!-- 暫停 -->
 <div id="s-pause" class="screen">
@@ -236,6 +261,8 @@
   window.addEventListener('unhandledrejection', function (e) { say('錯誤：' + (e.reason && e.reason.message || e.reason)); });
 })();
 </script>
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/peerjs.min.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

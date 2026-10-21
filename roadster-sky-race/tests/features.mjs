@@ -13,6 +13,7 @@ const browser = await puppeteer.launch({
 });
 
 async function open(query) {
+  if (!query.includes('nonet=1') && !query.includes('net=1')) query += '&nonet=1';
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

@@ -14,9 +14,17 @@ import { ROAD_HALF } from './track.js';
 import { ribbonCompression, KIND } from './stunts.js';
 import { Race, LocalDriver, RemoteDriver, LOCAL_LIMIT, RACE_LAPS } from './race.js';
 import { AiDriver } from './ai.js';
+import { createHost, createGuest, drawRoomQr } from './net.js';
+import {
+  normalizeCode, formatCode, joinUrl, heldInput, reconcileDecision, StateBuffer, zeroInput,
+} from './sync.js';
+import * as syncApi from './sync.js';
 
 const params = new URLSearchParams(location.search);
+const joinCode = normalizeCode(params.get('join') || '');
+const netOff = params.get('nonet') === '1';
 let qname = params.get('q') || store.get('quality', null) || ((navigator.hardwareConcurrency || 8) <= 4 ? 'low' : 'med');
+if (joinCode && !params.get('q')) qname = 'low';
 if (!QUALITY[qname]) qname = 'med';
 const Q = QUALITY[qname];
 const $ = (id) => document.getElementById(id);
@@ -24,10 +32,20 @@ const CAM_NAMES = ['追尾', '低角度', '車內', '遠景'];
 const PHYS_DT = 1 / 120;
 
 let renderer, scene, camera, camera2, world, track, car, veh, hud, ui, audio, input, race;
+let hostNet = null, guestNet = null;
+const ghosts = new Map();
+const guestBuf = new StateBuffer(100);
+let guestLive = false;
+let guestTrackReady = false;
+let guestTries = 0;
+let guestRetryTimer = null;
+let pendingSnap = null;
+let guestPoses = [];
+const guestLap = { n: 1, t: 0, last: null, best: null, cp: [false, false, false], prevFi: null };
 const lobby = { p2: null, prev: new Map() };
 const AI_PAINTS = ['white', 'blue', 'black', 'red'];
 const game = {
-  state: 'loading', time: 0, camMode: 0, countdown: 0, dyn: 1,
+  state: 'loading', time: 0, camMode: 0, countdown: 0, dyn: 1, guest: !!joinCode, hostPaused: false,
   lap: { n: 1, t: 0, last: null, best: null, cp: [false, false, false], prevFi: null },
   lastGoodI: 0, camYaw: 0, camSnap: true, shake: 0, kick: 0, rumbleT: 0, acc: 0, frames: [], autoDone: false,
 };
@@ -82,13 +100,14 @@ async function boot() {
     hud = new Hud(track, world);
 
     ui = new UI(input, {
-      onStart: startGame, onResume: resume, onRestart: () => startGame(), onQuit: quit,
+      onStart: () => { if (!game.guest) startGame(); }, onResume: resume, onRestart: () => { if (!game.guest) startGame(); }, onQuit: quit,
       onFullscreen: toggleFullscreen, onVehicle: setVehicle, getCar: () => car,
       onTrack: (id) => { store.set('track', id); const u = new URL(location.href); u.searchParams.delete('track'); location.href = u.toString(); },
       onQuality: (q) => { store.set('quality', q); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u.toString(); },
       getQuality: () => qname, onVolume: (v) => audio.setVolume(v), getVolume: () => audio.volume,
       onTouchMode: () => {}, onTouchPress: (p) => { input.pressed[p] = true; game.touchPressed = p; },
       onBackTop: () => { if (game.state === 'paused') resume(); },
+      onJoinRetry: retryGuest, onJoinLeave: leaveGuestRoom,
     });
     input.onProfileChange = (prof) => ui.applyProfile(prof);
     ui.applyProfile(input.profile);
@@ -105,6 +124,10 @@ async function boot() {
     $('loadBar').style.width = '100%';
 
     window.addEventListener('resize', applySize);
+    window.addEventListener('pagehide', (ev) => {
+      if (ev.persisted) return;
+      try { if (guestNet && !guestNet._destroyed) guestNet.send({ t: 'bye' }); } catch (e) {}
+    });
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.init(), { passive: true });
     document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'race') pause(); });
     window.addEventListener('blur', () => { if (game.state === 'race' && params.get('nopauseblur') !== '1') pause(); });
@@ -114,11 +137,42 @@ async function boot() {
       Q, CarModel, setVehicle, sim, game, veh, input, world, hud, ui, car, camera, camera2, renderer, scene, audio,
       startGame, track, TRACKS, trackById, VEHICLES, vehicleById, THREE,
       lobby, ribbonCompression, KIND, joinPad, pollLobby, leaveP2, LocalDriver, RemoteDriver, LOCAL_LIMIT, RACE_LAPS, AiDriver,
+      sync: syncApi, retryGuest,
       get race() { return race; },
+      net: {
+        get role() { return game.guest ? 'guest' : (hostNet ? 'host' : 'off'); },
+        get code() { return hostNet ? hostNet.code : joinCode; },
+        get url() { return hostNet ? hostNet.url : (joinCode ? joinUrl(joinCode, location) : ''); },
+        get ready() { return !!(hostNet && hostNet.ready); },
+        get failed() { return game.guest ? !!(guestNet && guestNet.failed) : !!(hostNet && hostNet.failed); },
+        get failMsg() { return (game.guest ? guestNet && guestNet.failMsg : hostNet && hostNet.failMsg) || ''; },
+        get remotes() { return hostNet ? hostNet.remotes.length : 0; },
+        get connected() { return !!(guestNet && guestNet.connected); },
+        get ghosts() { return ghosts.size; },
+        get latest() { return guestNet && guestNet.latest; },
+        get live() { return guestLive; },
+        get trackReady() { return guestTrackReady; },
+        get sent() { return hostNet ? (hostNet.sent || 0) : 0; },
+        get lastErr() { return (hostNet && hostNet.lastErr) || ''; },
+        disconnect() {
+          try { if (guestNet) guestNet.destroy(); } catch (e) {}
+          try { if (hostNet) hostNet.destroy(); } catch (e) {}
+        },
+      },
     };
     game.state = 'menu';
-    ui.refreshTracks(); ui.show('start');
-    if (params.get('autostart') === '1') { startGame(); }
+    ui.refreshTracks();
+    if (game.guest) {
+      ui.show('join');
+      const jc = $('joinCode');
+      if (jc) jc.textContent = formatCode(joinCode);
+      setJoinStatus('正在連上房間 ' + formatCode(joinCode) + '…', 'wait');
+      if (!netOff) beginGuest();
+    } else {
+      ui.show('start');
+      if (!netOff) beginHost();
+      if (params.get('autostart') === '1') startGame();
+    }
     last = performance.now();
     requestAnimationFrame(frame);
   } catch (e) {
@@ -181,6 +235,7 @@ function raceOptions() {
   return { count, diff };
 }
 function clearRace() {
+  if (hostNet) for (const remote of hostNet.remotes) remote.racer = null;
   if (!race) return;
   for (const r of race.racers) {
     if (r.car && r.car !== car) {
@@ -241,7 +296,7 @@ function startGame() {
   const mid = (roster.length - 1) / 2;
   const origin = track.wrap(track.N - 10);
   race = new Race(track);
-  race.raceMode = roster.length > 1;
+  race.raceMode = false;
   race.onLap = (r, lapTime) => {
     if (!r.primary) return;
     const L = r.lap;
@@ -263,16 +318,23 @@ function startGame() {
     r.cam.snap = true;
     race.add(r);
   });
+  humans[0].netId = 'p1';
+  if (humans[1]) humans[1].netId = 'p2';
+  ais.forEach((r, i) => { r.netId = 'ai' + i; });
+  if (hostNet) for (const remote of hostNet.remotes) attachRemoteRacer(remote);
+  race.raceMode = race.racers.length > 1;
   veh = humans[0].veh;
   car = humans[0].car;
   game.camYaw = veh.heading; game.camSnap = true;
   setSplit(humans.length > 1);
   game.state = 'countdown';
   game.countdown = params.get('nocount') === '1' ? 0.05 : 3.4;
+  if (game.countdown <= 0.4) { game.state = 'race'; game.countdown = 0; }
   game.lastCount = -1;
   game.shake = 0;
   const sb = $('standings');
-  if (sb) sb.classList.toggle('hidden', roster.length < 2);
+  if (sb) sb.classList.toggle('hidden', race.racers.length < 2);
+  flushNet(true);
 }
 function setSplit(on) {
   game.split = !!on;
@@ -309,7 +371,9 @@ function resume() {
   input.flushKeys();
 }
 function quit() {
+  if (game.guest) { leaveGuestRace(); return; }
   clearRace();
+  clearGhosts();
   setSplit(false);
   game.state = 'menu';
   hud.show(false); hud.count('');
@@ -317,6 +381,428 @@ function quit() {
   veh.placeOnTrack(track.N - 10, 0, 0);
   ui.show('start');
   updateLobby();
+  flushNet(true);
+}
+
+function welcomeFor(remote) {
+  const opt = raceOptions();
+  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+  return {
+    t: 'welcome', track: track.id, vehicle: vid, ai: opt.count, diff: opt.diff,
+    laps: RACE_LAPS, slot: remote.slot, name: remote.name,
+  };
+}
+function poseOf(r) {
+  const v = r.veh;
+  const n = (x, d = 0) => (Number.isFinite(x) ? x : d);
+  return {
+    id: r.netId || r.name,
+    name: r.name,
+    kind: r.driver && r.driver.kind,
+    paint: r.car && r.car.paintKey,
+    x: n(v.pos.x), y: n(v.pos.y), z: n(v.pos.z),
+    qx: n(v.q.x), qy: n(v.q.y), qz: n(v.q.z), qw: n(v.q.w, 1),
+    vx: n(v.vel.x), vy: n(v.vel.y), vz: n(v.vel.z),
+    nx: n(v.n.x), ny: n(v.n.y, 1), nz: n(v.n.z),
+    heading: n(v.heading), speed: n(v.speed), gy: n(v.groundY, v.pos.y),
+    grounded: !!v.grounded, nitro: !!v.nitroOn, thrust: n(v.thrust), lift: n(v.lift),
+    braking: !!v.braking, steer: n(v.steerAngle),
+    fi: n(v.attached ? v.fi : (v.q1.fi || 0)),
+    lap: r.lap ? r.lap.n : 1,
+    finish: r.finish == null ? null : r.finish,
+  };
+}
+function netStateFor(remote) {
+  const cars = [];
+  if (race) {
+    for (const r of race.racers) {
+      if (!r.veh) continue;
+      const pose = poseOf(r);
+      if (Number.isFinite(pose.x) && Number.isFinite(pose.z)) cars.push(pose);
+    }
+  }
+  const standings = race ? race.standings().map((r) => ({
+    name: r.name, finish: r.finish == null ? null : r.finish, kind: r.driver && r.driver.kind,
+  })) : [];
+  let self = null, selfLap = null, selfId = null;
+  if (remote.racer && remote.racer.veh) {
+    selfId = remote.racer.netId;
+    try { self = remote.racer.veh.exportState(); } catch (e) { self = null; }
+    const L = remote.racer.lap;
+    selfLap = L ? { n: L.n, t: L.t, last: L.last, best: L.best } : null;
+  }
+  return {
+    t: 'state', now: performance.now(), race: game.state, cd: game.countdown, track: track.id,
+    ack: remote.seq | 0, selfId, self, selfLap, standings, cars,
+  };
+}
+function flushNet(force) {
+  if (!hostNet || game.guest) return;
+  const st = game.state;
+  if (!force && (st === 'menu' || st === 'loading')) return;
+  try { hostNet.broadcast((remote) => netStateFor(remote), !!force); } catch (e) {}
+}
+function applyRemoteInputs() {
+  if (!hostNet || !race) return;
+  const now = performance.now();
+  for (const remote of hostNet.remotes) {
+    if (!remote.driver) continue;
+    try { remote.driver.push(heldInput(remote, now)); } catch (e) {}
+  }
+}
+function refreshRaceMode() {
+  if (!race) return;
+  const active = race.racers.filter((r) => !r.parked);
+  const anyFinish = race.racers.some((r) => r.finish != null);
+  if (active.length < 2 && !anyFinish) race.raceMode = false;
+  else race.raceMode = race.racers.length > 1;
+}
+function attachRemoteRacer(remote) {
+  if (!race || !remote || remote.racer) return remote.racer;
+  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+  const tune = vehicleById(vid).tune;
+  const paints = ['steel', 'blue', 'white', 'black'];
+  const rcar = new CarModel(QUALITY.low, vid, paints[remote.slot % paints.length]);
+  scene.add(rcar.root); scene.add(rcar.blob);
+  const rveh = new Vehicle(track);
+  rveh.setTune(tune);
+  const r = makeRacer({
+    name: remote.name || ('P' + (3 + remote.slot)),
+    driver: remote.driver,
+    veh: rveh, car: rcar, lap: freshLap(null),
+  });
+  r.netId = 'r' + remote.slot;
+  const lat = Math.max(-8, 6 - remote.slot * 3.2);
+  r.lat0 = lat;
+  rveh.energy = 100;
+  rveh.placeOnTrack(track.wrap(track.N - 10), lat, 0);
+  r.cam.yaw = rveh.heading;
+  race.add(r);
+  remote.racer = r;
+  refreshRaceMode();
+  const sb = $('standings');
+  if (sb && race.racers.length > 1) sb.classList.remove('hidden');
+  return r;
+}
+function releaseRemoteCar(r) {
+  if (!r || !r.car || r.car === car) return;
+  scene.remove(r.car.root, r.car.blob);
+  try { r.car.dispose(); } catch (e) {}
+}
+function detachRemoteRacer(remote) {
+  const r = remote && remote.racer;
+  if (remote) remote.racer = null;
+  if (!r || !race) return;
+  const i = race.racers.indexOf(r);
+  if (i >= 0) race.racers.splice(i, 1);
+  releaseRemoteCar(r);
+  refreshRaceMode();
+  try { checkResults(); } catch (e) {}
+}
+function parkRemoteRacer(remote) {
+  const r = remote && remote.racer;
+  if (!r) { if (remote) remote.racer = null; return; }
+  r.parked = true;
+  r.netId = (r.netId || 'r') + '-done';
+  if (r.name.indexOf('離線') < 0) r.name += '（離線）';
+  remote.racer = null;
+  refreshRaceMode();
+}
+function paintHostStatus(info) {
+  const st = $('phoneStatus');
+  const codeEl = $('phoneCode');
+  const urlEl = $('phoneUrl');
+  if (codeEl) codeEl.textContent = info.code ? formatCode(info.code) : '——';
+  if (urlEl) urlEl.textContent = info.url || '';
+  if (st) {
+    st.textContent = info.text || '';
+    st.className = 'padline' + (info.kind === 'joined' || info.kind === 'ready' ? ' ok' : '');
+  }
+  const hint = $('phoneHint');
+  if (hint) hint.className = 'small dim' + (info.kind === 'fail' ? ' bad' : info.kind === 'warn' ? ' warn' : '');
+  const canvas = $('phoneQr');
+  if (canvas && info.url && (info.kind === 'ready' || info.kind === 'joined')) {
+    if (drawRoomQr(canvas, info.url)) canvas.classList.remove('hidden');
+  }
+}
+function beginHost() {
+  if (hostNet || game.guest || netOff) return;
+  hostNet = createHost({
+    onStatus: paintHostStatus,
+    onJoin: (remote) => {
+      try {
+        if (game.state === 'countdown' || game.state === 'race' || game.state === 'paused') attachRemoteRacer(remote);
+      } catch (e) {}
+    },
+    onLeave: (remote, why) => {
+      try {
+        if (remote.racer && remote.racer.finish != null) parkRemoteRacer(remote);
+        else detachRemoteRacer(remote);
+        if (game.state === 'race') checkResults();
+      } catch (e) {}
+      if (why !== 'replaced' && hud && (game.state === 'race' || game.state === 'countdown')) hud.toast('手機玩家已離開，比賽繼續', 1800);
+    },
+    onReset: (remote) => { try { if (remote.racer) resetRacer(remote.racer); } catch (e) {} },
+    welcome: welcomeFor,
+    state: (remote) => {
+      if (game.state === 'loading') return null;
+      return netStateFor(remote);
+    },
+  });
+}
+function setJoinStatus(text, kind) {
+  const el = $('joinStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'sub' + (kind === 'bad' ? ' bad' : kind === 'ok' ? ' ok' : '');
+}
+function showBanner(text) {
+  const el = $('netbanner');
+  if (!el) return;
+  if (!text) { el.classList.add('hidden'); el.textContent = ''; return; }
+  el.textContent = text;
+  el.classList.remove('hidden');
+}
+function onGuestWelcome(msg) {
+  if (!guestNet) return;
+  guestNet.connected = true;
+  guestTries = 0;
+  showBanner('');
+  const want = msg && msg.track;
+  if (want && want !== track.id && TRACKS.some((t) => t.id === want)) {
+    const u = new URL(location.href);
+    u.searchParams.set('join', joinCode);
+    u.searchParams.set('track', want);
+    if (!params.get('q')) u.searchParams.set('q', 'low');
+    location.replace(u.toString());
+    return;
+  }
+  guestTrackReady = true;
+  setJoinStatus('已加入房間 ' + formatCode(joinCode) + '，等待房主開始', 'ok');
+}
+function onGuestState(msg) {
+  if (!guestNet || !msg) return;
+  guestNet.latest = msg;
+  guestNet.connected = true;
+  const cars = (msg.cars || []).filter((c) => c && c.id !== msg.selfId);
+  guestBuf.push(performance.now(), cars);
+  if (msg.selfLap) {
+    if (Number.isFinite(msg.selfLap.n)) guestLap.n = msg.selfLap.n;
+    if (Number.isFinite(msg.selfLap.t)) guestLap.t = msg.selfLap.t;
+    guestLap.last = msg.selfLap.last;
+    guestLap.best = msg.selfLap.best;
+  }
+  if (msg.self) pendingSnap = msg;
+  if (!guestTrackReady) {
+    const want = msg.track;
+    if (want && want !== track.id && TRACKS.some((t) => t.id === want)) {
+      const u = new URL(location.href);
+      u.searchParams.set('join', joinCode);
+      u.searchParams.set('track', want);
+      if (!params.get('q')) u.searchParams.set('q', 'low');
+      location.replace(u.toString());
+      return;
+    }
+    guestTrackReady = true;
+  }
+  const phase = msg.race;
+  if (!guestLive && (phase === 'countdown' || phase === 'race' || phase === 'paused')) enterGuestRace(msg);
+  if (guestLive && (phase === 'countdown' || phase === 'race') && (game.state === 'results' || game.state === 'menu')) enterGuestRace(msg);
+  if (guestLive && phase === 'results' && game.state !== 'results') showGuestResults(msg);
+  if (guestLive && phase === 'menu') leaveGuestRace();
+  if (!guestLive) {
+    if (phase === 'results') showGuestResults(msg);
+    return;
+  }
+  if (phase === 'countdown' && game.state !== 'paused') {
+    game.countdown = typeof msg.cd === 'number' ? msg.cd : game.countdown;
+    if (game.state !== 'countdown') game.state = 'countdown';
+  }
+  if (phase === 'race' && game.state === 'countdown') {
+    game.state = 'race';
+    game.hostPaused = false;
+    if (hud) { hud.count('出發！'); setTimeout(() => hud && hud.count(''), 700); }
+  }
+  if (phase === 'paused' && (game.state === 'race' || game.state === 'countdown')) {
+    game.hostPaused = true;
+    game.prevState = game.state;
+    game.state = 'paused';
+    if (hud) hud.toast('房主暫停了', 1500);
+  }
+  if (phase === 'race' && game.state === 'paused' && game.hostPaused) {
+    game.hostPaused = false;
+    game.state = 'race';
+    if (ui.current === 'pause') ui.hideAll();
+  }
+}
+function onGuestFail(msg) {
+  if (guestNet) { guestNet.failed = true; guestNet.failMsg = msg; }
+  setJoinStatus(msg, 'bad');
+  showBanner(msg);
+  if (!msg || msg.indexOf('已經有一位') >= 0 || msg.indexOf('不支援') >= 0) return;
+  if (guestNet && guestNet.connected) return;
+  if (guestRetryTimer || guestTries > 3) return;
+  guestRetryTimer = setTimeout(() => {
+    guestRetryTimer = null;
+    if (guestNet && guestNet.connected) return;
+    retryGuest();
+  }, 900);
+}
+function onGuestClose(info) {
+  if (!guestNet || guestNet._destroyed) return;
+  guestNet.connected = false;
+  if (info && info.full) return;
+  if (info && info.replaced) {
+    setJoinStatus('已改由另一台手機加入這個房間。', 'bad');
+    showBanner('已改由另一台手機加入。');
+    return;
+  }
+  if (guestLive) showBanner('連線中斷。比賽在房主那邊會繼續。正在重新連線…');
+  else setJoinStatus('連線中斷。正在重新連線…', 'bad');
+  if (guestRetryTimer) return;
+  guestRetryTimer = setTimeout(() => {
+    guestRetryTimer = null;
+    retryGuest();
+  }, 800);
+}
+function beginGuest() {
+  if (!game.guest || netOff) return;
+  if (guestNet) { try { guestNet.destroy(); } catch (e) {} guestNet = null; }
+  setJoinStatus('正在連上房間 ' + formatCode(joinCode) + '…', 'wait');
+  guestNet = createGuest(joinCode, {
+    onWelcome: onGuestWelcome,
+    onState: onGuestState,
+    onFail: onGuestFail,
+    onClose: onGuestClose,
+  });
+}
+function retryGuest() {
+  if (!game.guest) return;
+  guestTries += 1;
+  if (guestTries > 3) {
+    const msg = '連不上這個房間。請確認代碼與網路。嚴格的防火牆或對稱 NAT 可能擋下點對點連線。';
+    setJoinStatus(msg, 'bad');
+    showBanner(guestLive ? msg : '');
+    return;
+  }
+  beginGuest();
+}
+function leaveGuestRoom() {
+  try { if (guestNet) guestNet.destroy(); } catch (e) {}
+  const u = new URL(location.href);
+  u.searchParams.delete('join');
+  location.href = u.toString();
+}
+function enterGuestRace(msg) {
+  guestLive = true;
+  clearGhosts();
+  ui.hideAll();
+  hud.show(true);
+  setSplit(false);
+  veh.energy = 100;
+  veh.placeOnTrack(track.wrap(track.N - 10), 6, 0);
+  game.camYaw = veh.heading;
+  game.camSnap = true;
+  game.countdown = typeof msg.cd === 'number' ? msg.cd : 3.4;
+  game.lastCount = -1;
+  game.hostPaused = msg.race === 'paused';
+  game.state = msg.race === 'race' ? 'race' : (msg.race === 'paused' ? 'paused' : 'countdown');
+  const sb = $('standings');
+  if (sb) sb.classList.remove('hidden');
+  showBanner('');
+  updateTouchVisibility();
+}
+function leaveGuestRace() {
+  guestLive = false;
+  pendingSnap = null;
+  clearGhosts();
+  setSplit(false);
+  game.state = 'menu';
+  game.hostPaused = false;
+  if (hud) { hud.show(false); hud.count(''); }
+  const sb = $('standings'); if (sb) sb.classList.add('hidden');
+  veh.placeOnTrack(track.wrap(track.N - 10), 0, 0);
+  ui.show('join');
+  if (guestNet && guestNet.connected) setJoinStatus('已加入房間 ' + formatCode(joinCode) + '，等待房主開始', 'ok');
+}
+function showGuestResults(msg) {
+  guestLive = true;
+  game.state = 'results';
+  const list = $('resultsList');
+  const rows = (msg && msg.standings) || [];
+  if (list) {
+    list.innerHTML = rows.map((r, i) => `<div>${i + 1}. ${r.name}　${r.finish != null ? fmtTime(r.finish) : '未完成'}</div>`).join('');
+  }
+  ui.show('results');
+  if (hud) hud.count('');
+}
+function clearGhosts() {
+  for (const g of ghosts.values()) releaseRemoteCar({ car: g.car });
+  ghosts.clear();
+  guestPoses = [];
+}
+function applyGhost(c, pose, dt) {
+  c.root.position.set(pose.x || 0, pose.y || 0, pose.z || 0);
+  c.root.quaternion.set(pose.qx || 0, pose.qy || 0, pose.qz || 0, pose.qw == null ? 1 : pose.qw);
+  c.root.visible = true;
+  c.update(dt, {
+    grounded: !!pose.grounded, impact: 0, accel: 0, latAccel: 0, speedF: pose.speed || 0,
+    steerAngle: pose.steer || 0, thrust: pose.thrust || 0, lift: pose.lift || 0, nitro: !!pose.nitro, braking: !!pose.braking,
+  });
+  const gy = Number.isFinite(pose.gy) ? pose.gy : (pose.y || 0);
+  c.blob.position.set(pose.x || 0, gy + 0.04, pose.z || 0);
+  _v.set(pose.nx || 0, Number.isFinite(pose.ny) ? pose.ny : 1, pose.nz || 0);
+  if (_v.lengthSq() < 1e-4) _v.set(0, 1, 0);
+  _q.setFromUnitVectors(_v2.set(0, 1, 0), _v.normalize());
+  c.blob.quaternion.copy(_q);
+  c.blob.rotateY(-(pose.heading || 0));
+  c.blob.material.opacity = 0.55;
+}
+function syncGhosts(dt) {
+  const poses = guestBuf.sample(performance.now());
+  guestPoses = poses;
+  const seen = new Set();
+  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+  for (const pose of poses) {
+    if (!pose || !pose.id) continue;
+    seen.add(pose.id);
+    let g = ghosts.get(pose.id);
+    if (!g) {
+      const c = new CarModel(QUALITY.low, vid, pose.paint || 'white');
+      scene.add(c.root); scene.add(c.blob);
+      g = { car: c };
+      ghosts.set(pose.id, g);
+    }
+    applyGhost(g.car, pose, dt);
+  }
+  for (const [id, g] of ghosts) {
+    if (seen.has(id)) continue;
+    releaseRemoteCar({ car: g.car });
+    ghosts.delete(id);
+  }
+}
+function nudgeVehicle(v, s, k) {
+  v.pos.x += ((s.x || 0) - v.pos.x) * k;
+  v.pos.y += ((s.y || 0) - v.pos.y) * k;
+  v.pos.z += ((s.z || 0) - v.pos.z) * k;
+  v.vel.x += ((s.vx || 0) - v.vel.x) * k;
+  v.vel.y += ((s.vy || 0) - v.vel.y) * k;
+  v.vel.z += ((s.vz || 0) - v.vel.z) * k;
+  if (Number.isFinite(s.energy)) v.energy += (s.energy - v.energy) * k;
+}
+function applyReconcile(msg) {
+  if (!msg || !msg.self || !veh.importState) return;
+  const local = { x: veh.pos.x, y: veh.pos.y, z: veh.pos.z };
+  const decision = reconcileDecision(local, msg.self, msg.ack | 0, guestNet ? guestNet.log : []);
+  if (decision.mode === 'nudge') nudgeVehicle(veh, msg.self, 0.22);
+  else if (decision.mode === 'replay') {
+    veh.importState(msg.self);
+    for (const rec of decision.replay) {
+      const n = Math.min(rec.steps | 0, 36);
+      const cmd = rec.cmd || zeroInput();
+      for (let i = 0; i < n; i++) veh.step(PHYS_DT, cmd);
+    }
+  } else if (decision.mode === 'snap') veh.importState(msg.self);
 }
 function toggleFullscreen() {
   try {
@@ -399,7 +885,7 @@ function updateLap(dt) {
   lap.prevFi = fi;
 }
 function updateRings(dt) {
-  const humans = race ? race.locals() : [{ veh, input, primary: true }];
+  const humans = race ? race.racers.filter((r) => r.driver && r.driver.kind !== 'ai' && !r.parked) : [{ veh, input, primary: true }];
   for (const ring of world.rings) {
     if (!ring.on) { if (game.time - ring.t > 45) ring.on = true; continue; }
     for (const h of humans) {
@@ -564,23 +1050,43 @@ function frame(now) {
       if (pressed.camera) { game.camMode = (game.camMode + 1) % CAM_NAMES.length; game.camSnap = true; }
       if (game.state === 'race') {
         if (!game.freeze) {
-          if (pressed.reset) resetToTrack();
+          if (pressed.reset) {
+            if (game.guest && guestNet) guestNet.send({ t: 'reset' });
+            resetToTrack();
+          }
           const p2 = race && race.locals()[1];
           if (p2 && p2.input && p2.input.pressed.reset) resetRacer(p2);
           game.acc += dt;
           let steps = 0;
-          while (game.acc >= PHYS_DT && steps < 6) {
-            if (race) race.step(PHYS_DT);
-            else veh.step(PHYS_DT, input.state);
-            game.acc -= PHYS_DT; steps++;
+          if (game.guest) {
+            if (guestNet) guestNet.noteInput(input.state, performance.now());
+            while (game.acc >= PHYS_DT && steps < 6) {
+              veh.step(PHYS_DT, input.state);
+              if (guestNet) guestNet.noteSubstep();
+              game.acc -= PHYS_DT; steps++;
+            }
+            if (steps === 6) game.acc = 0;
+            handleEvents(dt);
+            if (pendingSnap) {
+              try { applyReconcile(pendingSnap); } catch (e) {}
+              pendingSnap = null;
+              veh.events.impact = 0; veh.events.wall = 0; veh.events.respawn = false; veh.events.offroad = false;
+            }
+          } else {
+            try { applyRemoteInputs(); } catch (e) {}
+            while (game.acc >= PHYS_DT && steps < 6) {
+              if (race) race.step(PHYS_DT);
+              else veh.step(PHYS_DT, input.state);
+              game.acc -= PHYS_DT; steps++;
+            }
+            if (steps === 6) game.acc = 0;
+            handleEvents(dt);
+            if (!race) updateLap(dt);
+            updateRings(dt);
+            checkResults();
           }
-          if (steps === 6) game.acc = 0;
-          handleEvents(dt);
-          if (!race) updateLap(dt);
-          updateRings(dt);
-          checkResults();
         }
-      } else {
+      } else if (!game.guest) {
         game.countdown -= dt;
         const c = Math.ceil(game.countdown - 0.4);
         if (c !== game.lastCount) {
@@ -590,6 +1096,12 @@ function frame(now) {
         if (game.countdown <= 0.4 && game.state === 'countdown') { game.state = 'race'; setTimeout(() => hud.count(''), 700); }
         if (race) for (const r of race.racers) r.veh.energy = 100;
         else veh.energy = 100;
+      } else {
+        const c = Math.ceil((game.countdown || 0) - 0.4);
+        if (c !== game.lastCount) {
+          game.lastCount = c;
+          if (c > 0) { hud.count(String(c)); audio.beep(false); } else hud.count('出發！');
+        }
       }
     }
   } else if (game.state === 'paused') {
@@ -597,6 +1109,7 @@ function frame(now) {
   }
 
   syncCar(dt);
+  if (game.guest && guestLive) { try { syncGhosts(dt); } catch (e) {} }
   world.updateRings(dt, game.time);
   if (game.split && race && race.locals().length > 1 && game.state !== 'menu') renderSplit(dt);
   else {
@@ -608,8 +1121,11 @@ function frame(now) {
   // HUD / 音效
   if (game.state === 'countdown' || game.state === 'race' || game.state === 'paused') {
     const stLabel = veh.nitroOn ? '氮氣加速' : !veh.grounded ? (veh.thrusting ? '推進飛行' : '滯空') : (!veh.onRoad ? '離開路面' : '地面行駛');
-    hud.update(dt, veh, game.lap, CAM_NAMES[game.camMode], padText(), stLabel);
-    hud.drawMinimap(veh, race ? race.racers : null);
+    const lapView = game.guest && guestLive ? guestLap : game.lap;
+    hud.update(dt, veh, lapView, CAM_NAMES[game.camMode], game.guest ? '📱 觸控開車' : padText(), stLabel);
+    if (game.guest && guestPoses.length) {
+      hud.drawMinimap(veh, guestPoses.map((p) => ({ veh: { pos: { x: p.x, z: p.z }, heading: p.heading || 0 }, driver: { kind: p.kind || 'remote' } })));
+    } else hud.drawMinimap(veh, race ? race.racers : null);
     hud.fx(dt, veh, Q.fx && game.state === 'race' && !game.split);
     updateStandings();
   }
@@ -619,7 +1135,8 @@ function frame(now) {
   const pi = input.padInfo;
   const sp = $('startPad');
   if (sp) { sp.className = 'padline' + (pi.connected ? ' ok' : ''); const t = pi.connected ? `🎮 已連接：${shortPadName(pi.id)}（${input.profile.name}）` : '🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵'; if (sp.textContent !== t) sp.textContent = t; }
-  if (game.state === 'menu') pollLobby();
+  if (game.state === 'menu' && !game.guest) pollLobby();
+  try { flushNet(false); } catch (e) {}
   adaptResolution(dt);
 }
 
@@ -652,14 +1169,29 @@ function handleEvents(dt) {
       r.impactForCar = Math.max(r.impactForCar || 0, ev.impact);
       if (pad && ev.impact > 3) pad.rumble(0.4, 0.5, 120, true);
     }
-    if (ev.respawn) respawnRacer(race ? r : null, r.primary || !race ? '墜入峽谷！回到跳台前' : '');
+    if (ev.respawn) {
+      if (game.guest && guestNet) guestNet.send({ t: 'reset' });
+      respawnRacer(race ? r : null, r.primary || !race ? '墜入峽谷！回到跳台前' : '');
+    }
     ev.impact = 0; ev.wall = 0; ev.respawn = false; ev.offroad = false;
   }
 }
+function formatStandings(list) {
+  return list.map((r, i) => `${i + 1} ${r.name}${r.finish != null ? '  ' + fmtTime(r.finish) : ''}`).join('\n');
+}
 function updateStandings() {
   const el = $('standings');
-  if (!el || !race || race.racers.length < 2) return;
-  const t = race.standings().map((r, i) => `${i + 1} ${r.name}${r.finish != null ? '  ' + fmtTime(r.finish) : ''}`).join('\n');
+  if (!el) return;
+  if (game.guest) {
+    const rows = guestNet && guestNet.latest && guestNet.latest.standings;
+    if (!rows || rows.length < 2) return;
+    const t = formatStandings(rows);
+    if (el.textContent !== t) el.textContent = t;
+    el.classList.remove('hidden');
+    return;
+  }
+  if (!race || race.racers.length < 2) return;
+  const t = formatStandings(race.standings());
   if (el.textContent !== t) el.textContent = t;
 }
 function showResults() {
@@ -670,11 +1202,12 @@ function showResults() {
   ui.show('results');
 }
 function checkResults() {
-  if (!race || !race.raceMode || game.state !== 'race') return;
-  const humans = race.locals();
+  if (game.guest || !race || !race.raceMode || game.state !== 'race') return;
+  const humans = race.racers.filter((r) => r.driver && r.driver.kind !== 'ai');
   if (humans.length && humans.every((r) => r.finish != null)) {
     game.state = 'results';
     showResults();
+    flushNet(true);
   }
 }
 function updateLobby() {
@@ -740,7 +1273,8 @@ function padText() {
 function updateTouchVisibility() {
   const mode = ui ? ui.touchMode : 'auto';
   const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  const want = mode === 'on' || (mode === 'auto' && hasTouch && !input.padInfo.connected);
+  const guestRace = game.guest && (game.state === 'race' || game.state === 'countdown');
+  const want = guestRace || mode === 'on' || (mode === 'auto' && hasTouch && !input.padInfo.connected);
   const show = want && (game.state === 'race' || game.state === 'countdown');
   const el = $('touch');
   if (el.classList.contains('hidden') === show) { el.classList.toggle('hidden', !show); document.body.classList.toggle('touchon', show); }
