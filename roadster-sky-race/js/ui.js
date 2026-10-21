@@ -139,6 +139,7 @@ export class UI {
       }
     });
     $('btnFull').addEventListener('click', () => this.h.onFullscreen());
+    this.wireStick();
     // 觸控按鍵（Pointer Events，支援多點）
     for (const b of document.querySelectorAll('[data-t]')) {
       const k = b.dataset.t;
@@ -149,6 +150,43 @@ export class UI {
     for (const b of document.querySelectorAll('[data-p]')) {
       b.addEventListener('pointerdown', (e) => { e.preventDefault(); this.h.onTouchPress(b.dataset.p); });
     }
+  }
+
+  // 左搖桿：和右邊的板機、面鍵分開抓指標，可以同時轉向和加速。
+  wireStick() {
+    const stick = $('stick');
+    if (!stick) return;
+    const knob = stick.querySelector('.knob');
+    const active = new Set();
+    const place = (e) => {
+      const rect = stick.getBoundingClientRect();
+      const dx = (e.clientX - (rect.left + rect.width / 2)) / (rect.width * 0.38);
+      const dy = (e.clientY - (rect.top + rect.height / 2)) / (rect.height * 0.38);
+      const dead = (v) => Math.abs(v) < 0.14 ? 0 : Math.max(-1, Math.min(1, v));
+      const steer = dead(dx), pitch = dead(dy);
+      this.input.touch.stick = true;
+      this.input.touch.steer = steer;
+      this.input.touch.pitch = pitch;
+      if (knob) knob.style.transform = `translate(-50%, -50%) translate(${steer * 34}%, ${pitch * 34}%)`;
+    };
+    const clear = (e) => {
+      active.delete(e.pointerId);
+      if (active.size) return;
+      this.input.touch.stick = false;
+      this.input.touch.steer = 0;
+      this.input.touch.pitch = 0;
+      if (knob) knob.style.transform = 'translate(-50%, -50%)';
+    };
+    stick.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      active.add(e.pointerId);
+      try { stick.setPointerCapture(e.pointerId); } catch (_) { /* */ }
+      place(e);
+    });
+    stick.addEventListener('pointermove', (e) => { if (active.has(e.pointerId)) place(e); });
+    stick.addEventListener('pointerup', clear);
+    stick.addEventListener('pointercancel', clear);
+    stick.addEventListener('lostpointercapture', clear);
   }
 
   // ---------- 設定 ----------

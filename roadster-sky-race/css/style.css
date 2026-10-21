@@ -43,15 +43,27 @@ button.mini { pointer-events:auto; background:var(--bg); color:var(--fg); border
 #count { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%); font-size:9rem; font-weight:900; text-shadow:0 4px 30px rgba(0,0,0,.8); pointer-events:none; }
 
 #touch { position:fixed; inset:0; pointer-events:none; z-index:5; }
-.tgroup { position:absolute; display:flex; gap:1rem; pointer-events:none; }
-.tgroup.left { left:1.5rem; bottom:2rem; } .tgroup.right { right:1.5rem; bottom:2rem; }
-.tgroup.mid { right:1.5rem; bottom:11rem; flex-direction:column; } .tgroup.top { left:50%; top:.6rem; transform:translateX(-50%); }
-.tbtn { pointer-events:auto; width:7.5rem; height:7.5rem; border-radius:1.2rem; border:2px solid rgba(255,255,255,.35);
-  background:rgba(10,16,24,.55); color:#fff; font:inherit; font-size:1.3rem; font-weight:700; }
-.tbtn.small { width:auto; height:auto; padding:.4rem 1rem; font-size:.9rem; border-radius:.6rem; }
-.tbtn.lift { background:rgba(20,120,200,.5); } .tbtn.nitro { background:rgba(220,110,20,.5); width:7.5rem; height:5rem; }
-.tbtn.gas { background:rgba(30,160,60,.5); height:9rem; } .tbtn.brake { background:rgba(190,40,30,.5); }
-.tbtn.on { filter:brightness(1.6); border-color:#fff; }
+.gpad, .stick { position:absolute; pointer-events:auto; touch-action:none; }
+.gpad { border:2px solid rgba(255,255,255,.42); background:rgba(10,16,24,.58); color:#fff; font:inherit; font-weight:800;
+  display:flex; align-items:center; justify-content:center; text-align:center; line-height:1.15; }
+.gpad.on { filter:brightness(1.55); border-color:#fff; background:rgba(39,215,255,.35); }
+.gpad.shoulder { top:4%; height:16%; width:24%; border-radius:1.1rem 1.1rem .7rem .7rem; font-size:1.15rem; }
+.gpad.lt { left:5%; background:rgba(160,36,28,.55); }
+.gpad.rt { right:5%; background:rgba(24,140,58,.55); }
+.stick { left:7%; bottom:8%; width:34vmin; height:34vmin; }
+.stick-ring { position:absolute; inset:8%; border-radius:50%; border:3px solid rgba(255,255,255,.4); background:rgba(8,14,22,.45); }
+.stick .knob { position:absolute; left:50%; top:50%; width:38%; height:38%; margin:0; border-radius:50%;
+  background:radial-gradient(circle at 40% 35%, #f4f7fb, #8ea0b3 62%, #2c3846); border:2px solid rgba(255,255,255,.7);
+  transform:translate(-50%, -50%); }
+.stick-lbl { position:absolute; left:0; right:0; bottom:-0.2rem; text-align:center; font-size:.85rem; font-weight:700; color:rgba(255,255,255,.8); pointer-events:none; text-shadow:0 1px 4px #000; }
+.gpad.face { width:16vmin; height:16vmin; border-radius:50%; font-size:1rem; }
+.gpad.face.y { right:20%; bottom:46%; background:rgba(230,190,40,.45); }
+.gpad.face.x { right:33%; bottom:24%; background:rgba(40,120,210,.5); }
+.gpad.face.b { right:7%; bottom:24%; background:rgba(190,48,40,.55); }
+.gpad.face.a { right:20%; bottom:6%; background:rgba(36,150,70,.55); }
+.gpad.menu { left:50%; top:3.5%; transform:translateX(-50%); width:18vmin; height:9vmin; border-radius:.8rem; font-size:.95rem; background:rgba(20,24,32,.72); }
+html.force-landscape body { position:fixed; width:100vh; height:100vw; top:0; left:0; transform-origin:top left;
+  transform:rotate(90deg) translateY(-100%); overflow:hidden; }
 
 .screen { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:10;
   background:radial-gradient(ellipse at 30% 40%, rgba(8,14,24,.55), rgba(5,8,12,.88)); }

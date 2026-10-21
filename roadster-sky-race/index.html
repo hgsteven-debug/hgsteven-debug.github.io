@@ -43,23 +43,18 @@
 <div id="splitbar" class="hidden"></div>
 
 <div id="touch" class="hidden">
-  <div class="tgroup left">
-    <button class="tbtn" data-t="left">◀</button>
-    <button class="tbtn" data-t="right">▶</button>
+  <button class="gpad shoulder lt" data-t="brake" aria-label="左板機 煞車">LT<br>煞車</button>
+  <button class="gpad shoulder rt" data-t="gas" aria-label="右板機 加速">RT<br>加速</button>
+  <div id="stick" class="stick" aria-label="左搖桿 轉向">
+    <div class="stick-ring"></div>
+    <div class="knob"></div>
+    <span class="stick-lbl">轉向</span>
   </div>
-  <div class="tgroup mid">
-    <button class="tbtn lift" data-t="lift">推進<br>起飛</button>
-    <button class="tbtn nitro" data-t="nitro">氮氣</button>
-  </div>
-  <div class="tgroup right">
-    <button class="tbtn brake" data-t="brake">煞車</button>
-    <button class="tbtn gas" data-t="gas">加速</button>
-  </div>
-  <div class="tgroup top">
-    <button class="tbtn small" data-p="pause">暫停</button>
-    <button class="tbtn small" data-p="camera">視角</button>
-    <button class="tbtn small" data-p="reset">回賽道</button>
-  </div>
+  <button class="gpad face y" data-p="camera" aria-label="Y 視角">Y<br>視角</button>
+  <button class="gpad face x" data-p="reset" aria-label="X 回賽道">X<br>回賽道</button>
+  <button class="gpad face b" data-t="lift" aria-label="B 推進">B<br>推進</button>
+  <button class="gpad face a" data-t="nitro" aria-label="A 氮氣">A<br>氮氣</button>
+  <button class="gpad menu" data-p="pause" aria-label="暫停">暫停</button>
 </div>
 
 <!-- 載入中 -->
@@ -175,7 +170,11 @@
     <h2>加入比賽</h2>
     <p id="joinStatus" class="sub">正在連線…</p>
     <div id="joinCode" class="roomcode"></div>
-    <p class="small dim">你是 P3，用這支手機的觸控鍵開車。車機上的玩家不會被你的連線卡住。</p>
+    <p id="joinCar" class="carline">這台車：等待房主指定…</p>
+    <p class="small dim">你是 P3。畫面固定橫向，按鍵比照手把：左邊轉向，LT 煞車、RT 加速，右邊是 A／B／X／Y。車機上看到的也是這台車。</p>
+    <div class="menu col">
+      <button class="btn" data-act="garage">換一台車</button>
+    </div>
     <div class="menu col">
       <button class="btn primary" data-act="join-retry">重新連線</button>
       <button class="btn" data-act="join-leave">離開，自己開一場</button>
@@ -192,6 +191,7 @@
     <div class="menu col">
       <button class="btn primary" data-act="resume">繼續</button>
       <button class="btn" data-act="restart">重新開始</button>
+      <button class="btn hidden" id="btnPauseGarage" data-act="garage">換一台車</button>
       <button class="btn" data-act="mapping">按鍵設定</button>
       <button class="btn" data-act="settings">畫質與設定</button>
       <button class="btn" data-act="fullscreen">全螢幕</button>
