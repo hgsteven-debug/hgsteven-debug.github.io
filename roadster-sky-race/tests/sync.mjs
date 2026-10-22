@@ -614,6 +614,8 @@ try {
         const s = window.__sky.net.latest && window.__sky.net.latest.self;
         return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
       }, { timeout: 8000, polling: 100 }, phoneAt);
+      // 畫面刻意落後約 100ms。封包剛到就取樣，內插還停在舊位置。
+      await new Promise((r) => setTimeout(r, 250));
     } catch (e) {
       const phoneNow = await phone.evaluate((at) => {
         const s = window.__sky.net.latest && window.__sky.net.latest.self;

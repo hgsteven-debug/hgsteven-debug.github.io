@@ -74,8 +74,20 @@ const noAdapt = params.get('noadapt') === '1';
 
 function fail(msg, err) {
   console.error(msg, err);
-  const t = $('loadTxt');
-  if (t) { t.style.color = '#ff9a8a'; t.innerHTML = msg; }
+  const el = $('loadTxt');
+  if (el) { el.style.color = '#ff9a8a'; el.textContent = msg; }
+  if ($('loadRetry')) return;
+  const host = el && el.parentNode;
+  if (!host) return;
+  const btn = document.createElement('button');
+  btn.id = 'loadRetry';
+  btn.className = 'btn primary';
+  btn.type = 'button';
+  btn.style.pointerEvents = 'auto';
+  btn.style.marginTop = '0.8rem';
+  btn.textContent = t('load.retry');
+  btn.addEventListener('click', () => location.reload());
+  host.appendChild(btn);
 }
 
 function baseDpr() { return Math.min(window.devicePixelRatio || 1, game.guest ? 1 : 2); }
@@ -116,6 +128,9 @@ function applySize() {
 
 async function boot() {
   try {
+    game._loadTimer = setTimeout(() => {
+      if (game.state === 'loading') fail(t('load.timeout'));
+    }, 25000);
     const canvas = $('gl');
     try {
       renderer = new THREE.WebGLRenderer({ canvas, antialias: Q.aa, powerPreference: 'high-performance', stencil: false });
@@ -142,7 +157,9 @@ async function boot() {
     car = new CarModel(Q, vid, savedPaint(vid)); car.setPaint(savedPaint(vid));
     scene.add(car.root); scene.add(car.blob);
     veh = new Vehicle(track);
-    veh.setTune(vehicleById(vid).tune);
+    const bootDef = vehicleById(vid);
+    veh.setTune(bootDef.tune);
+    veh.mass = bootDef.mass || 1800;
     if (game.guest) veh.followHost = true;
     game.lap.best = store.get('best.' + track.id, store.get('best', null));
     hud = new Hud(track, world);
@@ -250,6 +267,10 @@ async function boot() {
         get trackReady() { return guestTrackReady; },
         get sent() { return hostNet ? (hostNet.sent || 0) : 0; },
         get lastErr() { return (hostNet && hostNet.lastErr) || ''; },
+        get debug() {
+          const n = game.guest ? guestNet : hostNet;
+          return n && n.joinDebug ? n.joinDebug() : null;
+        },
         get link() {
           const n = game.guest ? guestNet : hostNet;
           if (!n || typeof n.linkSample !== 'function') return null;
@@ -291,6 +312,7 @@ async function boot() {
       if (!netOff) beginHost();
       if (params.get('autostart') === '1') startGame();
     }
+    if (game._loadTimer) { clearTimeout(game._loadTimer); game._loadTimer = 0; }
     last = performance.now();
     requestAnimationFrame(frame);
     // 分頁在背景時 requestAnimationFrame 會停，手機的畫面和心跳就一起斷。
@@ -439,7 +461,8 @@ function setVehicle(id, paintKey, opts) {
   if (race) { const p = race.racers[0]; if (p && p.car === prevCar) p.car = car; }
   if (window.__sky) window.__sky.car = car;
   veh.setTune(def.tune);
-  if (!opt.keepEnergy) veh.energy = 100;
+  veh.mass = def.mass || 1800;
+  if (!opt.keepEnergy) veh.energy = Math.min(100, veh.energy || 100);
   if (persist) { store.set('vehicle', def.id); store.set('paint.' + def.id, car.paintKey); }
   if (notify && game.guest) rememberGuestCar(def.id, car.paintKey);
   game.camSnap = true;
@@ -504,8 +527,10 @@ function startGame() {
     const p2input = new InputManager({ padIndex: lobby.p2.index, keys: false, exclusive: true });
     const p2car = new CarModel(QUALITY.low, vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id, 'red');
     scene.add(p2car.root); scene.add(p2car.blob);
+    const p2def = vehicleById(store.get('vehicle', DEFAULT_VEHICLE));
     const p2veh = new Vehicle(track);
-    p2veh.setTune(vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).tune);
+    p2veh.setTune(p2def.tune);
+    p2veh.mass = p2def.mass || 1800;
     humans.push(makeRacer({
       name: 'P2', driver: new LocalDriver(p2input), veh: p2veh, car: p2car, input: p2input, lap: freshLap(null),
     }));
@@ -519,6 +544,7 @@ function startGame() {
     scene.add(acar.root); scene.add(acar.blob);
     const aveh = new Vehicle(track);
     aveh.setTune(tune);
+    aveh.mass = vehicleById(vid).mass || 1800;
     ais.push(makeRacer({
       name: t('race.cpu', { n: i + 1 }), cpuN: i + 1, driver: new AiDriver(track, opt.diff), veh: aveh, car: acar, lap: freshLap(null),
     }));
@@ -560,6 +586,7 @@ function startGame() {
   game.camYaw = veh.heading; game.camSnap = true;
   setSplit(humans.length > 1);
   game.state = 'countdown';
+  game._cdStart = performance.now();
   game.countdown = params.get('nocount') === '1' ? 0.05 : 3.4;
   if (game.countdown <= 0.4) { game.state = 'race'; game.countdown = 0; }
   game.lastCount = -1;
@@ -728,6 +755,7 @@ function mountRemoteCar(remote) {
     }
     remote.racer.car = rcar;
     remote.racer.veh.setTune(def.tune);
+    remote.racer.veh.mass = def.mass || 1800;
   }
   return rcar;
 }
@@ -745,6 +773,7 @@ function attachRemoteRacer(remote) {
   const rcar = mountRemoteCar(remote);
   const rveh = new Vehicle(track);
   rveh.setTune(tune);
+  rveh.mass = def.mass || 1800;
   const r = makeRacer({
     name: remote.name || ('P' + (3 + remote.slot)),
     driver: remote.driver,
@@ -1118,9 +1147,14 @@ function nearestGap(v) {
   for (const g of track.gaps) { let d = fi - g.g0; if (d < -track.N / 2) d += track.N; if (d > track.N / 2) d -= track.N; d = Math.abs(d); if (d < bd) { bd = d; best = g; } }
   return best;
 }
+function whyText(msg) {
+  if (msg === 'stuck') return t('toast.stuck');
+  if (msg === 'off') return t('toast.deviate');
+  return msg || '';
+}
 function respawnRacer(r, why) {
   const v = r ? r.veh : veh;
-  const msg = (v.events && v.events.why) || why;
+  const msg = whyText((v.events && v.events.why) || why);
   if (v.events) v.events.why = '';
   if (track.checkpoints && track.checkpoints.length && v.recoverToCheckpoint) v.recoverToCheckpoint();
   else if (!track.gaps.length) v.placeOnTrack(track.wrap(track.N - 10), r ? r.lat0 : 0, 20);
@@ -1286,7 +1320,8 @@ function sampleGuestView(dt) {
   guestVis.thrusting = !!p.thrusting || guestVis.thrust > 0.2;
   guestVis.braking = !!p.braking;
   guestVis.steerAngle = p.steer || 0;
-  guestVis.energy = Number.isFinite(p.energy) ? p.energy : veh.energy;
+  const rawE = Number.isFinite(p.energy) ? p.energy : veh.energy;
+  guestVis.energy = Math.max(0, Math.min(100, rawE));
   guestVis.alt = Number.isFinite(p.alt) ? p.alt : 0;
   guestVis.accel = 0;
   guestVis.latAccel = 0;
@@ -1478,6 +1513,7 @@ function frame(now) {
           }
         }
       } else if (!game.guest) {
+        if (game._cdStart && performance.now() - game._cdStart > 8000) game.countdown = 0;
         game.countdown -= dt;
         const c = Math.ceil(game.countdown - 0.4);
         if (c !== game.lastCount) {
@@ -1532,9 +1568,23 @@ function frame(now) {
   const pi = input.padInfo;
   const sp = $('startPad');
   if (sp) { sp.className = 'padline' + (pi.connected ? ' ok' : ''); const label = pi.connected ? t('start.pad.on', { name: shortPadName(pi.id), profile: profileLabel(input.profile) }) : t('start.pad.wait'); if (sp.textContent !== label) sp.textContent = label; }
-  if (game.state === 'menu' && !game.guest) pollLobby();
+  if (game.state === 'menu' && !game.guest) {
+    pollLobby();
+    if (ui && ui.current === 'lobby') {
+      if (!game._lobbySince) game._lobbySince = performance.now();
+      const phoneHere = hostNet && hostNet.remotes && hostNet.remotes.length;
+      if (!lobby.p2 && !phoneHere && performance.now() - game._lobbySince > 8000) {
+        const hint = document.querySelector('#s-lobby .sub');
+        if (hint && hint.dataset.alone !== '1') {
+          hint.dataset.alone = '1';
+          hint.textContent = t('lobby.alone');
+        }
+      }
+    } else game._lobbySince = 0;
+  }
   try { flushNet(false); } catch (e) {}
   try { paintLink(); } catch (e) {}
+  try { paintDebug(); } catch (e) {}
   adaptResolution(dt);
 }
 
@@ -1731,6 +1781,17 @@ function paintLink() {
   const net = game.guest ? guestNet : hostNet;
   if (!net || typeof net.linkSample !== 'function') { hud.setLink(null); return; }
   hud.setLink(net.linkSample());
+}
+function paintDebug() {
+  const el = $('netdebug');
+  if (!el) return;
+  if (params.get('debug') !== '1') { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const net = game.guest ? guestNet : hostNet;
+  const d = net && net.joinDebug ? net.joinDebug() : null;
+  el.textContent = d
+    ? ['stage ' + d.stage, 'signal ' + d.signal, 'cand ' + d.cand, 'pair ' + d.pair, 'proven ' + d.proven, 'via ' + d.via].join('\n')
+    : 'net off';
 }
 function linkHow(via) {
   if (via === 'ws') return t('how.ws');

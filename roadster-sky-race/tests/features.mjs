@@ -521,6 +521,167 @@ async function testPhonePad() {
   await page.close();
 }
 
+async function testUnstickAndEnergy() {
+  const { page, errors } = await open('?track=city&q=low&ai=0&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
+  const report = await page.evaluate(() => {
+    const sky = window.__sky;
+    sky.game.freeze = true;
+    sky.game.state = 'race';
+    const v = sky.veh;
+    v.energy = 300;
+    v.step(1 / 120, { steer: 0, throttle: 0, brake: 1, lift: false, nitro: false, pitch: 0 });
+    sky.hud.update(0, { kmh: 0, energy: 300, speed: 0, nitroOn: false, grounded: true, thrusting: false, thrust: 0, onRoad: true }, sky.game.lap, 'c', '', 'g');
+    const text = document.getElementById('ebarTxt').textContent;
+    const width = document.getElementById('ebarFill').style.width;
+    v.placeOnTrack(80, 0, 0);
+    v._safeT = 0;
+    const cmd = { steer: 0, throttle: 1, brake: 1, lift: false, nitro: false, pitch: 0 };
+    let why = '';
+    let steps = 0;
+    for (let i = 0; i < 800 && !v.events.respawn; i++) {
+      v.vel.set(0, 0, 0);
+      v.speedF = 0;
+      v.step(1 / 120, cmd);
+      steps = i + 1;
+      why = v.events.why;
+    }
+    const both = { steer: 0, throttle: 1, brake: 1, lift: false, nitro: false, pitch: 0 };
+    v.placeOnTrack(90, 0, 0);
+    v.events.respawn = false;
+    v.vel.set(0, 0, 0);
+    let sp = 0;
+    for (let i = 0; i < 90; i++) v.step(1 / 120, both);
+    sp = v.speed;
+    return { energy: v.energy, text, width, respawn: steps, why, sp: +sp.toFixed(2), mass: v.mass };
+  });
+  if (errors.length) throw new Error(errors.join('\n'));
+  if (!(report.energy <= 100)) throw new Error('energy stored ' + JSON.stringify(report));
+  if (report.text.indexOf('300') >= 0 || report.width === '300%') throw new Error('energy hud ' + JSON.stringify(report));
+  if (report.text.indexOf('100%') < 0) throw new Error('energy label ' + JSON.stringify(report));
+  if (!report.respawn || report.respawn > 700 || report.why !== 'stuck') throw new Error('unstick ' + JSON.stringify(report));
+  if (!(report.sp > 1)) throw new Error('brake held with throttle ' + JSON.stringify(report));
+  await page.close();
+}
+
+async function testCollide() {
+  const { page, errors } = await open('?track=city&q=low&ai=1&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
+  const report = await page.evaluate(() => {
+    const sky = window.__sky;
+    sky.game.freeze = true;
+    sky.game.state = 'race';
+    const race = sky.race;
+    const a = race.racers[0].veh;
+    const b = race.racers[1].veh;
+    a.placeOnTrack(120, 0, 0);
+    b.placeOnTrack(120, 0, 0);
+    b.pos.x = a.pos.x + 0.4;
+    b.pos.y = a.pos.y;
+    b.pos.z = a.pos.z;
+    a.ghostT = 2;
+    b.ghostT = 0;
+    const gx = a.pos.x;
+    race.collide();
+    const ghostHeld = Math.abs(a.pos.x - gx) < 1e-6;
+    a.ghostT = 0;
+    b.ghostT = 0;
+    a.mass = 1900;
+    b.mass = 11000;
+    a.vel.set(20, 0, 0);
+    b.vel.set(-8, 0, 0);
+    race.collide();
+    const d = a.pos.distanceTo(b.pos);
+    a.placeOnTrack(140, 0, 0);
+    b.placeOnTrack(140, 0, 0);
+    a.ghostT = 0;
+    b.ghostT = 0;
+    const h = a.heading;
+    const fx = -Math.sin(h), fz = -Math.cos(h);
+    a.pos.x += fx * 2; a.pos.z += fz * 2;
+    b.pos.x -= fx * 2; b.pos.z -= fz * 2;
+    a._px = a.pos.x - fx * 6; a._py = a.pos.y; a._pz = a.pos.z - fz * 6;
+    b._px = b.pos.x + fx * 6; b._py = b.pos.y; b._pz = b.pos.z + fz * 6;
+    a.vel.set(fx * 70, 0, fz * 70);
+    b.vel.set(-fx * 70, 0, -fz * 70);
+    race.collide();
+    const swept = a.pos.distanceTo(b.pos);
+    const on = a.onRoad && b.onRoad;
+    return { ghostHeld, d: +d.toFixed(2), swept: +swept.toFixed(2), bumps: race.lastBump, on, wall: a.events.wall > 0 };
+  });
+  if (errors.length) throw new Error(errors.join('\n'));
+  if (!report.ghostHeld) throw new Error('ghost ' + JSON.stringify(report));
+  if (!(report.d >= 2 && report.d < 4)) throw new Error('separate ' + JSON.stringify(report));
+  if (!(report.swept >= 1.8)) throw new Error('tunnel ' + JSON.stringify(report));
+  if (!report.wall) throw new Error('bump ' + JSON.stringify(report));
+  await page.close();
+}
+
+async function testMoon() {
+  const { page, errors } = await open('?track=moon&q=low&ai=1&diff=hard&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
+  const report = await page.evaluate(() => {
+    const sky = window.__sky;
+    const tr = sky.track;
+    const hang = (g) => {
+      const v = sky.veh;
+      tr.def.gravity = g;
+      v.placeOnTrack(30, 0, 0);
+      v.grounded = false;
+      v.vel.set(0, 8, 0);
+      v.pos.y = v.groundY + 2;
+      v.airTime = 0.05;
+      v._safeT = 30;
+      v.events.respawn = false;
+      const cmd = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
+      let t = 0;
+      for (let i = 0; i < 6000; i++) {
+        v.step(1 / 120, cmd);
+        t += 1 / 120;
+        if (v.events.respawn) return { t, respawn: true };
+        if (v.grounded && t > 0.35) return { t, respawn: false };
+      }
+      return { t, respawn: false, grounded: v.grounded };
+    };
+    const earth = hang(9.81);
+    const moon = hang(1.62);
+    tr.def.gravity = 1.62;
+    sky.game.freeze = true;
+    sky.game.state = 'race';
+    const ai = sky.race.racers.find((r) => r.driver.kind === 'ai');
+    const samples = [];
+    for (let t = 0; t < 220 && ai.lap.n < 2; t += 10) {
+      sky.sim(10);
+      samples.push({ t: t + 10, n: ai.lap.n, fi: Math.round(ai.veh.fi), sp: Math.round(ai.veh.speed), y: Math.round(ai.veh.pos.y) });
+    }
+    const badge = document.getElementById('gbadge');
+    let cross = null;
+    const N = tr.N;
+    for (let i = 0; i < N && !cross; i += 6) {
+      for (let j = i + 50; j < N - 50; j += 6) {
+        const d = Math.hypot(tr.px[i] - tr.px[j], tr.pz[i] - tr.pz[j]);
+        if (d < 28) { cross = { i, j, d: Math.round(d) }; break; }
+      }
+    }
+    return {
+      id: tr.id, g: tr.def.gravity, cps: (tr.checkpoints || []).length,
+      earth: +earth.t.toFixed(2), moon: +moon.t.toFixed(2),
+      earthRespawn: earth.respawn, moonRespawn: moon.respawn,
+      n: ai.lap.n, samples, cross,
+      badge: badge && !badge.classList.contains('hidden') ? badge.textContent : '',
+      earthMesh: !!(sky.world && sky.world.earth),
+      dust: !!(sky.world && sky.world.moonDust),
+    };
+  });
+  if (errors.length) throw new Error(errors.join('\n'));
+  if (report.id !== 'moon' || report.g !== 1.62) throw new Error('track ' + JSON.stringify(report));
+  if (report.cps < 8) throw new Error('checkpoints ' + JSON.stringify(report));
+  if (report.cross) throw new Error('cross ' + JSON.stringify(report.cross));
+  if (report.earthRespawn || report.moonRespawn) throw new Error('air respawn ' + JSON.stringify(report));
+  if (!(report.moon / report.earth > 2)) throw new Error('airtime ' + JSON.stringify(report));
+  if (!(report.n >= 2)) throw new Error('AI moon lap ' + JSON.stringify(report.samples));
+  if (!report.badge.includes('1.62')) throw new Error('badge ' + JSON.stringify(report));
+  if (!report.earthMesh || !report.dust) throw new Error('art ' + JSON.stringify(report));
+  await page.close();
+}
+
 async function testPadPage() {
   const page = await browser.newPage();
   const errors = [];
@@ -546,6 +707,9 @@ try {
     ['ai lap', testAi],
     ['ai city lap', testAiCity],
     ['city checkpoints and respawn', testCityRules],
+    ['unstick and energy cap', testUnstickAndEnergy],
+    ['car collision', testCollide],
+    ['moon gravity and ai lap', testMoon],
   ];
   for (const [name, fn] of tests) {
     try { await fn(); ok(name); }

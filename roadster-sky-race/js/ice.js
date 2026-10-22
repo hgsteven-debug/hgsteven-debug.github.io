@@ -9,6 +9,26 @@ import { TURN_ICE_SERVERS } from './turn-config.js';
 const OPEN_RELAY_SECRET = 'openrelayprojectsecret';
 
 export const ICE_TRANSPORT_POLICY = 'all';
+// 直連大約 4.5 秒還沒起來就改走 TURN；整段大約 8 秒還沒證明送得到封包就改走網頁中繼。
+export const JOIN_DIRECT_MS = 4500;
+export const JOIN_TOTAL_MS = 8000;
+
+// 純函式，測試與連線迴圈共用。proven+connected 代表這條路已經送達過封包。
+export function nextJoinStage(s) {
+  const age = s && s.age > 0 ? s.age : 0;
+  if (!s || !s.rtcOk) return 'mqtt';
+  const live = !!(s.proven && s.connected);
+  if (live) {
+    if (s.via === 'ws') return 'mqtt';
+    if (s.via === 'relay' || s.policy === 'relay') return 'turn';
+    return 'direct';
+  }
+  if (s.policy === 'relay') return age >= JOIN_TOTAL_MS ? 'mqtt' : 'turn';
+  if (s.iceDirect && age < JOIN_TOTAL_MS) return 'direct';
+  if (age < JOIN_DIRECT_MS) return 'direct';
+  if (age < JOIN_TOTAL_MS) return 'turn';
+  return 'mqtt';
+}
 
 const PUBLIC_STUN = [
   'stun:stun.l.google.com:19302',

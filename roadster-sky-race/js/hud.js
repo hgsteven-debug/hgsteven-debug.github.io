@@ -74,6 +74,14 @@ export class Hud {
     // 起點
     const [sx, sy] = P(0); g.fillStyle = '#fff'; g.fillRect(sx - 6, sy - 2, 12, 4);
     this.mmBase = off;
+    const badge = $('gbadge');
+    const grav = this.tr && this.tr.def && +this.tr.def.gravity;
+    if (badge) {
+      if (grav && grav < 5) {
+        badge.classList.remove('hidden');
+        badge.textContent = 'g = ' + grav + ' m/s²';
+      } else badge.classList.add('hidden');
+    }
   }
   drawMinimap(veh, racers) {
     const c = this.el.mm.getContext('2d'), S = this.el.mm.width, sc = this.mmScale;
@@ -112,7 +120,8 @@ export class Hud {
     if (this.toastT > 0) { this.toastT -= dt; if (this.toastT <= 0) e.toast.classList.remove('on'); }
     const kmh = Math.round(veh.kmh);
     this.setText('speed', e.speed, String(kmh));
-    const pct = Math.round(veh.energy);
+    const raw = Number.isFinite(veh.energy) ? veh.energy : 0;
+    const pct = Math.max(0, Math.min(100, Math.round(raw)));
     const energy = t('hud.energy', { n: pct });
     if (this._last.energy !== energy) {
       this._last.pct = pct;
