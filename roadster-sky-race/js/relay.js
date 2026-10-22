@@ -2,7 +2,7 @@
 // 第一個在 443，車機 LTE 比較容易放行；後面是備用。
 // 主題是公開的，房間代碼當題目，不要傳帳號密碼。
 
-import { normalizeCode } from './sync.js';
+import { normalizeCode, makeMidWindow } from './sync.js';
 import { t } from './i18n.js';
 
 export const RELAYS = [
@@ -353,5 +353,110 @@ export function connectRelay(code, handlers, opts) {
     ws = null;
   };
   open();
+  return state;
+}
+
+// 同時掛兩台 broker。房主的 epoch 只由第一台前進，第二台跟著重開。
+// 同一則訊息帶 mid，收到第二次就丟掉。
+export function connectRelayFan(code, handlers, opts) {
+  const opt = opts || {};
+  const list = opt.relays && opt.relays.length ? opt.relays : RELAYS;
+  const n = list.length || 1;
+  const h = handlers || {};
+  const role = opt.role === 'host' ? 'host' : 'guest';
+  const mids = makeMidWindow(64);
+  let seq = 1;
+  let mirror = null;
+  let primary = null;
+  const state = {
+    open: false,
+    failed: false,
+    reason: '',
+    reasonKey: '',
+    reasonLabel: '',
+    label: '',
+    index: Number.isFinite(+opt.index) ? ((+opt.index % n) + n) % n : 0,
+    epoch: Number.isFinite(+opt.epoch) ? Math.max(0, +opt.epoch | 0) : 0,
+    attempts: 0,
+    _stop: false,
+  };
+
+  function sync() {
+    state.open = !!((primary && primary.open) || (mirror && mirror.open));
+    if (primary) {
+      state.index = primary.index;
+      state.epoch = primary.epoch;
+      state.attempts = primary.attempts;
+      state.label = primary.label || '';
+      state.reason = primary.reason || '';
+      state.reasonKey = primary.reasonKey || '';
+      state.reasonLabel = primary.reasonLabel || '';
+      state._stop = !!primary._stop;
+    }
+    state.failed = false;
+  }
+
+  function tellStatus() {
+    sync();
+    try { if (h.onStatus) h.onStatus(state); } catch (e) {}
+  }
+
+  function deliver(msg) {
+    if (!msg || !mids.accept(msg.mid)) return;
+    try { if (h.onMessage) h.onMessage(msg); } catch (e) {}
+  }
+
+  function openMirror(index) {
+    if (mirror) {
+      try { mirror.close(); } catch (e) {}
+      mirror = null;
+    }
+    if (n < 2) return;
+    const i = ((index % n) + n) % n;
+    mirror = connectRelay(code, {
+      onStatus: () => tellStatus(),
+      onOpen: () => { tellStatus(); try { if (h.onOpen) h.onOpen(state); } catch (e) {} },
+      onMessage: deliver,
+    }, Object.assign({}, opt, { role: 'guest', index: i, epoch: 0 }));
+  }
+
+  primary = connectRelay(code, {
+    onStatus: () => tellStatus(),
+    onOpen: () => { tellStatus(); try { if (h.onOpen) h.onOpen(state); } catch (e) {} },
+    onFailover: (info) => {
+      openMirror(((info && info.index) || 0) + 1);
+      sync();
+      try { if (h.onFailover) h.onFailover(info); } catch (e) {}
+    },
+    onMessage: deliver,
+  }, Object.assign({}, opt, { role, index: state.index, epoch: state.epoch }));
+  openMirror(state.index + 1);
+
+  state.send = (obj) => {
+    if (!obj) return false;
+    const body = Object.assign({}, obj);
+    if (body.mid == null) body.mid = state.epoch + '-' + (seq++);
+    const a = primary && primary.send(body);
+    const b = mirror && mirror.send(body);
+    return !!(a || b);
+  };
+  state.pin = (nextIndex, nextEpoch) => {
+    if (primary) primary.pin(nextIndex, nextEpoch);
+    const i = Number.isFinite(+nextIndex) ? ((+nextIndex % n) + n) % n : state.index;
+    const want = (i + 1) % n;
+    const mirrorOk = mirror && !mirror._stop && mirror.index === want && (mirror.epoch | 0) === 0;
+    if (!mirrorOk) openMirror(want);
+    sync();
+  };
+  state.poll = (now) => {
+    if (primary) primary.poll(now);
+    if (mirror) mirror.poll(now);
+  };
+  state.close = () => {
+    state._stop = true;
+    state.open = false;
+    try { if (primary) primary.close(); } catch (e) {}
+    try { if (mirror) mirror.close(); } catch (e) {}
+  };
   return state;
 }

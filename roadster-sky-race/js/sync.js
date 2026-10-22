@@ -10,6 +10,14 @@ export const STATE_GAP_MS = 66;
 export const INPUT_GAP_MS = 50;
 export const LINK_STALE_MS = 5000;
 export const REMOTE_GRACE_MS = 45000;
+export const INPUT_HISTORY = 4;
+
+const SELF_KEYS = [
+  'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw', 'vx', 'vy', 'vz',
+  'heading', 'speed', 'energy', 'grounded', 'onRoad', 'nitroOn', 'thrusting',
+  'thrust', 'lift', 'braking', 'steerAngle', 'groundY', 'nx', 'ny', 'nz',
+  'fi', 'lat', 'attached', 'alt',
+];
 
 // 有收到對端訊息才算接上。只連上 MQTT 伺服器不算。
 export function hostStillThere(lastAt, now, stale = LINK_STALE_MS) {
@@ -227,6 +235,102 @@ export function hostOffroadWarn(state, onRoad, now, debounceMs = 450, repeatMs =
     s.toastAt = t;
   }
   return { state: s, warn };
+}
+
+// 連線品質：good 綠、poor 黃、bad 紅。rtt 單位是毫秒。
+export function linkQuality({ rtt, via, age } = {}) {
+  if (!via) return 'bad';
+  if (age != null && age > 2000) return 'bad';
+  if (rtt == null || !Number.isFinite(rtt)) return 'poor';
+  if (rtt < 80) return 'good';
+  if (rtt < 200) return 'poor';
+  return 'bad';
+}
+
+// direct = host/srflx，turn = TURN relay 候選，mqtt = 網頁中繼。
+export function linkKind(via) {
+  if (via === 'direct') return 'direct';
+  if (via === 'relay') return 'turn';
+  if (via === 'ws') return 'mqtt';
+  return '';
+}
+
+// 兩邊都看到 host 候選，卻沒走直連。文案自己說明「若在同一個 Wi-Fi」。
+export function lanIsolationHint({ iceFailed, sawLocalHost, sawRemoteHost, via } = {}) {
+  if (!sawLocalHost || !sawRemoteHost) return false;
+  if (via === 'direct') return false;
+  return !!(iceFailed || via === 'relay' || via === 'ws');
+}
+
+export function stateGapMs(tier, floor = STATE_GAP_MS) {
+  const base = floor || STATE_GAP_MS;
+  if (tier === 'bad') return Math.max(base, 140);
+  if (tier === 'poor') return Math.max(base, 100);
+  return base;
+}
+
+export function deltaPose(prev, next) {
+  if (!prev || !next) return null;
+  const d = {};
+  let n = 0;
+  for (const k of SELF_KEYS) {
+    if (prev[k] !== next[k]) { d[k] = next[k]; n++; }
+  }
+  if (n > 12) return null;
+  return d;
+}
+
+export function mergePose(prev, delta) {
+  if (!delta) return prev ? Object.assign({}, prev) : null;
+  if (!prev) return Object.assign({}, delta);
+  return Object.assign({}, prev, delta);
+}
+
+export function makeMidWindow(limit = 64) {
+  const order = [];
+  const set = new Set();
+  return {
+    accept(mid) {
+      if (mid == null || mid === '') return true;
+      const key = String(mid);
+      if (set.has(key)) return false;
+      set.add(key);
+      order.push(key);
+      while (order.length > limit) set.delete(order.shift());
+      return true;
+    },
+  };
+}
+
+// 套用比目前新的輸入。同一包裡較早的氮氣／推進仍算按到，避免單包遺失吃掉點按。
+export function acceptInputs(remote, msg, now) {
+  const rows = [];
+  if (msg && Array.isArray(msg.hist)) {
+    for (const h of msg.hist) if (h && h.seq != null) rows.push(h);
+  }
+  if (msg && msg.seq != null) rows.push(msg);
+  rows.sort((a, b) => (a.seq | 0) - (b.seq | 0));
+  let applied = null;
+  let lift = false;
+  let nitro = false;
+  let seq = remote && remote.seq ? remote.seq | 0 : 0;
+  for (const row of rows) {
+    const n = row.seq | 0;
+    if (n > seq) {
+      const cmd = packInput(row);
+      if (cmd.lift) lift = true;
+      if (cmd.nitro) nitro = true;
+      applied = cmd;
+      seq = n;
+    }
+  }
+  if (!applied || !remote) return 0;
+  if (lift) applied.lift = true;
+  if (nitro) applied.nitro = true;
+  remote.cmd = applied;
+  remote.seq = seq;
+  if (now != null) remote.lastAt = now;
+  return seq;
 }
 
 export function packSelf(s) {

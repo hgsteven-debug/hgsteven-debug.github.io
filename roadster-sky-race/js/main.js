@@ -129,6 +129,7 @@ async function boot() {
     input = new InputManager();
     audio = new GameAudio();
 
+    if (store.get('track', '') === 'stunt') store.set('track', 'city');
     const qTrack = params.get('track');
     const tid = (qTrack && TRACKS.some((t) => t.id === qTrack)) ? qTrack : trackById(store.get('track', DEFAULT_TRACK)).id;
     world = new World(renderer, scene, qname, tid);
@@ -249,6 +250,17 @@ async function boot() {
         get trackReady() { return guestTrackReady; },
         get sent() { return hostNet ? (hostNet.sent || 0) : 0; },
         get lastErr() { return (hostNet && hostNet.lastErr) || ''; },
+        get link() {
+          const n = game.guest ? guestNet : hostNet;
+          if (!n || typeof n.linkSample !== 'function') return null;
+          const sample = n.linkSample();
+          const r = n.remotes && n.remotes[0];
+          return Object.assign({}, sample, {
+            via: game.guest ? n.via : (r && r.via),
+            rtc: game.guest ? n.rtcLive : (r && r.rtcLive),
+            ws: !!n.wsOpen,
+          });
+        },
         disconnect() {
           try { if (guestNet) guestNet.destroy(); } catch (e) {}
           try { if (hostNet) hostNet.destroy(); } catch (e) {}
@@ -281,6 +293,17 @@ async function boot() {
     }
     last = performance.now();
     requestAnimationFrame(frame);
+    // 分頁在背景時 requestAnimationFrame 會停，手機的畫面和心跳就一起斷。
+    // 這個計時器在前景只是碰到發送間隔就返回；在背景仍維持約一秒一包，低於中繼逾時。
+    setInterval(() => {
+      const now = performance.now();
+      try { if (hostNet && hostNet.poll) hostNet.poll(now); } catch (e) {}
+      try { if (guestNet && guestNet.poll) guestNet.poll(now); } catch (e) {}
+      try {
+        if (guestNet && game.guest && (game.state === 'race' || game.state === 'countdown')) guestNet.noteInput(input.state, now);
+      } catch (e) {}
+      try { flushNet(false); } catch (e) {}
+    }, 250);
   } catch (e) {
     fail(t('load.fail', { msg: e && e.message ? e.message : e }), e);
   }
@@ -1161,7 +1184,9 @@ function updateLap(dt) {
     }
   }
   const cps = [0.25, 0.5, 0.75];
-  for (let k = 0; k < 3; k++) if (!lap.cp[k] && (k === 0 || lap.cp[k - 1]) && fi > cps[k] * N && fi < (cps[k] + 0.06) * N) lap.cp[k] = true;
+  if (q.al < 18) {
+    for (let k = 0; k < 3; k++) if (!lap.cp[k] && (k === 0 || lap.cp[k - 1]) && fi > cps[k] * N && fi < (cps[k] + 0.06) * N) lap.cp[k] = true;
+  }
   lap.prevFi = fi;
 }
 function updateRings(dt) {
@@ -1280,6 +1305,21 @@ function syncCar(dt) {
 
 // ---------------- 相機 ----------------
 function updateCamera(dt, subject, cam, decay = true, viewVeh) {
+  cam = cam || camera;
+  if (params.get('overview') === '1') {
+    const b = track.bounds;
+    const cx = (b.minX + b.maxX) / 2;
+    const cz = (b.minZ + b.maxZ) / 2;
+    const span = Math.max(b.maxX - b.minX, b.maxZ - b.minZ, 80);
+    const gy = track.py[0] || 0;
+    cam.position.set(cx, gy + span * 0.92, cz + span * 0.02);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(cx, gy, cz);
+    cam.fov = 42;
+    if (cam.view && cam.view.enabled) cam.clearViewOffset();
+    cam.updateProjectionMatrix();
+    return;
+  }
   const v = viewVeh || (subject ? subject.veh : veh);
   const cmodel = subject ? subject.car : car;
   cam = cam || camera;
@@ -1494,6 +1534,7 @@ function frame(now) {
   if (sp) { sp.className = 'padline' + (pi.connected ? ' ok' : ''); const label = pi.connected ? t('start.pad.on', { name: shortPadName(pi.id), profile: profileLabel(input.profile) }) : t('start.pad.wait'); if (sp.textContent !== label) sp.textContent = label; }
   if (game.state === 'menu' && !game.guest) pollLobby();
   try { flushNet(false); } catch (e) {}
+  try { paintLink(); } catch (e) {}
   adaptResolution(dt);
 }
 
@@ -1685,6 +1726,12 @@ function padText() {
   return label;
 }
 
+function paintLink() {
+  if (!hud || !hud.setLink) return;
+  const net = game.guest ? guestNet : hostNet;
+  if (!net || typeof net.linkSample !== 'function') { hud.setLink(null); return; }
+  hud.setLink(net.linkSample());
+}
 function linkHow(via) {
   if (via === 'ws') return t('how.ws');
   if (via === 'relay') return t('how.turn');

@@ -37,38 +37,29 @@ export const TRACKS = [
     height: { a: 14, b: 8, c: 4, pa: 3, pb: 5, pc: 7, oa: 1.1, ob: 0.7 },
   },
   {
-    id: 'stunt', name: '迴旋試煉', tag: '賽道 4',
-    desc: '傾斜高牆、一段向前翻轉的迴旋，然後是倒吊直道。速度不夠會從倒吊段落下。接著平緩落地，再飛越一排原創停車。黃箭頭與檢查門標出路徑；卡住或衝出賽道約兩秒會回到上一道檢查門。',
-    theme: 'stunt',
-    ctrl: stadiumCtrl(560, 420),
+    id: 'city', name: '街廓迴圈', tag: '賽道 4',
+    desc: '平坦的市中心街道環道，沒有飛躍缺口。圓角街廓加一段北側折線，檢查點沿途分布，抄近路不會算圈。',
+    theme: 'city',
+    city: true,
+    ctrl: [
+      [-200, 170], [-60, 160], [80, 165], [210, 155],
+      [290, 90], [305, 0], [290, -90],
+      [210, -170], [80, -150], [0, -210], [-90, -155], [-200, -175],
+      [-285, -90], [-300, 0], [-285, 90],
+    ],
     gaps: [],
-    height: { a: 3.5, b: 2, c: 1, pa: 1, pb: 2, pc: 3, oa: 0.3, ob: 1.1 },
-    // 高牆在第一條直道，迴圈與跳躍在對面直道，彎道半徑大約 420 公尺。
-    stunts: { wall: [0.02, 0.13], loop: 0.52, loopR: 22 },
+    height: { a: 0.6, b: 0.25, c: 0.1, pa: 1, pb: 2, pc: 3, oa: 0.2, ob: 1 },
   },
 ];
 export const DEFAULT_TRACK = 'canyon';
 
-// 直道加半圓：彎道夠寬，高速用搖桿才不會一直磨護欄。
-function stadiumCtrl(straight, radius) {
-  const pts = [];
-  const push = (x, z) => pts.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10]);
-  const seg = 4;
-  const arc = 8;
-  for (let i = 0; i <= seg; i++) push(-straight / 2 + (straight * i) / seg, -radius);
-  for (let k = 1; k <= arc; k++) {
-    const a = -Math.PI / 2 + (Math.PI * k) / arc;
-    push(straight / 2 + radius * Math.cos(a), radius * Math.sin(a));
-  }
-  for (let i = 1; i <= seg; i++) push(straight / 2 - (straight * i) / seg, radius);
-  for (let k = 1; k < arc; k++) {
-    const a = Math.PI / 2 + (Math.PI * k) / arc;
-    push(-straight / 2 + radius * Math.cos(a), radius * Math.sin(a));
-  }
-  return pts;
-}
+// 舊的迴旋試煉已換成街道環道。存檔裡的 id 仍要開得起來。
+const LEGACY_TRACKS = { stunt: 'city' };
 
-export const trackById = (id) => TRACKS.find((t) => t.id === id) || TRACKS[0];
+export function trackById(id) {
+  const mapped = LEGACY_TRACKS[id] || id;
+  return TRACKS.find((t) => t.id === mapped) || TRACKS[0];
+}
 
 // 各主題的天空／霧／地形／光線參數
 export const THEMES = {
@@ -112,17 +103,17 @@ export const THEMES = {
     skyKind: 'night',
     ring: [0.4, 1.8, 2.8],
   },
-  stunt: {
-    label: '迴旋黃昏',
-    fog: [0.55, 0.42, 0.48], fogDen: 0.00036,
-    sun: [-0.2, 0.28, 0.85], sunCol: 0xffb070, sunInt: 2.4,
-    hemiSky: 0xc8b0ff, hemiGnd: 0x4a4038, hemiInt: 0.5,
-    horizon: 0x3a3344,
-    sand: [0xb7a090, 0x8a7060, 0x5a5048, 0x3a3438, 0xd0b8a4],
-    road: [0x6a6670, 0x3a3840],
-    rail: 0xd8d0c8, post: 0x4a4450, refl: 0xffcc66,
-    rock: 0x7a6a62,
-    skyKind: 'sunset',
-    ring: [0.35, 1.5, 2.2],
+  city: {
+    label: '市中心',
+    fog: [0.62, 0.68, 0.74], fogDen: 0.00048,
+    sun: [-0.35, 0.62, 0.45], sunCol: 0xfff2dc, sunInt: 2.8,
+    hemiSky: 0xc5d4e4, hemiGnd: 0x6a645c, hemiInt: 0.55,
+    horizon: 0x8a939c,
+    sand: [0xb7b3ae, 0x8e8a84, 0x5c6168, 0x3e444c, 0xd5d0c8],
+    road: [0x4a4e55, 0x2c3138],
+    rail: 0xd5dbe2, post: 0x3e4650, refl: 0xffd36a,
+    rock: 0x8b9198,
+    skyKind: 'day',
+    ring: [0.25, 1.5, 2.1],
   },
 };

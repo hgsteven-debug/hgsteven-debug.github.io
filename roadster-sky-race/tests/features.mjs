@@ -24,51 +24,42 @@ async function open(query) {
   return { page, errors };
 }
 
-async function testLoop() {
-  const { page, errors } = await open('?track=stunt&q=low&autostart=1&nocount=1&noadapt=1&nopauseblur=1&ai=0');
+async function testCityShape() {
+  const { page, errors } = await open('?track=city&q=low&autostart=1&nocount=1&noadapt=1&nopauseblur=1&ai=0');
   const report = await page.evaluate(() => {
     const sky = window.__sky;
-    const { track, veh, game, sim, ribbonCompression } = sky;
-    const s = track.stunt;
-    const order = s && s.wall0 < s.wall1 && s.wall1 < s.loop0 && s.loop0 < s.loopTop && s.loopTop < s.loop1
-      && s.loop1 <= s.inv0 && s.inv0 < s.inv1 && s.inv1 < s.jump0
-      && s.jump0 < s.jump1 && s.jump1 < track.N;
-    const slowC = ribbonCompression(-1, 1 / 22, 8);
-    const fastC = ribbonCompression(-1, 1 / 22, 40);
-    game.freeze = true;
-    game.state = 'race';
-    veh.sawCeiling = false;
-    veh.placeOnTrack(s.loop0 + 2, 0, 64);
-    const yEnter = veh.pos.y;
-    sim(3.2);
-    const fast = { saw: veh.sawCeiling, y: veh.pos.y, yEnter, attached: veh.attached, fi: veh.fi, sp: veh.speed, top: s.loopTop };
-    veh.sawCeiling = false;
-    veh.placeOnTrack(s.loopTop, 0, 8);
-    const yTop = veh.pos.y;
-    sim(1.5);
-    const fall = { attached: veh.attached, y: veh.pos.y, yTop, drop: yTop - veh.pos.y, sp: veh.speed };
-    veh.sawInvert = false;
-    const invAt = Math.max(s.inv0 + 2, s.inv1 - 4);
-    veh.placeOnTrack(invAt, 0, 48);
-    const yInv = veh.pos.y;
-    sim(1.1);
-    const invFast = { saw: veh.sawInvert, attached: veh.attached, y: veh.pos.y, yInv, sp: veh.speed };
-    veh.sawInvert = false;
-    veh.placeOnTrack(invAt, 0, 8);
-    const ySlow = veh.pos.y;
-    sim(1.45);
-    const invSlow = { attached: veh.attached, y: veh.pos.y, ySlow, drop: ySlow - veh.pos.y };
-    return { order, slowC, fastC, fast, fall, invFast, invSlow, stunt: s, errors: [] };
+    const tr = sky.track;
+    const N = tr.N;
+    let maxDy = 0, maxTurn = 0;
+    for (let i = 0; i < N; i++) {
+      const j = (i + 1) % N;
+      maxDy = Math.max(maxDy, Math.abs(tr.py[j] - tr.py[i]));
+      const dot = tr.tx[i] * tr.tx[j] + tr.tz[i] * tr.tz[j];
+      maxTurn = Math.max(maxTurn, Math.acos(Math.max(-1, Math.min(1, dot))));
+    }
+    let cross = null;
+    for (let i = 0; i < N && !cross; i += 4) {
+      for (let j = i + 40; j < N - 40; j += 4) {
+        const d = Math.hypot(tr.px[i] - tr.px[j], tr.pz[i] - tr.pz[j]);
+        if (d < 36) { cross = { i, j, d: Math.round(d) }; break; }
+      }
+    }
+    const legacy = sky.trackById('stunt');
+    return {
+      id: tr.id, gaps: tr.gaps.length, cps: (tr.checkpoints || []).length,
+      stunt: !!tr.stunt, city: !!(tr.def && tr.def.city), blocks: !!(sky.world && sky.world.cityBlocks),
+      maxDy: +maxDy.toFixed(3), maxTurn: +maxTurn.toFixed(3), cross,
+      legacy: legacy && legacy.id, len: Math.round(tr.length),
+    };
   });
   if (errors.length) throw new Error(errors.join('\n'));
-  if (!report.order) throw new Error('stunt index order ' + JSON.stringify(report.stunt));
-  if (!(report.slowC < 0)) throw new Error('slow compression ' + report.slowC);
-  if (!(report.fastC > 2)) throw new Error('fast compression ' + report.fastC);
-  if (!report.fast.saw) throw new Error('fast loop did not reach ceiling ' + JSON.stringify(report.fast));
-  if (!(report.fast.fi > report.fast.top)) throw new Error('fast loop did not pass the top ' + JSON.stringify(report.fast));
-  if (report.fall.attached || !(report.fall.drop > 8)) throw new Error('slow loop did not fall ' + JSON.stringify(report.fall));
-  if (!report.invFast.saw && !(report.invFast.y > 8)) throw new Error('fast invert failed ' + JSON.stringify(report.invFast));
-  if (report.invSlow.attached || !(report.invSlow.drop > 6)) throw new Error('slow invert did not fall ' + JSON.stringify(report.invSlow));
+  if (report.id !== 'city' || report.legacy !== 'city') throw new Error('id ' + JSON.stringify(report));
+  if (report.gaps !== 0 || report.stunt) throw new Error('still a stunt ' + JSON.stringify(report));
+  if (report.cps < 8) throw new Error('checkpoints ' + JSON.stringify(report));
+  if (!report.city || !report.blocks) throw new Error('scenery ' + JSON.stringify(report));
+  if (!(report.maxDy < 0.2)) throw new Error('not flat ' + JSON.stringify(report));
+  if (!(report.maxTurn < 0.15)) throw new Error('kink ' + JSON.stringify(report));
+  if (report.cross) throw new Error('cross ' + JSON.stringify(report.cross));
   await page.close();
 }
 
@@ -92,23 +83,32 @@ async function testAi() {
   await page.close();
 }
 
-async function testAiStunt() {
-  const { page, errors } = await open('?track=stunt&ai=1&diff=hard&autostart=1&nocount=1&q=low&noadapt=1&nopauseblur=1');
+async function testAiCity() {
+  const { page, errors } = await open('?track=city&ai=1&diff=hard&autostart=1&nocount=1&q=low&noadapt=1&nopauseblur=1');
   const report = await page.evaluate(() => {
     const sky = window.__sky;
     sky.game.freeze = true;
     sky.game.state = 'race';
     const ai = sky.race.racers.find((r) => r.driver.kind === 'ai');
-    ai.veh.sawCeiling = false;
     const samples = [];
-    for (let t = 0; t < 90 && !ai.veh.sawCeiling; t += 10) {
+    let stuck = 0;
+    let prev = ai.veh.fi;
+    for (let t = 0; t < 150 && ai.lap.n < 2; t += 10) {
       sky.sim(10);
-      samples.push({ t: t + 10, fi: Math.round(ai.veh.fi), y: Math.round(ai.veh.pos.y), sp: Math.round(ai.veh.speed), saw: ai.veh.sawCeiling, att: ai.veh.attached });
+      const fi = ai.veh.fi;
+      let d = fi - prev;
+      if (d < -sky.track.N / 2) d += sky.track.N;
+      if (d < 8 && ai.veh.speed < 4) stuck += 10;
+      else stuck = 0;
+      prev = fi;
+      samples.push({ t: t + 10, n: ai.lap.n, fi: Math.round(fi), sp: Math.round(ai.veh.speed), stuck });
+      if (stuck > 20) break;
     }
-    return { saw: ai.veh.sawCeiling, samples };
+    return { n: ai.lap.n, stuck, samples };
   });
   if (errors.length) throw new Error(errors.join('\n'));
-  if (!report.saw) throw new Error('AI did not cross the loop ' + JSON.stringify(report.samples));
+  if (!(report.n >= 2)) throw new Error('AI did not finish a lap ' + JSON.stringify(report.samples));
+  if (report.stuck > 20) throw new Error('AI stuck ' + JSON.stringify(report.samples.slice(-4)));
   await page.close();
 }
 
@@ -356,139 +356,62 @@ async function testKeys() {
   await page.close();
 }
 
-async function testStuntDrive() {
-  const { page, errors } = await open('?track=stunt&q=low&ai=0&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
+async function testCityRules() {
+  const { page, errors } = await open('?track=city&q=low&ai=0&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
   const report = await page.evaluate(() => {
     const sky = window.__sky;
-    const tr = sky.track;
-    const veh = sky.veh;
     sky.game.freeze = true;
     sky.game.state = 'race';
-    let maxDy = 0, maxTurn = 0, worst = null;
-    for (let i = 0; i < tr.N; i++) {
-      const j = (i + 1) % tr.N;
-      const dy = Math.abs(tr.py[j] - tr.py[i]);
-      const dot = tr.tx[i] * tr.tx[j] + tr.ty[i] * tr.ty[j] + tr.tz[i] * tr.tz[j];
-      const turn = Math.acos(Math.max(-1, Math.min(1, dot)));
-      if (dy > maxDy) maxDy = dy;
-      if (turn > maxTurn) { maxTurn = turn; worst = i; }
-    }
-    const cap = veh.t.vMax * 3.6 + 4;
-    const follow = () => {
-      const fi = veh.attached ? veh.fi : (veh.q1.fi || veh.fi || 0);
-      const look = Math.max(10, Math.min(28, (veh.speed || 0) * 0.34));
-      const f = tr.frame(fi + look);
-      let err = Math.atan2(-f.tangent.x, -f.tangent.z) - veh.heading;
-      while (err > Math.PI) err -= Math.PI * 2;
-      while (err < -Math.PI) err += Math.PI * 2;
-      const lat = veh.attached ? (veh.lat || 0) : (veh.q1.near ? veh.q1.l : 0);
-      // 橫向右為正（與地面轉向一致）。steer 為正＝向右。
-      let steer = veh.attached
-        ? -lat * 0.55
-        : -err * 0.85 - lat * 0.14;
-      const airborne = !veh.attached && (veh.airTime > 0.12 || (veh.q1 && veh.q1.gap));
-      if (airborne) steer = -err * 0.6;
-      else if (!veh.attached && Math.abs(lat) > 4.5) steer = -lat * 0.28;
-      steer = Math.max(-1, Math.min(1, steer));
-      const st = sky.input.state;
-      const target = st._target || 48;
-      const spd = Math.max(veh.speed, Math.abs(veh.speedF || 0));
-      const here = tr.kind ? tr.kind[tr.wrap(Math.floor(fi))] : 0;
-      const soon = tr.kind ? tr.kind[tr.wrap(Math.floor(fi) + 10)] : 0;
-      st.steer = steer;
-      st.throttle = spd < target ? 1 : 0.35;
-      st.brake = !veh.attached && spd > target + 12 ? 0.35 : 0;
-      st.nitro = spd < target - 6 && target >= 42;
-      st.lift = !!(veh.flipAssist || here === 4 || soon === 4);
-      st.pitch = st.lift ? 0.65 : 0;
+    const tr = sky.track;
+    const N = tr.N;
+    const r = sky.race.racers[0];
+    const lap = r.lap;
+    const mark = (frac) => {
+      r.veh.placeOnTrack(Math.floor(frac * N), 0, 4);
+      lap.prevFi = r.veh.fi;
+      sky.sim(0.08);
+      return lap.cp.slice();
     };
-    const orig = sky.input.poll.bind(sky.input);
-    sky.input.poll = (dt) => { orig(dt); follow(); };
-    const drives = [];
-    for (const target of [32, 48, 64]) {
-      sky.input.state._target = target;
-      sky.game.respawns = 0;
-      veh.placeOnTrack(tr.N - 12, 0, target * 0.45);
-      let maxKmh = 0, progress = 0, prev = veh.fi, nan = false;
-      const tEnd = target >= 64 ? 80 : target >= 48 ? 100 : 110;
-      for (let t = 0; t < tEnd && progress < tr.N * 1.05; t += 5) {
-        sky.sim(5);
-        maxKmh = Math.max(maxKmh, veh.kmh);
-        let d = veh.fi - prev;
-        if (d < -tr.N / 2) d += tr.N;
-        if (d > tr.N / 2) d -= tr.N;
-        if (d > 0) progress += d;
-        prev = veh.fi;
-        if (!Number.isFinite(veh.pos.x) || !Number.isFinite(veh.kmh)) { nan = true; break; }
-      }
-      drives.push({ target, progress: Math.round(progress), need: Math.round(tr.N * 0.9), maxKmh: Math.round(maxKmh), respawns: sky.game.respawns || 0, fi: Math.round(veh.fi), nan, y: Math.round(veh.pos.y) });
-    }
-    sky.input.poll = orig;
-    const fuzz = [];
-    let seed = 11;
-    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-    for (let trial = 0; trial < 28; trial++) {
-      const i = Math.floor(rnd() * tr.N);
-      const sp = rnd() * 75;
-      veh.placeOnTrack(i, (rnd() * 2 - 1) * 7, sp);
-      let maxKmh = 0, bad = '';
-      const inp = { steer: rnd() * 2 - 1, throttle: 0.3 + rnd() * 0.7, brake: rnd() * 0.2, nitro: rnd() > 0.4, lift: rnd() > 0.75, pitch: rnd() * 2 - 1 };
-      for (let n = 0; n < 120 * 3; n++) {
-        if (n % 20 === 0) { inp.steer = rnd() * 2 - 1; inp.throttle = rnd(); inp.nitro = rnd() > 0.5; }
-        veh.step(1 / 120, inp);
-        if (veh.events.respawn) { veh.recoverToCheckpoint(); veh.events.respawn = false; veh.events.why = ''; }
-        maxKmh = Math.max(maxKmh, veh.kmh);
-        if (!Number.isFinite(veh.pos.x) || maxKmh > cap) { bad = 'speed ' + Math.round(maxKmh); break; }
-      }
-      if (bad) fuzz.push({ trial, i, sp: Math.round(sp), bad, y: Math.round(veh.pos.y) });
-    }
-    const HALF = 12.2;
-    let minDotR = 1, minDotN = 1, maxEdge = 0;
-    const edgeAt = (i, side) => {
-      const p = tr.surface(i, side * HALF);
-      return [p.x, p.y, p.z];
-    };
-    for (let i = 0; i < tr.N; i++) {
-      const j = (i + 1) % tr.N;
-      const dr = tr.rx[i] * tr.rx[j] + tr.ry[i] * tr.ry[j] + tr.rz[i] * tr.rz[j];
-      const dn = tr.nx[i] * tr.nx[j] + tr.ny[i] * tr.ny[j] + tr.nz[i] * tr.nz[j];
-      if (dr < minDotR) minDotR = dr;
-      if (dn < minDotN) minDotN = dn;
-      for (const side of [-1, 1]) {
-        const a = edgeAt(i, side), b = edgeAt(j, side);
-        const e = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-        if (e > maxEdge) maxEdge = e;
-      }
-    }
-    let cross = null;
-    for (let i = 0; i < tr.N && !cross; i += 2) {
-      for (let j = i + 9; j < tr.N; j += 2) {
-        const gap = Math.min(j - i, tr.N - (j - i));
-        if (gap <= 8) continue;
-        const d = Math.hypot(tr.px[i] - tr.px[j], tr.py[i] - tr.py[j], tr.pz[i] - tr.pz[j]);
-        if (d < 6) { cross = { i, j, d: +d.toFixed(2) }; break; }
-      }
-    }
-    return {
-      maxDy: +maxDy.toFixed(2), maxTurn: +maxTurn.toFixed(2), worst, cap: Math.round(cap), drives, fuzz,
-      cps: (tr.checkpoints || []).length, arrows: !!(sky.world && sky.world.stuntArrows),
-      minDotR: +minDotR.toFixed(3), minDotN: +minDotN.toFixed(3), maxEdge: +maxEdge.toFixed(2), cross,
-    };
+    lap.cp = [false, false, false];
+    lap.prevFi = null;
+    const a = mark(0.27);
+    const b = mark(0.77);
+    const c = mark(0.52);
+    const d = mark(0.77);
+    lap.cp = [false, false, false];
+    const bnds = tr.bounds;
+    const cx = (bnds.minX + bnds.maxX) / 2;
+    const cz = (bnds.minZ + bnds.maxZ) / 2;
+    r.veh.pos.set(cx, 4, cz);
+    r.veh.vel.set(0, 0, 0);
+    const qMid = tr.query(cx, cz);
+    lap.prevFi = qMid.fi;
+    sky.sim(0.25);
+    const infield = { cp: lap.cp.slice(), al: qMid.al };
+    const spots = [
+      [cx, cz],
+      [bnds.minX - 70, bnds.minZ - 70],
+      [bnds.maxX + 80, cz],
+      [cx, bnds.maxZ + 90],
+    ];
+    const lands = spots.map(([x, z]) => {
+      r.veh.pos.set(x, 40, z);
+      r.veh.recoverToCheckpoint();
+      const q = tr.query(r.veh.pos.x, r.veh.pos.z);
+      return { al: +q.al.toFixed(2), dy: +Math.abs(r.veh.pos.y - q.y).toFixed(2), gap: !!q.gap };
+    });
+    return { a, b, c, d, infield, lands };
   });
   if (errors.length) throw new Error(errors.join('\n'));
-  if (!(report.maxDy < 4)) throw new Error('cliff ' + JSON.stringify(report));
-  if (!(report.maxTurn < 0.75)) throw new Error('kink ' + JSON.stringify(report));
-  if (!(report.minDotR > 0.9 && report.minDotN > 0.9)) throw new Error('frame twist ' + JSON.stringify(report));
-  if (!(report.maxEdge < 6)) throw new Error('seam ' + JSON.stringify(report));
-  if (report.cross) throw new Error('loop crosses the road ' + JSON.stringify(report.cross));
-  if (report.cps < 4) throw new Error('checkpoints ' + JSON.stringify(report));
-  if (!report.arrows) throw new Error('no guide arrows');
-  for (const d of report.drives) {
-    if (d.nan || d.maxKmh > report.cap) throw new Error('overspeed ' + JSON.stringify(d));
-    if (d.progress < d.need) throw new Error('did not finish a lap ' + JSON.stringify(d));
-    if (d.respawns > 8) throw new Error('too many respawns ' + JSON.stringify(d));
+  if (!report.a[0] || report.a[1] || report.a[2]) throw new Error('first gate ' + JSON.stringify(report.a));
+  if (report.b[2]) throw new Error('checkpoint skipped ahead ' + JSON.stringify(report.b));
+  if (!report.c[0] || !report.c[1] || report.c[2]) throw new Error('middle gate ' + JSON.stringify(report.c));
+  if (!report.d[2]) throw new Error('last gate ' + JSON.stringify(report.d));
+  if (report.infield.cp.some(Boolean) || !(report.infield.al > 18)) throw new Error('shortcut counted ' + JSON.stringify(report.infield));
+  for (const land of report.lands) {
+    if (!(land.al < 14) || land.gap || !(land.dy < 3)) throw new Error('respawn off track ' + JSON.stringify(report.lands));
   }
-  if (report.fuzz.length) throw new Error('fuzz ' + JSON.stringify(report.fuzz.slice(0, 6)));
+  await page.close();
 }
 
 function overlap(a, b) {
@@ -614,15 +537,15 @@ async function testPadPage() {
 
 try {
   const tests = [
-    ['loop physics', testLoop],
+    ['city shape', testCityShape],
     ['keyboard touch', testKeys],
     ['phone accel pad', testPhonePad],
     ['two gamepads', testPads],
     ['tesla pad slots', testTeslaSlots],
     ['gamepad test page', testPadPage],
     ['ai lap', testAi],
-    ['ai stunt loop', testAiStunt],
-    ['stunt laps and fuzz', testStuntDrive],
+    ['ai city lap', testAiCity],
+    ['city checkpoints and respawn', testCityRules],
   ];
   for (const [name, fn] of tests) {
     try { await fn(); ok(name); }

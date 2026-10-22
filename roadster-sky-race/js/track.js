@@ -148,6 +148,13 @@ export class Track {
     this.hasRibbon = false;
     this.obstacles = [];
     this.stunt = null;
+    this.checkpoints = null;
+    if (def.city) {
+      const nCp = 8;
+      const step = Math.max(1, Math.round(N / nCp));
+      this.checkpoints = [];
+      for (let k = 0; k < nCp; k++) this.checkpoints.push(wrap(k * step));
+    }
     applyStunts(this);
   }
 

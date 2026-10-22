@@ -116,6 +116,19 @@ h2 { margin:0 0 .8rem; font-size:1.8rem; } h3 { margin:.2rem 0 .6rem; font-size:
 .roomcode { font:800 1.35rem/1.2 ui-monospace, SFMono-Regular, monospace; letter-spacing:.14em; color:var(--accent); margin:.15rem 0 .35rem; }
 #phoneUrl { word-break:break-all; margin:.1rem 0 .3rem; }
 .small.bad, .sub.bad { color:#ff9a8a; } .small.warn { color:#ffe29a; } .sub.ok { color:#7dffa0; }
+#linkpill { position:fixed; left:50%; top:calc(.55rem + env(safe-area-inset-top, 0px)); transform:translateX(-50%); z-index:14;
+  display:flex; align-items:center; gap:.45rem; padding:.28rem .7rem; border-radius:999px;
+  background:rgba(8,12,18,.82); color:#eef3f8; font-size:.85rem; pointer-events:none; }
+#linkpill.hidden, #linkhint.hidden { display:none; }
+#linkDot { width:.62rem; height:.62rem; border-radius:50%; background:#8b97a6; box-shadow:0 0 0 2px rgba(255,255,255,.12); }
+#linkpill.good #linkDot { background:#3dff7a; }
+#linkpill.poor #linkDot { background:#ffd24a; }
+#linkpill.bad #linkDot { background:#ff4a3a; }
+#linkpill b { font-weight:700; }
+#linkMs { color:#c5d0dc; font-variant-numeric:tabular-nums; }
+#linkhint { position:fixed; left:50%; top:calc(2.35rem + env(safe-area-inset-top, 0px)); transform:translateX(-50%); z-index:14;
+  max-width:min(92vw, 28rem); text-align:center; font-size:.78rem; color:#ffe29a; background:rgba(40,28,8,.88);
+  padding:.28rem .6rem; border-radius:.5rem; pointer-events:none; }
 #netbanner { position:fixed; left:50%; top:.6rem; transform:translateX(-50%); z-index:12; background:rgba(90,30,12,.92); color:#ffe29a;
   padding:.45rem .9rem; border-radius:.5rem; font-size:.9rem; max-width:92vw; text-align:center; pointer-events:none; }
 #netbanner.hidden { display:none; }
