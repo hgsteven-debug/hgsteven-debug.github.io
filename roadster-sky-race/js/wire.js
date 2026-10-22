@@ -12,6 +12,13 @@ export const KEYFRAME_MS = 1000;
 export const STATE_MAGIC = 0x53;
 export const INPUT_MAGIC = 0x49;
 
+// 序號往前才算新。同一包從中繼晚到時丟掉，避免和直連交錯把車拉回去。
+export function seqNewer(prev, next) {
+  if (prev == null) return true;
+  const d = ((next | 0) - (prev | 0)) & 0xffff;
+  return d !== 0 && d < 0x8000;
+}
+
 const VEH_IDS = VEHICLES.map((v) => v.id);
 const PAINT_IDS = Object.keys(PAINT_DEFS);
 const TRACK_IDS = TRACKS.map((t) => t.id);
@@ -382,6 +389,7 @@ export function encodeState(msg, remote, now) {
   if (msg && msg.self) flags |= 2;
   if (hasHud) flags |= 4;
   u8(w, flags);
+  u16(w, ctx._stateN & 65535);
   u16(w, (msg && msg.ack) | 0);
   const phase = PHASES.indexOf(msg && msg.race);
   u8(w, phase < 0 ? 3 : phase);
@@ -434,6 +442,7 @@ export function decodeState(buf, dict) {
   const keyframe = !!(flags & 1);
   const hasSelf = !!(flags & 2);
   const hasHud = !!(flags & 4);
+  const seq = ru16(r);
   const ack = ru16(r);
   const race = PHASES[ru8(r)] || 'race';
   const track = TRACK_IDS[ru8(r)] || TRACK_IDS[0] || 'canyon';
@@ -472,7 +481,7 @@ export function decodeState(buf, dict) {
     selfId = ident ? ident.id : ('#' + selfSlot);
   }
   return {
-    t: 'state', ack, race, cd, track, selfId, self, selfLap, cars,
+    t: 'state', seq, ack, race, cd, track, selfId, self, selfLap, cars,
     selfVehicle, selfPaint, standings, keyframe, partial: !keyframe,
   };
 }
@@ -593,15 +602,48 @@ export function decodeInput(buf) {
   return Object.assign({ t: 'input', seq, hist }, cmd);
 }
 
+// PeerJS 的 bin16 是 0xDA 加 2 byte 長度。Safari 有時把整包（含這 3 byte）交出來。
+function stripBinHeader(bytes) {
+  if (!bytes || bytes.length < 2) return bytes;
+  const t = bytes[0];
+  if (t >= 0xa0 && t <= 0xaf && bytes.length === 1 + (t - 0xa0)) return bytes.subarray(1);
+  if (t === 0xda && bytes.length >= 3) {
+    const n = (bytes[1] << 8) | bytes[2];
+    if (n > 0 && bytes.length === 3 + n) return bytes.subarray(3);
+  }
+  if (t === 0xc4 && bytes.length >= 2 && bytes.length === 2 + bytes[1]) return bytes.subarray(2);
+  if (t === 0xc5 && bytes.length >= 3) {
+    const n = (bytes[1] << 8) | bytes[2];
+    if (n > 0 && bytes.length === 3 + n) return bytes.subarray(3);
+  }
+  return bytes;
+}
+
 export function decodeWire(data, dict) {
   let bytes = null;
   if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
   else if (ArrayBuffer.isView(data)) bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   if (!bytes || !bytes.length) return data;
+  bytes = stripBinHeader(bytes);
   try {
     if (bytes[0] === STATE_MAGIC) return decodeState(bytes, dict);
     if (bytes[0] === INPUT_MAGIC) return decodeInput(bytes);
   } catch (e) { return null; }
+  return data;
+}
+
+// 資料通道改走 JSON 序列化（Safari 對 PeerJS binary/bin16 會把封包弄丟）。
+// 位元組本體仍是壓縮過的狀態，只用 base64 放進物件。
+export function packDc(payload) {
+  if (payload instanceof ArrayBuffer) payload = new Uint8Array(payload);
+  if (payload instanceof Uint8Array) return { b: bytesToB64(payload) };
+  return payload;
+}
+export function unpackDc(data) {
+  if (!data || typeof data !== 'object') return data;
+  if (typeof data.b === 'string' && data.t == null && data.from == null && data.nonce == null) {
+    try { return b64ToBytes(data.b); } catch (e) { return data; }
+  }
   return data;
 }
 

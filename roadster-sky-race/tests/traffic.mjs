@@ -3,6 +3,7 @@ import * as sync from '../js/sync.js';
 import { mqttPublish } from '../js/relay.js';
 import {
   encodeState, decodeState, createDict, encodeInput, decodeInput, holdCars, inputParts, inputChanged,
+  seqNewer,
   INPUT_KEEPALIVE_MS, bytesToB64, relayWireBytes,
 } from '../js/wire.js';
 
@@ -255,6 +256,29 @@ function testBudget() {
   assert(env > 20 && env < 80, 'envelope ' + env);
 }
 
+function testSelfAlways() {
+  const ctx = {};
+  const dict = createDict();
+  let far = 0;
+  let prev = null;
+  for (let i = 0; i < 8; i++) {
+    const msg = {
+      t: 'state', race: 'race', track: 'canyon', ack: 1,
+      self: { x: i, y: 1, z: 2, vx: 10, vy: 0, vz: 0, heading: 0.2, qx: 0, qy: 0, qz: 0, qw: 1, speed: 10, energy: 80, groundY: 1 },
+      selfId: 'r0', selfLap: { n: 1, t: i * 0.1 },
+      cars: [{ id: 'far', name: 'P1', kind: 'local', x: 800, y: 0, z: 0, vx: 1, vy: 0, vz: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 1 }],
+    };
+    const dec = decodeState(encodeState(msg, ctx, i * 66), dict);
+    assert(dec && dec.self && Math.abs(dec.self.speed - 10) < 0.05, 'own car every packet ' + i + ' ' + (dec && dec.self && dec.self.speed));
+    assert(seqNewer(prev, dec.seq), 'seq ' + prev + ' ' + dec.seq);
+    prev = dec.seq;
+    if ((dec.cars || []).some((c) => c && (c.id === 'far' || c.name === 'P1'))) far++;
+  }
+  assert(far > 0 && far < 8, 'far car is not every packet ' + far);
+  assert(!seqNewer(prev, prev) && !seqNewer(prev, (prev - 3) & 65535), 'old seq dropped');
+}
+
+try { testSelfAlways(); ok('self full rate'); } catch (e) { bad('self full rate', e); }
 try { testBudget(); ok('budget'); } catch (e) { bad('budget', e); }
 try { testLoss(); ok('loss'); } catch (e) { bad('loss', e); }
 if (fails.length) { console.error('FAILED', fails.join(', ')); process.exit(1); }

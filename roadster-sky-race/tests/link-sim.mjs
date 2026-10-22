@@ -138,9 +138,10 @@ function testLinkHelpers() {
   assert(sync.linkQuality({ rtt: 20, via: 'direct', age: 10 }) === 'good');
   assert(sync.linkQuality({ rtt: 140, via: 'relay', age: 10 }) === 'poor');
   assert(sync.linkQuality({ rtt: 400, via: 'ws', age: 10 }) === 'bad');
-  assert(sync.lanIsolationHint({ iceFailed: true, sawLocalHost: true, sawRemoteHost: true, via: 'relay' }) === true);
-  assert(sync.lanIsolationHint({ iceFailed: true, sawLocalHost: true, sawRemoteHost: false, via: 'ws' }) === false);
-  assert(sync.lanIsolationHint({ iceFailed: false, sawLocalHost: true, sawRemoteHost: true, via: 'direct' }) === false);
+  assert(sync.lanIsolationHint({ directFailed: true, sawLocalHost: true, sawRemoteHost: true, via: 'relay' }) === true);
+  assert(sync.lanIsolationHint({ directFailed: true, sawLocalHost: true, sawRemoteHost: false, via: 'ws' }) === false);
+  assert(sync.lanIsolationHint({ directFailed: false, sawLocalHost: true, sawRemoteHost: true, via: 'ws' }) === false);
+  assert(sync.lanIsolationHint({ directFailed: false, sawLocalHost: true, sawRemoteHost: true, via: 'direct' }) === false);
   assert(sync.stateGapMs('good') === 66);
   assert(sync.stateGapMs('poor') === 100);
   assert(sync.stateGapMs('bad') === 140);
