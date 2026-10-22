@@ -255,11 +255,11 @@ export function linkKind(via) {
   return '';
 }
 
-// 兩邊都看到 host 候選，卻沒走直連。文案自己說明「若在同一個 Wi-Fi」。
-export function lanIsolationHint({ iceFailed, sawLocalHost, sawRemoteHost, via } = {}) {
+// 只有直連候選真的失敗才提示隔離。改走中繼或還在重試，不算。
+export function lanIsolationHint({ directFailed, sawLocalHost, sawRemoteHost, via } = {}) {
   if (!sawLocalHost || !sawRemoteHost) return false;
   if (via === 'direct') return false;
-  return !!(iceFailed || via === 'relay' || via === 'ws');
+  return !!directFailed;
 }
 
 export function stateGapMs(tier, floor = STATE_GAP_MS) {

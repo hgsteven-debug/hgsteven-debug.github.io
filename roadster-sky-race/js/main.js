@@ -1285,7 +1285,8 @@ function selfAsPose(s) {
   return {
     id: 'self',
     x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw,
-    vx: p.vx, vy: p.vy, vz: p.vz, heading: p.heading, speed: p.speed,
+    vx: p.vx, vy: p.vy, vz: p.vz, heading: p.heading,
+    speed: (p.speed > 0.4 || Math.hypot(p.vx || 0, p.vy || 0, p.vz || 0) < 1) ? p.speed : Math.hypot(p.vx || 0, p.vy || 0, p.vz || 0),
     gy: p.groundY, nx: p.nx, ny: p.ny, nz: p.nz,
     grounded: p.grounded, nitro: p.nitroOn, thrust: p.thrust, lift: p.lift,
     braking: p.braking, steer: p.steerAngle, onRoad: p.onRoad,
@@ -1305,11 +1306,11 @@ function noteHostSelf(msg) {
   if (road.warn && guestLive && game.state === 'race' && hud) hud.toast(t('toast.offroad'), 1400);
 }
 function sampleGuestView(dt) {
-  if (!game.guest || !guestSelfAt || performance.now() - guestSelfAt > 500) {
+  if (!game.guest || !guestSelfAt || performance.now() - guestSelfAt > 2500) {
     guestVis.on = false;
     return null;
   }
-  const poses = guestSelfBuf.sample(performance.now(), 0);
+  const poses = guestSelfBuf.sample(performance.now(), 0.25);
   const p = poses && poses[0];
   if (!p || !Number.isFinite(p.x)) { guestVis.on = false; return null; }
   easeGuestPose(guestEase, p, dt);
@@ -1815,6 +1816,7 @@ function paintDebug() {
     ? ['stage ' + d.stage, 'signal ' + d.signal, 'cand ' + d.cand, 'pair ' + d.pair, 'proven ' + d.proven, 'via ' + d.via, 'up ' + fmtB(d.up), 'dn ' + fmtB(d.down)]
     : ['net off'];
   if (d && d.per) lines.push('per ' + fmtB(d.per));
+  if (d && d.err) lines.push('err ' + d.err);
   el.textContent = lines.join('\n');
 }
 function linkHow(via) {
