@@ -13,6 +13,7 @@ export class Hud {
       lapN: $('lapN'), lapT: $('lapT'), lapLast: $('lapLast'), lapBest: $('lapBest'),
       toast: $('toast'), pad: $('padstate'), cam: $('camlabel'), count: $('count'),
       vig: $('vignette'), fx: $('fx'), mm: $('minimap'), flash: $('flash'),
+      pill: $('linkpill'), linkKind: $('linkKind'), linkMs: $('linkMs'), linkHint: $('linkhint'),
     };
     this._last = {};
     this.toastT = 0;
@@ -30,6 +31,28 @@ export class Hud {
   }
   setText(key, el, v) { if (this._last[key] !== v) { this._last[key] = v; el.textContent = v; } }
   show(v) { this.el.hud.classList.toggle('hidden', !v); }
+  setLink(info) {
+    const pill = this.el.pill;
+    const hint = this.el.linkHint;
+    if (!pill) return;
+    if (!info || !info.show) {
+      pill.classList.add('hidden');
+      if (hint) hint.classList.add('hidden');
+      return;
+    }
+    pill.classList.remove('hidden', 'good', 'poor', 'bad');
+    pill.classList.add(info.tier || 'poor');
+    const kindKey = info.rejoin ? 'link.rejoin' : info.kind === 'turn' ? 'link.turn' : info.kind === 'mqtt' ? 'link.relay' : info.kind === 'direct' ? 'link.direct' : 'link.checking';
+    this.setText('linkKind', this.el.linkKind, t(kindKey));
+    const ms = info.rtt == null || !Number.isFinite(info.rtt) ? '' : t('link.ms', { n: Math.round(info.rtt) });
+    this.setText('linkMs', this.el.linkMs, ms);
+    if (hint) {
+      if (info.hint) {
+        hint.classList.remove('hidden');
+        this.setText('linkHint', hint, t('link.iso'));
+      } else hint.classList.add('hidden');
+    }
+  }
 
   buildMinimap() {
     const tr = this.tr, S = this.el.mm.width, pad = 22;

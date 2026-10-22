@@ -162,16 +162,24 @@ try { testGuestSmooth(); ok('guest smooth / off-track / orientation'); }
 catch (e) { bad('guest smooth / off-track / orientation', e); }
 
 function testIceList() {
-  const now = 1792669800000;
-  const list = ice.iceServers(now);
-  const blob = JSON.stringify(list);
-  assert(blob.includes('stun:stun.l.google.com:19302'), blob);
-  assert(blob.includes('transport=tcp'), blob);
-  assert(!blob.includes('turn.peerjs.com'), blob);
+  const list = ice.iceServers();
+  const urls = list.map((s) => (Array.isArray(s.urls) ? s.urls.join(',') : String(s.urls)));
+  const blob = urls.join('\n');
+  assert(blob.includes('stun:stun.l.google.com:19302'), 'missing public stun');
+  assert(blob.includes('stun:stun.cloudflare.com:3478'), 'missing cloudflare stun');
+  assert(blob.includes('global.relay.metered.ca'), 'missing metered turn');
+  assert(blob.includes('transport=tcp'), 'missing tcp turn');
+  assert(blob.includes('turns:'), 'missing turns');
+  assert(!blob.includes('turn.peerjs.com'), 'peerjs turn leaked in');
+  assert(!blob.includes('openrelay.metered.ca'), 'public open relay still allocated');
   const turn = list.find((s) => s.username);
-  const expect = crypto.createHmac('sha1', 'openrelayprojectsecret').update(turn.username).digest('base64');
-  assert(turn.credential === expect, turn.credential);
-  assert(String(turn.urls).includes(':443'), turn.urls);
+  assert(!!(turn && turn.username && turn.credential), 'turn entry missing static auth');
+  assert(!String(turn.urls).includes('stun:'), 'stun row was given a username');
+  const cfg = ice.rtcConfig(0, '');
+  assert(cfg.iceTransportPolicy === 'all', cfg.iceTransportPolicy);
+  assert(ice.iceTransportPolicy('?forceTurn=1') === 'relay', 'forceTurn');
+  assert(ice.iceTransportPolicy('?lang=en&forceTurn=1') === 'relay', 'forceTurn query');
+  assert(ice.ICE_TRANSPORT_POLICY === 'all', 'default policy');
   const root = fs.readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
   assert(root.includes('location.search + location.hash'), 'root redirect dropped the query');
   const pub = relay.mqttPublish('skyroadster/v1/ABC', '{"t":"ping"}');
@@ -423,6 +431,7 @@ try {
     if (view.label !== '加速') throw new Error('gas label ' + JSON.stringify(view));
     if (!view.held || !(view.throttle > 0.5)) throw new Error('gas hold ' + JSON.stringify(view));
     if (!(view.dpr <= 1.05)) throw new Error('phone dpr ' + JSON.stringify(view));
+    await host.page.bringToFront();
     const hostView = await host.page.evaluate(() => ({
       split: !!window.__sky.game.split,
       locals: window.__sky.race.locals().length,
@@ -484,6 +493,7 @@ try {
       };
       throw new Error('phone view froze ' + JSON.stringify(diag));
     }
+    await phone.page.bringToFront();
     await phone.page.waitForFunction(() => window.__sky.net.ghosts >= 1 && window.__sky.net.latest && window.__sky.net.latest.standings && window.__sky.net.latest.standings.length >= 2, { timeout: 8000 });
     await phone.page.evaluate(() => window.__sky.net.disconnect());
     await new Promise((r) => setTimeout(r, 500));
@@ -577,6 +587,7 @@ try {
       window.__sky.input.poll(1 / 60);
       for (let i = 0; i < 4; i++) window.__sky.net.flushInput();
     });
+    await host.page.bringToFront();
     await host.page.waitForFunction(() => {
       const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
       return !!(r && r.driver.state.throttle > 0.5);
@@ -598,10 +609,19 @@ try {
       return { thr, sp: r.veh.speed, moved: Math.hypot(r.veh.pos.x - x0, r.veh.pos.z - z0) };
     });
     if (!(hostMove.thr > 0.5 && hostMove.sp > 3 && hostMove.moved > 1)) throw new Error('relay host ' + JSON.stringify(hostMove));
-    await phone.waitForFunction((at) => {
-      const s = window.__sky.net.latest && window.__sky.net.latest.self;
-      return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
-    }, { timeout: 8000, polling: 100 }, phoneAt);
+    try {
+      await phone.waitForFunction((at) => {
+        const s = window.__sky.net.latest && window.__sky.net.latest.self;
+        return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
+      }, { timeout: 8000, polling: 100 }, phoneAt);
+    } catch (e) {
+      const phoneNow = await phone.evaluate((at) => {
+        const s = window.__sky.net.latest && window.__sky.net.latest.self;
+        return { self: s, at, link: window.__sky.net.link, state: window.__sky.game.state };
+      }, phoneAt);
+      const hostNow = await host.page.evaluate(() => ({ link: window.__sky.net.link, sent: window.__sky.net.sent, err: window.__sky.net.lastErr }));
+      throw new Error('relay pose ' + JSON.stringify({ phoneNow, hostNow }));
+    }
     const moved = await phone.evaluate((at) => {
       const sky = window.__sky;
       for (let i = 0; i < 10; i++) sky.net.tick(1 / 30);

@@ -572,7 +572,58 @@ export class World {
     }
     this.scene.add(group);
     this.extras = group;
+    this._cityBlocks();
     this._stuntGuides();
+  }
+
+  // 街道環道：離開路面的方塊樓，沒有招牌或標誌。
+  _cityBlocks() {
+    const tr = this.track;
+    if (!tr || !tr.def || !tr.def.city) return;
+    const b = tr.bounds;
+    const step = this.qname === 'low' ? 58 : 44;
+    const cap = this.qname === 'low' ? 36 : this.qname === 'high' ? 84 : 60;
+    const spots = [];
+    const q = tr.newQuery();
+    for (let x = b.minX - 16; x <= b.maxX + 16 && spots.length < cap; x += step) {
+      for (let z = b.minZ - 16; z <= b.maxZ + 16 && spots.length < cap; z += step) {
+        const hsh = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+        const f = hsh - Math.floor(hsh);
+        const jx = x + (f - 0.5) * 16;
+        const jz = z + (((f * 7.1) % 1) - 0.5) * 16;
+        tr.query(jx, jz, q);
+        if (q.near && q.al < 36) continue;
+        spots.push({
+          x: jx, z: jz,
+          w: 14 + (f * 17 % 12),
+          d: 12 + (f * 13 % 14),
+          ht: 8 + (f * 31 % 26),
+          c: f,
+        });
+      }
+    }
+    if (!spots.length) return;
+    const mesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ roughness: 0.88, metalness: 0.05 }),
+      spots.length,
+    );
+    const dummy = new THREE.Object3D();
+    const col = new THREE.Color();
+    const palette = [0x8d97a3, 0x6a7582, 0xc2b6a4, 0x4e5966, 0x9aa6b0, 0x7d6a5c];
+    spots.forEach((s, i) => {
+      dummy.position.set(s.x, s.ht / 2, s.z);
+      dummy.scale.set(s.w, s.ht, s.d);
+      dummy.rotation.set(0, (s.c * 6) % 1 > 0.72 ? 0.35 : 0, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      col.setHex(palette[Math.floor(s.c * palette.length) % palette.length]);
+      mesh.setColorAt(i, col);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.scene.add(mesh);
+    this.cityBlocks = mesh;
   }
 
   // 迴旋試煉：路面箭頭與檢查門，標出該往哪開。

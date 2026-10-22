@@ -122,8 +122,9 @@ export class Race {
         }
       }
       const cps = [0.25, 0.5, 0.75];
+      const onLine = veh.attached || (q.near && q.al < 18);
       for (let k = 0; k < 3; k++) {
-        if (!lap.cp[k] && (k === 0 || lap.cp[k - 1]) && fi > cps[k] * N && fi < (cps[k] + 0.06) * N) lap.cp[k] = true;
+        if (onLine && !lap.cp[k] && (k === 0 || lap.cp[k - 1]) && fi > cps[k] * N && fi < (cps[k] + 0.06) * N) lap.cp[k] = true;
       }
       lap.prevFi = fi;
     }

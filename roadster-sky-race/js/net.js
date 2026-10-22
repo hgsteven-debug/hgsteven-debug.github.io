@@ -4,9 +4,10 @@ import { RemoteDriver } from './race.js';
 import {
   REMOTE_LIMIT, makeRoomCode, peerIdFor, joinUrl, failText, packInput, zeroInput, formatCode, normalizeCode,
   STATE_GAP_MS, INPUT_GAP_MS, LINK_STALE_MS, REMOTE_GRACE_MS, hostStillThere,
+  INPUT_HISTORY, acceptInputs, stateGapMs, deltaPose, mergePose, linkQuality, linkKind, lanIsolationHint,
 } from './sync.js';
-import { iceServers, webrtcSupport } from './ice.js';
-import { connectRelay } from './relay.js';
+import { webrtcSupport, rtcConfig } from './ice.js';
+import { connectRelayFan } from './relay.js';
 import { t, getLocale } from './i18n.js';
 
 export { REMOTE_LIMIT };
@@ -19,7 +20,7 @@ function peerOptions() {
     secure: true,
     debug: 0,
     pingInterval: 3000,
-    config: { iceServers: iceServers(), sdpSemantics: 'unified-plan' },
+    config: rtcConfig(),
   };
 }
 
@@ -91,19 +92,82 @@ function runDue(list, now) {
   }
 }
 
-function pathOf(conn) {
+function pathOf(conn, bag) {
   if (!conn || !conn.peerConnection || typeof conn.peerConnection.getStats !== 'function') return Promise.resolve('webrtc');
   return conn.peerConnection.getStats().then((stats) => {
     let selected = null;
+    let sawLocal = false;
+    let sawRemote = false;
     stats.forEach((r) => {
       if (r.type === 'candidate-pair' && (r.selected || r.nominated) && r.state === 'succeeded') selected = r;
+      if (r.type === 'local-candidate' && r.candidateType === 'host') sawLocal = true;
+      if (r.type === 'remote-candidate' && r.candidateType === 'host') sawRemote = true;
     });
+    if (bag) {
+      if (sawLocal) bag.sawLocalHost = true;
+      if (sawRemote) bag.sawRemoteHost = true;
+    }
     if (!selected) return 'webrtc';
     const local = stats.get(selected.localCandidateId);
     const remote = stats.get(selected.remoteCandidateId);
     const types = [local && local.candidateType, remote && remote.candidateType];
     return types.indexOf('relay') >= 0 ? 'relay' : 'direct';
   }).catch(() => 'webrtc');
+}
+
+function noteCandidate(bag, cand) {
+  if (!bag || !cand) return;
+  const typ = cand.type || '';
+  const text = cand.candidate || '';
+  if (typ === 'host' || text.indexOf('typ host') >= 0 || text.indexOf('.local') >= 0) bag.sawLocalHost = true;
+}
+
+function restartIce(pc, bag) {
+  if (!pc || typeof pc.restartIce !== 'function') return;
+  const now = performance.now();
+  if (bag && bag._iceKick && now - bag._iceKick < 2000) return;
+  if (bag) bag._iceKick = now;
+  try { pc.restartIce(); } catch (e) {}
+}
+
+function watchIce(pc, bag, onChange) {
+  if (!pc || !pc.addEventListener || pc._skyWatch) return;
+  pc._skyWatch = true;
+  pc.addEventListener('icecandidate', (ev) => noteCandidate(bag, ev && ev.candidate));
+  pc.addEventListener('iceconnectionstatechange', () => {
+    const st = pc.iceConnectionState;
+    if (st === 'disconnected' || st === 'failed') {
+      bag.rtcLive = false;
+      bag.rejoin = true;
+      if (st === 'failed') bag.iceFailed = true;
+      restartIce(pc, bag);
+    } else if (st === 'connected' || st === 'completed') {
+      bag.rejoin = false;
+      bag.iceFailed = false;
+    }
+    try { if (onChange) onChange(st); } catch (e) {}
+  });
+}
+
+function sampleLink(s) {
+  const via = s.via || '';
+  const kind = linkKind(via);
+  const rtt = Number.isFinite(s.rtt) ? s.rtt : null;
+  const age = s.lastPeerAt ? performance.now() - s.lastPeerAt : null;
+  const show = !!(kind || s.rejoin || s.connected || s.heardHost);
+  return {
+    show,
+    tier: linkQuality({ rtt, via: kind ? via : '', age }),
+    kind,
+    rtt,
+    rejoin: !!s.rejoin,
+    hint: s.policy !== 'relay' && lanIsolationHint({
+      iceFailed: !!s.iceFailed,
+      sawLocalHost: !!s.sawLocalHost,
+      sawRemoteHost: !!s.sawRemoteHost,
+      via,
+    }),
+  };
 }
 
 function relayOpts(h, role, index, epoch) {
@@ -146,6 +210,11 @@ export function createHost(handlers) {
     linking: false,
     relayIndex: 0,
     relayEpoch: 0,
+    policy: rtcConfig().iceTransportPolicy,
+    sawLocalHost: false,
+    sawRemoteHost: false,
+    iceFailed: false,
+    rejoin: false,
     _destroyed: false,
     _gen: 0,
     _reopening: false,
@@ -245,9 +314,19 @@ export function createHost(handlers) {
 
   function nameFor(slot) { return 'P' + (3 + slot); }
 
+  function prove(remote) {
+    if (remote && remote.dcSeen && remote.iceUp) remote.rtcLive = true;
+  }
+
   function greet(conn, remote) {
-    try { conn.send(h.welcome ? h.welcome(remote) : { t: 'welcome', name: remote.name, slot: remote.slot }); } catch (e) {}
-    try { const st = h.state && h.state(remote); if (st) conn.send(st); } catch (e) {}
+    const welcome = h.welcome ? h.welcome(remote) : { t: 'welcome', name: remote.name, slot: remote.slot };
+    const st = h.state && h.state(remote);
+    try { conn.send(welcome); } catch (e) {}
+    try { if (st) conn.send(st); } catch (e) {}
+    if (remote && remote.rtcLive !== true && relay && conn && conn._skyVia !== 'ws') {
+      try { relay.send(Object.assign({ from: 'host', nonce: remote.nonce }, welcome)); } catch (e) {}
+      try { if (st) relay.send(Object.assign({ from: 'host', nonce: remote.nonce }, st)); } catch (e) {}
+    }
   }
 
   function resumeRemote(conn, prev, incoming) {
@@ -278,8 +357,14 @@ export function createHost(handlers) {
     if (conn._skyJoined || session._destroyed) return;
     const incoming = conn._skyVia || 'webrtc';
     const prev = nonce ? session.remotes.find((r) => r.nonce === nonce) : null;
-    if (prev && prev.via !== 'ws' && incoming === 'ws' && prev.conn && prev.conn.open && !prev.holding) {
+    if (prev && incoming === 'ws' && prev.rtcLive === true && prev.via !== 'ws' && prev.conn && prev.conn.open && !prev.holding) {
       try { conn.close(); } catch (e) {}
+      return;
+    }
+    // 資料通道還沒送達過封包時，手機的中繼 hello 仍要回歡迎，否則車機以為連上了、手機卻停在選單。
+    if (prev && incoming === 'ws' && prev.rtcLive !== true && prev.conn && prev.conn !== conn) {
+      touchRemote(prev);
+      greet(conn, prev);
       return;
     }
     if (prev) {
@@ -338,19 +423,32 @@ export function createHost(handlers) {
       }
       const remote = session.remotes.find((r) => r.conn === conn);
       if (!remote) return;
+      if (conn._skyVia !== 'ws') {
+        remote.dcSeen = true;
+        prove(remote);
+        if (remote.rtcLive) {
+          if (remote.pathKind) remote.via = remote.pathKind;
+          else if (!remote.via || remote.via === 'ws') remote.via = 'webrtc';
+        }
+      }
       if (data.t === 'input') {
-        remote.cmd = packInput(data);
-        remote.seq = data.seq | 0;
-        remote.lastAt = performance.now();
+        if (data.lan) { remote.sawRemoteHost = true; session.sawRemoteHost = true; }
+        const applied = acceptInputs(remote, data, performance.now());
         touchRemote(remote);
-        try { remote.driver.push(remote.cmd); } catch (e) {}
+        if (applied) { try { remote.driver.push(remote.cmd); } catch (e) {} }
+      } else if (data.t === 'pong') {
+        if (data.lan) { remote.sawRemoteHost = true; session.sawRemoteHost = true; }
+        if (Number.isFinite(+data.at)) remote.rtt = Math.max(0, performance.now() - (+data.at));
+        remote.linkTier = linkQuality({ rtt: remote.rtt, via: remote.via || 'webrtc', age: 0 });
+        touchRemote(remote);
       } else if (data.t === 'hello') {
         if (data.nonce) remote.nonce = data.nonce;
         touchRemote(remote);
         greet(conn, remote);
       } else if (data.t === 'ping') {
+        if (data.lan) { remote.sawRemoteHost = true; session.sawRemoteHost = true; }
         touchRemote(remote);
-        try { conn.send({ t: 'pong', n: data.n, nonce: remote.nonce, relay: relayQuery().index, epoch: relayQuery().epoch }); } catch (e) {}
+        try { conn.send({ t: 'pong', n: data.n, at: data.at, nonce: remote.nonce, lan: session.sawLocalHost ? 1 : 0, relay: relayQuery().index, epoch: relayQuery().epoch }); } catch (e) {}
       } else if (data.t === 'bye') {
         if (data.gone) drop(remote, 'leave');
         else {
@@ -364,7 +462,18 @@ export function createHost(handlers) {
         try { if (h.onCar) h.onCar(remote, data); } catch (e) {}
       }
     });
-    conn.on('close', () => holdRemote(session.remotes.find((r) => r.conn === conn)));
+    conn.on('close', () => {
+      const remote = session.remotes.find((r) => r.conn === conn);
+      if (remote && relay && relay.open && conn._skyVia !== 'ws') {
+        remote.rtcLive = false;
+        remote.dcSeen = false;
+        remote.iceUp = false;
+        remote.via = 'ws';
+        remote.rejoin = true;
+        return;
+      }
+      holdRemote(remote);
+    });
     conn.on('error', () => holdRemote(session.remotes.find((r) => r.conn === conn)));
   }
 
@@ -394,8 +503,9 @@ export function createHost(handlers) {
     const nonce = msg.nonce || '';
     if (!nonce) return;
     if (msg.t === 'ping') {
+      if (msg.lan) session.sawRemoteHost = true;
       try {
-        relay.send({ t: 'pong', n: msg.n, nonce, relay: relay.index, epoch: relay.epoch, from: 'host' });
+        relay.send({ t: 'pong', n: msg.n, at: msg.at, nonce, lan: session.sawLocalHost ? 1 : 0, relay: relay.index, epoch: relay.epoch, from: 'host' });
       } catch (e) {}
       const known = session.remotes.find((r) => r.nonce === nonce || r.nonce === msg.from);
       if (known) touchRemote(known);
@@ -412,7 +522,7 @@ export function createHost(handlers) {
       }
       return;
     }
-    const webrtc = session.remotes.find((r) => r.nonce === nonce && r.via !== 'ws' && r.conn && r.conn.open);
+    const webrtc = session.remotes.find((r) => r.nonce === nonce && r.rtcLive === true && r.via !== 'ws' && r.conn && r.conn.open);
     if (webrtc) return;
     wsPeer(nonce).emit('data', msg);
   }
@@ -421,7 +531,7 @@ export function createHost(handlers) {
     if (relay) { try { relay.close(); } catch (e) {} }
     session.wsOpen = false;
     session.wsGaveUp = false;
-    relay = connectRelay(session.code, {
+    relay = connectRelayFan(session.code, {
       onStatus: (s) => {
         session.wsOpen = !!s.open;
         session.wsReason = s.open ? '' : (s.reason || '');
@@ -490,15 +600,40 @@ export function createHost(handlers) {
       session.linking = true;
       mark();
       const pc = conn.peerConnection;
-      if (pc && pc.addEventListener) {
-        pc.addEventListener('iceconnectionstatechange', () => {
-          const st = pc.iceConnectionState;
-          if (st === 'checking') { session.linking = true; mark(); }
-          if (st === 'failed') {
+      if (pc) {
+        const bag = { sawLocalHost: session.sawLocalHost, rtcLive: true, rejoin: false, iceFailed: false };
+        watchIce(pc, bag, (st) => {
+          session.sawLocalHost = session.sawLocalHost || bag.sawLocalHost;
+          const remote = session.remotes.find((r) => r.conn === conn);
+          const target = remote || session;
+          if (st === 'connected' || st === 'completed') target.iceUp = true;
+          if (bag.rtcLive === false) target.rtcLive = false;
+          target.rejoin = bag.rejoin;
+          target.iceFailed = bag.iceFailed;
+          if (bag.sawLocalHost) target.sawLocalHost = true;
+          prove(target);
+          session.iceFailed = !!bag.iceFailed;
+          session.rejoin = !!bag.rejoin;
+          if (st === 'checking') session.linking = true;
+          if (st === 'failed' || st === 'disconnected') {
             session.linking = false;
-            session.peerDetail = 'peer.ice';
-            mark();
+            session.peerDetail = 'peer.rejoin';
+            if (remote && remote.rtcLive === false) remote.via = session.wsOpen ? 'ws' : remote.via;
           }
+          if (st === 'connected' || st === 'completed') {
+            pathOf(conn, session).then((via) => {
+              if (session._destroyed) return;
+              if (remote && remote.conn === conn) {
+                remote.pathKind = via;
+                if (remote.rtcLive === true) {
+                  remote.via = via;
+                  remote.linkTier = linkQuality({ rtt: remote.rtt, via, age: 0 });
+                }
+              }
+              mark();
+            });
+          }
+          mark();
         });
       }
       accept(conn);
@@ -507,7 +642,16 @@ export function createHost(handlers) {
       if (gen !== session._gen || session._destroyed) return;
       session.peerOpen = false;
       session.peerDetail = 'peer.rejoin';
+      session.rejoin = true;
       mark();
+      try {
+        if (next.connections && typeof next.connections.forEach === 'function') {
+          next.connections.forEach((list) => {
+            const arr = Array.isArray(list) ? list : [list];
+            for (const c of arr) restartIce(c && c.peerConnection, session);
+          });
+        }
+      } catch (e) {}
       try { next.reconnect(); } catch (e) {}
       arm(deadlines, 6000, () => {
         if (gen === session._gen && !session.peerOpen) reopenSame();
@@ -565,15 +709,38 @@ export function createHost(handlers) {
   session.broadcast = (build, force) => {
     if (session._destroyed || !session.remotes.length) return;
     const now = performance.now();
-    const gap = session.remotes.some((r) => r.via === 'ws') ? Math.max(STATE_GAP_MS, 100) : STATE_GAP_MS;
+    let gap = STATE_GAP_MS;
+    for (const remote of session.remotes) {
+      const floor = remote.via === 'ws' ? Math.max(STATE_GAP_MS, 100) : STATE_GAP_MS;
+      gap = Math.max(gap, stateGapMs(remote.linkTier || 'good', floor));
+    }
     if (!force && now - session.lastSend < gap) return;
     session.lastSend = now;
     for (let i = 0; i < session.remotes.length; i++) {
       const remote = session.remotes[i];
-      if (!remote.conn || !remote.conn.open) continue;
       try {
-        const msg = build(remote);
-        if (msg) { remote.conn.send(msg); session.sent = (session.sent || 0) + 1; }
+        let msg = build(remote);
+        if (!msg) continue;
+        if (msg.t === 'state' && msg.self) {
+          remote._stateN = (remote._stateN || 0) + 1;
+          const prev = remote._lastSelf;
+          remote._lastSelf = msg.self;
+          if (prev && !force && remote._stateN % 8 !== 0) {
+            const d = deltaPose(prev, msg.self);
+            if (d) {
+              msg = Object.assign({}, msg);
+              delete msg.self;
+              if (Object.keys(d).length) msg.dself = d;
+            }
+          }
+        }
+        if (session.sawLocalHost) msg.lan = 1;
+        const dc = remote.conn && remote.conn.open && remote.conn._skyVia !== 'ws' && remote.via !== 'ws';
+        if (dc && remote.rtcLive !== false) {
+          try { remote.conn.send(msg); } catch (e) { remote.rtcLive = false; }
+        }
+        if (remote.rtcLive !== true && relay) relay.send(Object.assign({ from: 'host', nonce: remote.nonce }, msg));
+        session.sent = (session.sent || 0) + 1;
       } catch (e) { session.lastErr = String(e && e.message || e); }
     }
   };
@@ -585,6 +752,16 @@ export function createHost(handlers) {
     runDue(deadlines, now);
     if (relay) relay.poll(now);
     expireHeld(now);
+    for (const remote of session.remotes) {
+      if (now - (remote._pingAt || 0) < 1000) continue;
+      remote._pingAt = now;
+      const ping = { t: 'ping', n: (remote._pingN = (remote._pingN || 0) + 1), at: now, lan: session.sawLocalHost ? 1 : 0, nonce: remote.nonce };
+      const rtcUp = remote.rtcLive !== false && remote.via !== 'ws' && remote.conn && remote.conn.open && remote.conn._skyVia !== 'ws';
+      try {
+        if (rtcUp) remote.conn.send(ping);
+        else if (relay) relay.send(Object.assign({ from: 'host' }, ping));
+      } catch (e) {}
+    }
     if (session.peerOpen || !session.rtc.ok) return;
     if (session._reopening || now - lastKick < 8000) return;
     if (!session.peerGaveUp && !session.peerDetail) return;
@@ -637,6 +814,21 @@ export function createHost(handlers) {
   };
   session.url = joinUrl(session.code, globalThis.location, null, getLocale());
   session.relabel = () => { if (!session._destroyed) mark(); };
+  session.linkSample = () => {
+    const remote = session.remotes[0];
+    return sampleLink({
+      via: remote ? remote.via : '',
+      rtt: remote && Number.isFinite(remote.rtt) ? remote.rtt : null,
+      lastPeerAt: remote ? (remote.lastBeat || remote.lastAt || 0) : 0,
+      rejoin: !!((remote && remote.rejoin) || session.rejoin),
+      connected: !!(remote && !remote.holding),
+      heardHost: !!remote,
+      iceFailed: !!((remote && remote.iceFailed) || session.iceFailed),
+      sawLocalHost: !!(session.sawLocalHost || (remote && remote.sawLocalHost)),
+      sawRemoteHost: !!(session.sawRemoteHost || (remote && remote.sawRemoteHost)),
+      policy: session.policy,
+    });
+  };
   if (!session.rtc.ok) session.peerDetail = session.rtc.reason;
   emit('wait');
   startRelay();
@@ -673,6 +865,13 @@ export function createGuest(code, handlers) {
     _retried: false,
     heardHost: false,
     lastPeerAt: 0,
+    policy: rtcConfig().iceTransportPolicy,
+    sawLocalHost: false,
+    sawRemoteHost: false,
+    iceFailed: false,
+    rejoin: false,
+    rtcLive: null,
+    rtt: null,
   };
   let peer = null;
   let conn = null;
@@ -750,23 +949,31 @@ export function createGuest(code, handlers) {
   function send(msg) {
     if (!msg) return;
     if (!msg.nonce) msg = Object.assign({ nonce }, msg);
-    const useRtc = session.via !== 'ws' && conn && conn.open;
-    if (useRtc) {
-      try { conn.send(msg); } catch (e) {}
-      if (session.via && session.via !== 'ws' && msg.t !== 'bye') return;
+    if (session.sawLocalHost) msg.lan = 1;
+    let dcOk = false;
+    if (conn && conn.open && session.rtcLive !== false) {
+      try { conn.send(msg); dcOk = true; } catch (e) { session.rtcLive = false; }
     }
-    if (!session.via || session.via === 'ws' || msg.t === 'bye') {
-      try { if (relay) relay.send(Object.assign({ from: nonce }, msg)); } catch (e) {}
-    }
+    if (session.rtcLive === true && dcOk && msg.t !== 'bye') return;
+    try { if (relay) relay.send(Object.assign({ from: nonce }, msg)); } catch (e) {}
   }
   session.send = send;
 
   function take(data, via) {
     if (session._destroyed || !data || typeof data !== 'object') return;
-    if (via === 'ws' && session.via && session.via !== 'ws') return;
+    if (via === 'ws' && session.rtcLive) return;
+    if (data.lan) session.sawRemoteHost = true;
+    if (data.t === 'ping') {
+      send({ t: 'pong', n: data.n, at: data.at, lan: session.sawLocalHost ? 1 : 0 });
+      return;
+    }
+    if (data.dself) data = Object.assign({}, data, { self: mergePose(session._self, data.dself) });
+    if (data.self) session._self = data.self;
+    else if (session._self && data.t === 'state') data = Object.assign({}, data, { self: session._self });
     if (data.t === 'pong' || data.t === 'broker') {
       session.lastPeerAt = performance.now();
       session.heardHost = true;
+      if (data.t === 'pong' && Number.isFinite(+data.at)) session.rtt = Math.max(0, performance.now() - (+data.at));
       if (relay && Number.isFinite(+data.epoch)) relay.pin(data.relay, data.epoch | 0);
       if (!session.connected) emit('wait');
       return;
@@ -777,19 +984,19 @@ export function createGuest(code, handlers) {
       session.connected = true;
       session.failed = false;
       session._failedOnce = false;
-      session.via = via === 'ws' ? 'ws' : (session.pathKind || 'webrtc');
-      if (session.via !== 'ws') retireRelay();
-      else if (session.rtcGaveUp) retirePeer();
+      session.via = via === 'ws' ? (session.rtcLive === true ? session.via : 'ws') : (session.pathKind || 'webrtc');
+      if (via !== 'ws') { session.dcSeen = true; if (session.iceUp || session.pathKind === 'direct' || session.pathKind === 'relay') session.rtcLive = true; }
+      if (via === 'ws' && session.rtcGaveUp) retirePeer();
       emit('ok');
       try { if (h.onWelcome) h.onWelcome(data); } catch (e) {}
     } else if (data.t === 'state') {
       session.lastPeerAt = performance.now();
       session.heardHost = true;
-      if (via === 'webrtc') session.via = session.pathKind || 'webrtc';
+      if (via === 'webrtc') session.via = session.rtcLive === true ? (session.pathKind || 'webrtc') : (session.via || 'ws');
       else if (!session.via) session.via = 'ws';
       session.connected = true;
-      if (session.via !== 'ws') retireRelay();
-      else if (session.rtcGaveUp) retirePeer();
+      if (via !== 'ws') { session.dcSeen = true; if (session.iceUp || session.pathKind === 'direct' || session.pathKind === 'relay') session.rtcLive = true; if (session.rtcLive === true) session.via = session.pathKind || 'webrtc'; }
+      if (via === 'ws' && session.rtcGaveUp) retirePeer();
       try { if (h.onState) h.onState(data); } catch (e) {}
     } else if (data.t === 'full') {
       session.full = true;
@@ -816,7 +1023,8 @@ export function createGuest(code, handlers) {
     if (edge && last && now - session.lastSend < 32 && same) return session.seq;
     session.seq += 1;
     session.lastSend = now;
-    send({ t: 'input', seq: session.seq, nonce, steer: cmd.steer, throttle: cmd.throttle, brake: cmd.brake, lift: cmd.lift, nitro: cmd.nitro, pitch: cmd.pitch });
+    const hist = session.log.slice(-INPUT_HISTORY).map((row) => Object.assign({ seq: row.seq }, row.cmd));
+    send({ t: 'input', seq: session.seq, nonce, steer: cmd.steer, throttle: cmd.throttle, brake: cmd.brake, lift: cmd.lift, nitro: cmd.nitro, pitch: cmd.pitch, hist });
     session.log.push({ seq: session.seq, cmd, steps: 0 });
     if (session.log.length > 90) session.log.shift();
     return session.seq;
@@ -832,12 +1040,34 @@ export function createGuest(code, handlers) {
   }
 
   function wireConn(next) {
+    const armGuestIce = () => {
+      const pc = next && next.peerConnection;
+      if (!pc) return;
+      watchIce(pc, session, (st) => {
+        if (st === 'failed' || st === 'disconnected') {
+          session.peerDetail = 'peer.rejoin';
+          session.rtcLive = false;
+          if (session.wsOpen) session.via = 'ws';
+          emit('warn');
+        }
+        if (st === 'connected' || st === 'completed') {
+          session.iceUp = true;
+          pathOf(next, session).then((via) => {
+            if (session._destroyed) return;
+            session.pathKind = via;
+            if (session.dcSeen) session.rtcLive = true;
+            if (session.rtcLive === true && session.connected) { session.via = via; emit('ok'); }
+          });
+        }
+      });
+    };
     next.on('open', () => {
       if (session._destroyed) return;
       session._opened = true;
+      armGuestIce();
       emit('wait');
       send({ t: 'hello', nonce, name: 'P3' });
-      pathOf(next).then((via) => {
+      pathOf(next, session).then((via) => {
         if (session._destroyed) return;
         session.pathKind = via;
         if (session.connected && session.via !== 'ws') { session.via = via; emit('ok'); }
@@ -852,8 +1082,16 @@ export function createGuest(code, handlers) {
     next.on('data', (data) => take(data, 'webrtc'));
     next.on('close', () => {
       if (session._destroyed) return;
-      session.connected = session.via === 'ws';
-      if (session.via === 'ws') return;
+      session.rtcLive = false;
+      session.dcSeen = false;
+      session.iceUp = false;
+      if (relay && (relay.open || session.wsOpen)) {
+        session.via = 'ws';
+        session.rejoin = true;
+        if (session.heardHost) session.connected = true;
+        return;
+      }
+      session.connected = false;
       setTimeout(() => {
         if (session._destroyed || session.via === 'ws') return;
         try { if (h.onClose) h.onClose({ replaced: session.replaced, full: session.full }); } catch (e) {}
@@ -947,7 +1185,7 @@ export function createGuest(code, handlers) {
     });
   }
 
-  relay = connectRelay(code, {
+  relay = connectRelayFan(code, {
     onStatus: (s) => {
       session.wsOpen = !!s.open;
       session.wsReason = s.open ? '' : (s.reason || '');
@@ -980,10 +1218,14 @@ export function createGuest(code, handlers) {
       helloRelay();
       lastHello = now;
     }
-    if (relay && relay.open && now - lastPing > 2000) {
+    if (session.rtcLive && conn && conn.open && now - lastPing > 1000) {
       lastPing = now;
       pingN += 1;
-      try { relay.send({ t: 'ping', n: pingN, nonce, from: nonce }); } catch (e) {}
+      try { conn.send({ t: 'ping', n: pingN, at: now, nonce, lan: session.sawLocalHost ? 1 : 0 }); } catch (e) {}
+    } else if (relay && relay.open && !session.rtcLive && now - lastPing > 2000) {
+      lastPing = now;
+      pingN += 1;
+      try { relay.send({ t: 'ping', n: pingN, at: now, nonce, from: nonce, lan: session.sawLocalHost ? 1 : 0 }); } catch (e) {}
     }
     if (!session.connected && relay && relay.open && now - lastHello > 2000) {
       lastHello = now;
@@ -1007,6 +1249,7 @@ export function createGuest(code, handlers) {
     }, 120);
   };
   session.relabel = () => emit(session.connected ? 'joined' : (session.failed ? 'fail' : 'wait'));
+  session.linkSample = () => sampleLink(session);
   emit('wait');
   startPeer();
   return session;

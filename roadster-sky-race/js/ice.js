@@ -1,8 +1,24 @@
 // WebRTC 的 STUN/TURN 清單，以及瀏覽器有沒有資料通道。
 // PeerJS 內建的 turn.peerjs.com 已經查不到位址，放進去只會拖慢連線，所以不使用。
-// Open Relay 的靜態密鑰公開在 https://www.metered.ca/tools/openrelay/ ，不是私人金鑰。
+// 實際的 TURN 主機在 turn-config.js，方便以後整份換掉。
+// 這裡的 iceTransportPolicy 維持 all：主機候選（含 mDNS .local）照常收集，優先直連。
+// 只有網址帶 ?forceTurn=1 時才改成 relay，用來確認 TURN 那條路。
+
+import { TURN_ICE_SERVERS } from './turn-config.js';
 
 const OPEN_RELAY_SECRET = 'openrelayprojectsecret';
+
+export const ICE_TRANSPORT_POLICY = 'all';
+
+const PUBLIC_STUN = [
+  'stun:stun.l.google.com:19302',
+  'stun:stun1.l.google.com:19302',
+  'stun:stun2.l.google.com:19302',
+  'stun:stun3.l.google.com:19302',
+  'stun:stun4.l.google.com:19302',
+  'stun:stun.cloudflare.com:3478',
+  'stun:stun.sipgate.net:3478',
+];
 
 function rotl(n, s) { return ((n << s) | (n >>> (32 - s))) >>> 0; }
 
@@ -63,20 +79,41 @@ export function turnCredential(nowMs = Date.now()) {
   return { username, credential: hmacSha1Base64(OPEN_RELAY_SECRET, username) };
 }
 
-export function iceServers(nowMs = Date.now()) {
-  const turn = turnCredential(nowMs);
-  const tcp = (port) => ({
-    urls: 'turn:staticauth.openrelay.metered.ca:' + port + '?transport=tcp',
-    username: turn.username,
-    credential: turn.credential,
-  });
-  return [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    // 443 / 80 的 TCP，給擋住 UDP 的行動網路。直連仍會先試。
-    tcp(443),
-    tcp(80),
-  ];
+function urlKey(urls) {
+  return Array.isArray(urls) ? urls.join('|') : String(urls || '');
+}
+
+// 公開 STUN 在前，TURN 設定接在後面。同一組網址只留一次，避免重複分配中繼。
+export function iceServers() {
+  const out = [];
+  const seen = new Set();
+  const add = (entry) => {
+    if (!entry || !entry.urls) return;
+    const key = urlKey(entry.urls);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(entry);
+  };
+  for (const urls of PUBLIC_STUN) add({ urls });
+  for (const entry of TURN_ICE_SERVERS) add(entry);
+  return out;
+}
+
+// 預設 all，讓 host / srflx 比 relay 優先。?forceTurn=1 只拿 TURN 候選。
+export function iceTransportPolicy(search) {
+  let q = search;
+  if (q == null) {
+    try { q = typeof location !== 'undefined' ? location.search : ''; } catch (e) { q = ''; }
+  }
+  return /(?:^|[?&])forceTurn=1(?:&|$)/.test(String(q || '')) ? 'relay' : ICE_TRANSPORT_POLICY;
+}
+
+export function rtcConfig(nowMs, search) {
+  return {
+    iceServers: iceServers(nowMs),
+    sdpSemantics: 'unified-plan',
+    iceTransportPolicy: iceTransportPolicy(search),
+  };
 }
 
 export function webrtcSupport() {
