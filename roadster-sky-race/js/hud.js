@@ -1,5 +1,6 @@
 // HUD：速度、能量、圈速、小地圖、速度線
 import { clamp, smoothstep, fmtTime } from './util.js';
+import { t } from './i18n.js';
 import { ROAD_HALF } from './track.js';
 
 const $ = (id) => document.getElementById(id);
@@ -22,7 +23,9 @@ export class Hud {
     this.resize();
   }
   resize() {
-    const w = Math.max(2, Math.round(innerWidth * this.fxScale)), h = Math.max(2, Math.round(innerHeight * this.fxScale));
+    const forced = document.documentElement.classList.contains('force-landscape');
+    const vw = forced ? innerHeight : innerWidth, vh = forced ? innerWidth : innerHeight;
+    const w = Math.max(2, Math.round(vw * this.fxScale)), h = Math.max(2, Math.round(vh * this.fxScale));
     this.el.fx.width = w; this.el.fx.height = h;
   }
   setText(key, el, v) { if (this._last[key] !== v) { this._last[key] = v; el.textContent = v; } }
@@ -87,18 +90,20 @@ export class Hud {
     const kmh = Math.round(veh.kmh);
     this.setText('speed', e.speed, String(kmh));
     const pct = Math.round(veh.energy);
-    if (this._last.pct !== pct) {
+    const energy = t('hud.energy', { n: pct });
+    if (this._last.energy !== energy) {
       this._last.pct = pct;
+      this._last.energy = energy;
       e.fill.style.width = pct + '%';
       e.fill.classList.toggle('low', pct < 25);
-      e.txt.textContent = `推進能量 ${pct}%`;
+      e.txt.textContent = energy;
     }
     this.setText('state', e.state, stateLabel);
     this.setText('lapN', e.lapN, String(lap.n));
     this.setText('lapT', e.lapT, fmtTime(lap.t));
     this.setText('lapLast', e.lapLast, fmtTime(lap.last));
     this.setText('lapBest', e.lapBest, fmtTime(lap.best));
-    this.setText('cam', e.cam, '視角：' + camLabel);
+    this.setText('cam', e.cam, t('hud.cam', { name: camLabel }));
     this.setText('pad', e.pad, padText);
   }
 

@@ -64,11 +64,11 @@ export class AiDriver {
     while (err > Math.PI) err -= Math.PI * 2;
     while (err < -Math.PI) err += Math.PI * 2;
     const lat = veh.attached ? (veh.lat || 0) : (veh.q1.near ? veh.q1.l : 0);
-    // steer 為正是右轉（偏航減少）。err > 0 代表目標航向在左邊。
+    // steer 為正是右轉（偏航減少）。橫向右為正，所以偏離中線時往反方向打。
     let steer = veh.attached
-      ? clamp(lat * 0.55 + (veh.vlat || 0) * 0.4, -1, 1)
-      : clamp(-err * 0.9 + lat * 0.08, -1, 1);
-    if (!veh.attached && Math.abs(lat) > 6) steer = clamp(lat * 0.22, -1, 1);
+      ? clamp(-lat * 0.55 - (veh.vlat || 0) * 0.35, -1, 1)
+      : clamp(-err * 0.9 - lat * 0.1, -1, 1);
+    if (!veh.attached && Math.abs(lat) > 6) steer = clamp(-lat * 0.22, -1, 1);
 
     let target = (veh.t ? veh.t.vTop : 60) * cfg.speed;
     let stuntSoon = false;
@@ -77,7 +77,7 @@ export class AiDriver {
       for (let k = 0; k < 48; k++) {
         const j = tr.wrap(Math.round(fi) + k * 2);
         const kind = tr.kind[j];
-        if (kind === KIND.LOOP || kind === KIND.INVERT || kind === KIND.WALL || kind === KIND.FLY) { stuntSoon = true; break; }
+        if (kind === KIND.LOOP || kind === KIND.INVERT || kind === KIND.WALL || kind === KIND.FLY || kind === KIND.DECK) { stuntSoon = true; break; }
       }
     }
     for (let k = 0; k < 36; k++) {
@@ -87,10 +87,11 @@ export class AiDriver {
     if (stuntSoon) target = Math.max(target, 50);
     if (gapDist < 36) target = Math.max(target, 42);
     const here = tr.kind ? tr.kind[tr.wrap(Math.floor(fi))] : 0;
-    const onRibbon = veh.attached && (here === KIND.LOOP || here === KIND.INVERT || here === KIND.WALL);
+    const onRibbon = veh.attached && (here === KIND.LOOP || here === KIND.INVERT || here === KIND.WALL || here === KIND.DECK);
     if (onRibbon) {
-      target = Math.max(target, here === KIND.WALL ? 32 : 46);
+      target = Math.max(target, here === KIND.WALL || here === KIND.DECK ? 36 : 48);
     }
+    const soonFly = tr.kind && tr.kind[tr.wrap(Math.round(fi) + 8)] === KIND.FLY;
 
     const spd = Math.max(veh.speed, Math.abs(veh.speedF || 0));
     let throttle = spd < target - 1 ? 1 : 0.25;
@@ -120,6 +121,12 @@ export class AiDriver {
     let lift = false;
     let pitch = 0;
     // 缺口要靠推進器飛過去，單靠跳台不夠。
+    if (here === KIND.FLY || soonFly) {
+      lift = true;
+      pitch = 0.7;
+      throttle = 1;
+      brake = 0;
+    }
     if ((gapDist < 7 || overGap) && veh.energy > 1) {
       lift = true;
       throttle = 1;

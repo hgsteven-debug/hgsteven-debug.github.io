@@ -1,11 +1,29 @@
 // 選單、設定、按鍵對應畫面與觸控按鍵
-import { ACTIONS, DEFAULT_BINDINGS, bindingText, buttonNames, hintsFor, PROFILES } from './input.js';
+import { ACTIONS, bindingText, hintsFor, localButtonNames, profileLabel } from './input.js';
+import { t, getLocale, setLocale, trackText, vehicleText, paintLabel } from './i18n.js';
+import { viewportDeltaToUi } from './sync.js';
 import { paintsOf } from './car.js';
-import { VEHICLES, DEFAULT_VEHICLE, vehicleById, statsOf, STAT_LABELS } from './vehicles.js';
+import { VEHICLES, DEFAULT_VEHICLE, vehicleById, statsOf } from './vehicles.js';
 import { TRACKS, DEFAULT_TRACK, trackById } from './tracks.js';
 import { store } from './util.js';
 
 const $ = (id) => document.getElementById(id);
+
+// 元素本地的 +x／+y 在視窗裡指向哪。旋轉在祖先（body）上時也要算進去。
+function uiBasis(el) {
+  let a = 1, b = 0, c = 0, d = 1;
+  for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+    const t = getComputedStyle(node).transform;
+    if (!t || t === 'none') continue;
+    const m = new DOMMatrix(t);
+    const na = m.a * a + m.c * b;
+    const nb = m.b * a + m.d * b;
+    const nc = m.a * c + m.c * d;
+    const nd = m.b * c + m.d * d;
+    a = na; b = nb; c = nc; d = nd;
+  }
+  return { a, b, c, d };
+}
 
 export function shortPadName(id) {
   if (!id) return '';
@@ -118,6 +136,7 @@ export class UI {
       if (b.dataset.tc) { this.touchMode = b.dataset.tc; store.set('touch', b.dataset.tc); this.h.onTouchMode(); this.syncSettings(); return; }
       if (b.dataset.ai != null) { store.set('aicount', b.dataset.ai); this.syncSettings(); return; }
       if (b.dataset.diff) { store.set('aidiff', b.dataset.diff); this.syncSettings(); return; }
+      if (b.dataset.lang) { setLocale(b.dataset.lang); this.syncSettings(); return; }
       if (b.dataset.row) { this.startLearn(b.dataset.row); return; }
       switch (act) {
         case 'start': this.h.onStart(); break;
@@ -139,16 +158,99 @@ export class UI {
       }
     });
     $('btnFull').addEventListener('click', () => this.h.onFullscreen());
-    // 觸控按鍵（Pointer Events，支援多點）
-    for (const b of document.querySelectorAll('[data-t]')) {
-      const k = b.dataset.t;
-      const on = (v) => (e) => { e.preventDefault(); this.input.touch[k] = v; b.classList.toggle('on', v); if (v) try { b.setPointerCapture(e.pointerId); } catch (_) { /* */ } };
-      b.addEventListener('pointerdown', on(true));
-      b.addEventListener('pointerup', on(false)); b.addEventListener('pointercancel', on(false)); b.addEventListener('lostpointercapture', on(false));
-    }
-    for (const b of document.querySelectorAll('[data-p]')) {
-      b.addEventListener('pointerdown', (e) => { e.preventDefault(); this.h.onTouchPress(b.dataset.p); });
-    }
+    this.wirePad();
+  }
+
+  // 手指下的那個元素才算數（CSS 轉 90° 之後，用矩形自己算會點到隔壁鍵）。
+  padTarget(clientX, clientY) {
+    const root = $('touch');
+    const under = document.elementFromPoint(clientX, clientY);
+    const el = under && under.closest ? under.closest('[data-t],[data-p],#stick') : null;
+    if (!el || !root || !root.contains(el)) return null;
+    return el;
+  }
+
+  // 觸控按鍵（Pointer Events，支援多點）。Android Chrome 會把按住誤判成捲動並送 pointercancel，
+  // 那一聲不能放開油門，否則加速鍵一按就沒了。
+  // 搖桿的位移要換成畫面上的右／下，不能直接用視窗的 clientX（直向轉正時兩者差 90°）。
+  wirePad() {
+    const root = $('touch');
+    const stick = $('stick');
+    if (!root || !stick) return;
+    const knob = stick.querySelector('.knob');
+    const held = new Map();
+    const holds = new Map();
+    const setHold = (key, on) => {
+      this.input.touch[key] = on;
+      const el = root.querySelector(`[data-t="${key}"]`);
+      if (el) el.classList.toggle('on', on);
+    };
+    const place = (e) => {
+      const rect = stick.getBoundingClientRect();
+      const basis = uiBasis(stick);
+      const local = viewportDeltaToUi(
+        e.clientX - (rect.left + rect.width / 2),
+        e.clientY - (rect.top + rect.height / 2),
+        basis.a, basis.b, basis.c, basis.d,
+      );
+      const w = stick.offsetWidth || rect.width || 1;
+      const h = stick.offsetHeight || rect.height || 1;
+      const dead = (v) => Math.abs(v) < 0.14 ? 0 : Math.max(-1, Math.min(1, v));
+      const steer = dead(local.x / (w * 0.38));
+      const pitch = dead(local.y / (h * 0.38));
+      this.input.touch.stick = true;
+      this.input.touch.steer = steer;
+      this.input.touch.pitch = pitch;
+      if (knob) knob.style.transform = `translate(-50%, -50%) translate(${steer * 34}%, ${pitch * 34}%)`;
+    };
+    const releaseStick = () => {
+      this.input.touch.stick = false;
+      this.input.touch.steer = 0;
+      this.input.touch.pitch = 0;
+      if (knob) knob.style.transform = 'translate(-50%, -50%)';
+    };
+    const down = (e) => {
+      const el = this.padTarget(e.clientX, e.clientY);
+      if (!el) return;
+      if (e.cancelable) e.preventDefault();
+      if (el.id === 'stick') {
+        held.set(e.pointerId, { type: 'stick' });
+        try { stick.setPointerCapture(e.pointerId); } catch (_) { /* */ }
+        place(e);
+        return;
+      }
+      if (el.dataset.p) {
+        if (this.h.onTouchPress) this.h.onTouchPress(el.dataset.p);
+        else this.input.noteTouchPress(el.dataset.p);
+        el.classList.add('on');
+        held.set(e.pointerId, { type: 'press', el });
+        return;
+      }
+      const key = el.dataset.t;
+      if (!key) return;
+      holds.set(key, (holds.get(key) || 0) + 1);
+      setHold(key, true);
+      held.set(e.pointerId, { type: 'hold', key });
+      try { el.setPointerCapture(e.pointerId); } catch (_) { /* */ }
+    };
+    const up = (e) => {
+      const h = held.get(e.pointerId);
+      if (!h) return;
+      held.delete(e.pointerId);
+      if (h.type === 'press') { h.el.classList.remove('on'); return; }
+      if (h.type === 'hold') {
+        const n = (holds.get(h.key) || 1) - 1;
+        if (n <= 0) { holds.delete(h.key); setHold(h.key, false); }
+        else holds.set(h.key, n);
+        return;
+      }
+      if (![...held.values()].some((x) => x.type === 'stick')) releaseStick();
+    };
+    root.addEventListener('pointerdown', down);
+    root.addEventListener('pointermove', (e) => { if (held.get(e.pointerId)?.type === 'stick') place(e); });
+    root.addEventListener('pointerup', up);
+    root.addEventListener('pointercancel', () => { /* 按住時被當成捲動也不能鬆開 */ });
+    root.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
   }
 
   // ---------- 設定 ----------
@@ -158,7 +260,8 @@ export class UI {
     for (const v of VEHICLES) {
       const b = document.createElement('button');
       b.className = 'btn vbtn'; b.dataset.veh = v.id;
-      b.innerHTML = `<b>${v.name}</b><small>${v.tag}</small>`;
+      const text = vehicleText(v.id, v.name);
+      b.innerHTML = `<b>${text.name}</b><small>${text.tag}</small>`;
       host.appendChild(b);
     }
   }
@@ -167,7 +270,8 @@ export class UI {
     for (const t of TRACKS) {
       const b = document.createElement('button');
       b.className = 'btn tbtn'; b.dataset.track = t.id;
-      b.innerHTML = `<b>${t.name}</b><small>${t.tag}</small>`;
+      const text = trackText(t.id);
+      b.innerHTML = `<b>${text.name}</b><small>${text.tag}</small>`;
       host.appendChild(b);
     }
   }
@@ -181,17 +285,19 @@ export class UI {
     else { location.reload(); }
   }
   refreshTracks() {
-    const t = this.track;
-    for (const b of document.querySelectorAll('#tlist [data-track]')) b.classList.toggle('sel', b.dataset.track === t.id);
-    if ($('tname')) $('tname').textContent = t.name;
-    if ($('ttag')) $('ttag').textContent = t.tag;
-    if ($('tdesc')) $('tdesc').textContent = t.desc;
-    const best = store.get('best.' + t.id, store.get('best', null));
+    const tr = this.track;
+    const text = trackText(tr.id);
+    for (const b of document.querySelectorAll('#tlist [data-track]')) b.classList.toggle('sel', b.dataset.track === tr.id);
+    if ($('tname')) $('tname').textContent = text.name;
+    if ($('ttag')) $('ttag').textContent = text.tag;
+    if ($('tdesc')) $('tdesc').textContent = text.desc;
+    const best = store.get('best.' + tr.id, store.get('best', null));
     if ($('tbest')) {
-      const fmt = (x) => { if (x == null) return '—'; const m = Math.floor(x / 60), s = (x % 60).toFixed(3); return m + ':' + s.padStart(6, '0'); };
-      $('tbest').textContent = '最佳單圈：' + fmt(best);
+      const fmt = (x) => { if (x == null) return null; const m = Math.floor(x / 60), s = (x % 60).toFixed(3); return m + ':' + s.padStart(6, '0'); };
+      const shown = fmt(best);
+      $('tbest').textContent = shown == null ? t('tracks.bestNone') : t('tracks.best', { time: shown });
     }
-    const st = $('startTrack'); if (st) st.textContent = `目前賽道：${t.name}（${t.tag}）`;
+    const st = $('startTrack'); if (st) st.textContent = t('start.track', text);
   }
   get vehicle() { return vehicleById(this.vehicleId); }
   selectVehicle(id) {
@@ -204,14 +310,16 @@ export class UI {
   setPaint(key) { const car = this.h.onVehicle(this.vehicleId, key); this.paintKey = car.paintKey; this.refreshGarage(); }
   refreshGarage() {
     const v = this.vehicle, car = this.h.getCar && this.h.getCar();
+    const text = vehicleText(v.id, v.name);
     for (const b of document.querySelectorAll('#vlist [data-veh]')) b.classList.toggle('sel', b.dataset.veh === v.id);
-    $('vname').textContent = v.name; $('vtag').textContent = `${v.tag}・約 ${(v.mass / 1000).toFixed(1)} 噸`;
-    $('vdesc').textContent = v.desc;
+    $('vname').textContent = text.name;
+    $('vtag').textContent = t('garage.mass', { tag: text.tag, n: (v.mass / 1000).toFixed(1) });
+    $('vdesc').textContent = text.desc;
     const st = statsOf(v);
-    $('vstats').innerHTML = STAT_LABELS.map(([k, l]) => `<div class="vstat ${k === 'tough' ? 'tough' : ''}"><span>${l}</span><span class="bar"><i style="width:${Math.round(st[k] * 100)}%"></i></span></div>`).join('');
+    $('vstats').innerHTML = ['speed', 'accel', 'handling', 'flight', 'tough'].map((k) => `<div class="vstat ${k === 'tough' ? 'tough' : ''}"><span>${t('stat.' + k)}</span><span class="bar"><i style="width:${Math.round(st[k] * 100)}%"></i></span></div>`).join('');
     const pk = car ? car.paintKey : this.paintKey;
-    $('vpaints').innerHTML = paintsOf(v.id).map((p) => `<button class="btn paintbtn${p.key === pk ? ' sel' : ''}" data-paintk="${p.key}"><i class="dot" style="background:${p.css}"></i>${p.name}</button>`).join('');
-    const sc = $('startCar'); if (sc) { const pd = paintsOf(v.id).find((p) => p.key === pk); sc.textContent = `目前車輛：${v.name}（${v.tag}）・${pd ? pd.name : ''}`; }
+    $('vpaints').innerHTML = paintsOf(v.id).map((p) => `<button class="btn paintbtn${p.key === pk ? ' sel' : ''}" data-paintk="${p.key}"><i class="dot" style="background:${p.css}"></i>${paintLabel(p.key)}</button>`).join('');
+    const sc = $('startCar'); if (sc) { const pd = paintsOf(v.id).find((p) => p.key === pk); sc.textContent = t('start.car', { name: text.name, tag: text.tag, paint: pd ? paintLabel(pd.key) : '' }); }
   }
 
   syncSettings() {
@@ -227,8 +335,9 @@ export class UI {
     for (const b of document.querySelectorAll('[data-ai]')) b.classList.toggle('sel', b.dataset.ai === ac);
     const ad = store.get('aidiff', 'normal');
     for (const b of document.querySelectorAll('[data-diff]')) b.classList.toggle('sel', b.dataset.diff === ad);
+    for (const b of document.querySelectorAll('[data-lang]')) b.classList.toggle('sel', b.dataset.lang === getLocale());
     this.refreshGarage();
-    $('qinfo').textContent = '低：不使用陰影、解析度 62%，適合效能較弱的車機；中：預設；高：2048 陰影、完整解析度。';
+    if ($('qinfo')) $('qinfo').textContent = t('set.qinfo');
   }
 
   // ---------- 按鍵設定 ----------
@@ -244,23 +353,25 @@ export class UI {
     }
   }
   refreshMapping() {
-    const prof = this.input.profile, p = this.input.padInfo, names = buttonNames(prof, p.mapping);
-    for (const a of ACTIONS) { const r = this.mapRows[a.id]; r.bind.textContent = bindingText(this.input.bindings[a.id], names); r.label.textContent = a.labelFor(prof); }
-    $('mapPad').textContent = p.connected ? `已連接：${p.id}（映射：${p.mapping || '非標準（原始）'}；使用「${prof.name}」設定檔，${this.input.padMode === 'auto' ? '自動偵測' : '手動指定'}）` : '未偵測到搖桿：請接上搖桿並按任一鍵';
+    const prof = this.input.profile, p = this.input.padInfo, names = localButtonNames(prof, p.mapping);
+    for (const a of ACTIONS) { const r = this.mapRows[a.id]; if (!r) continue; r.bind.textContent = bindingText(this.input.bindings[a.id], names); r.label.textContent = a.labelFor(prof); }
+    $('mapPad').textContent = p.connected ? t('map.connected', { id: p.id, mapping: p.mapping || t('map.raw'), profile: profileLabel(prof), mode: this.input.padMode === 'auto' ? t('map.modeAuto') : t('map.modeManual') }) : t('map.needPad');
     this.updateCalState();
   }
   updateCalState() {
     const el = $('calState'); if (!el) return;
     const i = this.input;
-    const t = !i.pad ? '' : i.calibrating ? '校正中…請放開搖桿，不要碰任何方向。' : `搖桿中心已校正${i.cal.hat.size ? `（已忽略十字鍵 hat 軸 ${[...i.cal.hat].join(', ')}）` : ''}。若搖桿自己漂移，按「校正搖桿」。`;
-    if (el.textContent !== t) el.textContent = t;
+    const hat = i.pad && i.cal.hat.size ? t('map.hat', { axes: [...i.cal.hat].join(', ') }) : '';
+    const text = !i.pad ? '' : i.calibrating ? t('map.calibrating') : t('map.calDone', { hat });
+    if (el.textContent !== text) el.textContent = text;
   }
   // 依目前搖桿設定檔更新按鈕標示（開始畫面圖例 / HUD 提示）
   applyProfile(prof = this.input.profile) {
     for (const b of document.querySelectorAll('#legend [data-k]')) b.textContent = prof[b.dataset.k];
     const h = $('hint'); if (h) h.textContent = hintsFor(prof);
-    const modeTxt = { auto: '自動偵測', switch: '手動：Switch 模式', xbox: '手動：X-input 模式' }[this.input.padMode];
-    const pp = $('padProfile'); if (pp) pp.textContent = this.input.pad ? `搖桿設定檔：${prof.name}（${modeTxt}；確認＝${prof.ok}、返回＝${prof.back}）` : `未偵測到搖桿：以 ${prof.name} 標示顯示。`;
+    const modeTxt = { auto: t('pad.mode.auto'), switch: t('pad.mode.switch'), xbox: t('pad.mode.xbox') }[this.input.padMode];
+    const name = profileLabel(prof);
+    const pp = $('padProfile'); if (pp) pp.textContent = this.input.pad ? t('pad.profile.on', { name, mode: modeTxt, ok: prof.ok, back: prof.back }) : t('pad.profile.off', { name });
     this.refreshMapping(); this.syncSettings();
   }
   updateMeters() {
@@ -272,11 +383,11 @@ export class UI {
   }
   startLearn(id) {
     const a = ACTIONS.find((x) => x.id === id);
-    if (!this.input.pad) { $('learn').classList.remove('hidden'); $('learnTxt').textContent = '尚未偵測到搖桿'; $('learnSub').textContent = '請先接上搖桿並按任一鍵，再重試。'; this.learningRow = null; setTimeout(() => this.cancelLearn(), 1800); return; }
+    if (!this.input.pad) { $('learn').classList.remove('hidden'); $('learnTxt').textContent = t('map.noPad'); $('learnSub').textContent = t('map.noPadSub'); this.learningRow = null; setTimeout(() => this.cancelLearn(), 1800); return; }
     this.learningRow = id;
     $('learn').classList.remove('hidden');
-    $('learnTxt').textContent = a.label;
-    $('learnSub').textContent = a.hint + '（5 秒內未操作會取消）';
+    $('learnTxt').textContent = a.labelFor(this.input.profile);
+    $('learnSub').textContent = (typeof a.hint === 'function' ? a.hint() : a.hint) + t('map.timeout');
     clearTimeout(this._learnTimer);
     this._learnTimer = setTimeout(() => this.cancelLearn(), 5000);
     this.input.startLearn(a.kind, (b) => {

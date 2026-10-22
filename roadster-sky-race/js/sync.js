@@ -1,9 +1,20 @@
+import { t } from './i18n.js';
+
 // 手機加入用的純邏輯：房間代碼、輸入封包、快照內插、預測修正。
 // 不碰 DOM、不碰 WebRTC，方便在 node 裡單測。多人遠端時只要把 REMOTE_LIMIT 調高，清單結構不用改。
 
 export const REMOTE_LIMIT = 1;
 export const INPUT_STALE_MS = 500;
 export const INTERP_DELAY_MS = 100;
+export const STATE_GAP_MS = 66;
+export const INPUT_GAP_MS = 50;
+export const LINK_STALE_MS = 5000;
+export const REMOTE_GRACE_MS = 45000;
+
+// 有收到對端訊息才算接上。只連上 MQTT 伺服器不算。
+export function hostStillThere(lastAt, now, stale = LINK_STALE_MS) {
+  return lastAt > 0 && now >= lastAt && now - lastAt <= stale;
+}
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const PUBLIC_ORIGIN = 'https://hgsteven-debug.github.io';
 
@@ -35,15 +46,22 @@ export function peerIdFor(code) {
 
 // 正式站走網站根目錄，讓現有的轉址把 ?join= 帶進遊戲。
 // 本機或預覽網址則開目前這頁，測試才連得到。
-export function joinUrl(code, loc) {
+export function joinUrl(code, loc, relay, lang) {
   const c = normalizeCode(code);
   const host = loc && loc.hostname ? String(loc.hostname) : '';
+  let url;
   if (!host || host === 'hgsteven-debug.github.io' || host.endsWith('.github.io')) {
-    return PUBLIC_ORIGIN + '/?join=' + c;
+    url = PUBLIC_ORIGIN + '/?join=' + c;
+  } else {
+    const origin = loc.origin || '';
+    const path = loc.pathname || '/';
+    url = origin + path + '?join=' + c;
   }
-  const origin = loc.origin || '';
-  const path = loc.pathname || '/';
-  return origin + path + '?join=' + c;
+  if (relay && Number.isFinite(+relay.index)) {
+    url += '&relay=' + ((+relay.index) | 0) + '&epoch=' + ((+relay.epoch) | 0);
+  }
+  if (lang) url += '&lang=' + encodeURIComponent(lang);
+  return url;
 }
 
 function round3(n) {
@@ -82,11 +100,182 @@ export function heldInput(remote, now, staleMs = INPUT_STALE_MS) {
 
 export function failText(err) {
   const type = err && err.type;
-  if (type === 'browser-incompatible') return '這台瀏覽器不支援點對點連線，手機暫時無法加入。這台比賽不受影響。';
-  if (type === 'peer-unavailable') return '找不到這個房間。請核對代碼，並請房主留在遊戲頁面。';
-  if (type === 'unavailable-id') return '這組房間代碼剛被使用，請再試一次。';
-  if (type === 'invalid-id') return '房間代碼無效。';
-  return '連線失敗。請確認兩台裝置都有網路。嚴格的防火牆或對稱 NAT 可能擋下點對點連線。這台比賽不受影響。';
+  if (type === 'browser-incompatible') return t('fail.browser');
+  if (type === 'peer-unavailable') return t('fail.noRoom');
+  if (type === 'unavailable-id') return t('fail.taken');
+  if (type === 'invalid-id') return t('fail.badCode');
+  return t('fail.generic');
+}
+
+export function roundNet(v, d = 0) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return d;
+  return Math.round(x * 100) / 100;
+}
+
+function normAngle(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return ((Math.round(n) % 360) + 360) % 360;
+}
+
+// 橫向鎖定失敗時才用 CSS 轉正。看螢幕方向或螢幕邊長，不看會跟著網址列跳的 innerHeight。
+// 瀏覽器已經是橫向（方向 API，或視窗比螢幕寬）就不要再轉一次，否則搖桿和按鍵會再偏 90°。
+// screen.orientation.angle 和 window.orientation 不一致時，以「畫面是不是已經橫向」為準。
+// sticky 讓一次誤判沒辦法立刻翻回去：要明顯超過 80px 才換邊。
+export function wantCssRotate(sample, sticky) {
+  const type = (sample && sample.type) || '';
+  const iw = (sample && sample.iw) || 0;
+  const ih = (sample && sample.ih) || 0;
+  const viewLandscape = iw > ih + 80;
+  const viewPortrait = ih > iw + 80;
+  const angle = normAngle(sample && sample.angle);
+  const win = normAngle(sample && sample.win);
+  const reportedLandscape = type.indexOf('landscape') === 0 || angle === 90 || angle === 270 || win === 90 || win === 270;
+  if (type.indexOf('landscape') === 0) return false;
+  if (viewLandscape) return false;
+  if (reportedLandscape && !viewPortrait) return false;
+  if (type.indexOf('portrait') === 0) return true;
+  if (viewPortrait) {
+    if (sticky === 'native') return false;
+    return true;
+  }
+  const sw = (sample && sample.sw) || 0;
+  const sh = (sample && sample.sh) || 0;
+  if (sticky === 'css') return !(sw > sh + 80);
+  if (sticky === 'native') return sh > sw + 80;
+  return sh > sw + 40;
+}
+
+// 把視窗上的位移換算成元素自己的軸。CSS matrix(a, b, c, d, tx, ty) 的線性部分：
+// 元素 +x（畫面上的右）落到視窗 (a, b)，元素 +y（畫面上的下）落到視窗 (c, d)。
+// 沒有旋轉時就是單位矩陣，視窗往右仍是往右。
+export function viewportDeltaToUi(vx, vy, a, b, c, d) {
+  const det = a * d - b * c;
+  if (!(Math.abs(det) > 1e-8)) return { x: vx, y: vy };
+  return {
+    x: (d * vx - c * vy) / det,
+    y: (-b * vx + a * vy) / det,
+  };
+}
+
+// 手機畫面追房主姿態。一幀最多吃掉一部分誤差，重生那種大跳才直接對齊。
+export function easeGuestPose(vis, target, dt) {
+  const o = vis || { x: 0, y: 0, z: 0, ready: false };
+  if (!target) return o;
+  const dx = (target.x || 0) - (o.x || 0);
+  const dy = (target.y || 0) - (o.y || 0);
+  const dz = (target.z || 0) - (o.z || 0);
+  const dist = Math.hypot(dx, dy, dz);
+  if (!o.ready || !(dist < 30)) {
+    o.x = target.x || 0;
+    o.y = target.y || 0;
+    o.z = target.z || 0;
+    o.heading = target.heading || 0;
+    o.qx = target.qx || 0;
+    o.qy = target.qy || 0;
+    o.qz = target.qz || 0;
+    o.qw = target.qw == null ? 1 : target.qw;
+    o.speed = target.speed || 0;
+    o.ready = true;
+    o.step = dist;
+    o.snapped = true;
+    return o;
+  }
+  // 前進要跟上車速。左右和上下抖動（封包把車身左右甩）吃得慢，畫面才不會左右晃。
+  const dtv = Math.max(0, dt || 0);
+  const kf = 1 - Math.exp(-12 * dtv);
+  const kl = 1 - Math.exp(-2.2 * dtv);
+  const h = o.heading || 0;
+  const fx = -Math.sin(h), fz = -Math.cos(h);
+  const along = dx * fx + dz * fz;
+  const lx = dx - fx * along;
+  const lz = dz - fz * along;
+  const sx = fx * along * kf + lx * kl;
+  const sz = fz * along * kf + lz * kl;
+  const sy = dy * kl;
+  o.x += sx;
+  o.y += sy;
+  o.z += sz;
+  let dh = (target.heading || 0) - (o.heading || 0);
+  while (dh > Math.PI) dh -= Math.PI * 2;
+  while (dh < -Math.PI) dh += Math.PI * 2;
+  o.heading = (o.heading || 0) + dh * kl;
+  const q = slerpQuat(o, target, kl);
+  o.qx = q.qx; o.qy = q.qy; o.qz = q.qz; o.qw = q.qw;
+  o.speed = (o.speed || 0) + ((target.speed || 0) - (o.speed || 0)) * kf;
+  o.ready = true;
+  o.step = Math.hypot(sx, sy, sz);
+  o.snapped = false;
+  return o;
+}
+
+// 偏離賽道只相信房主，而且要連續離道一陣子才提示一次，不能每幀刷。
+export function hostOffroadWarn(state, onRoad, now, debounceMs = 450, repeatMs = 4000) {
+  const s = state || { known: false, onRoad: true, since: now || 0, toastAt: 0 };
+  const on = onRoad !== false;
+  if (!s.known || s.onRoad !== on) {
+    s.known = true;
+    s.onRoad = on;
+    s.since = now || 0;
+  }
+  let warn = false;
+  const t = now || 0;
+  const toasted = s.toastAt || 0;
+  if (!s.onRoad && t - s.since >= debounceMs && (toasted === 0 || t - toasted >= repeatMs)) {
+    warn = true;
+    s.toastAt = t;
+  }
+  return { state: s, warn };
+}
+
+export function packSelf(s) {
+  if (!s) return null;
+  const n = roundNet;
+  const speed = s.speed != null ? s.speed : Math.hypot(s.vx || 0, s.vy || 0, s.vz || 0);
+  return {
+    x: n(s.x), y: n(s.y), z: n(s.z),
+    qx: n(s.qx), qy: n(s.qy), qz: n(s.qz), qw: n(s.qw, 1),
+    vx: n(s.vx), vy: n(s.vy), vz: n(s.vz),
+    heading: n(s.heading), speed: n(speed),
+    energy: n(s.energy, 100),
+    grounded: !!s.grounded,
+    onRoad: s.onRoad !== false,
+    nitroOn: !!s.nitroOn,
+    thrusting: !!s.thrusting,
+    thrust: n(s.thrust),
+    lift: n(s.lift),
+    braking: !!s.braking,
+    steerAngle: n(s.steerAngle),
+    groundY: n(s.groundY, s.y),
+    nx: n(s.nx), ny: n(s.ny, 1), nz: n(s.nz),
+    fi: n(s.fi), lat: n(s.lat),
+    attached: !!s.attached,
+    alt: n(s.alt),
+  };
+}
+
+export function packPose(p) {
+  if (!p) return null;
+  const n = roundNet;
+  const o = {
+    x: n(p.x), y: n(p.y), z: n(p.z),
+    qx: n(p.qx), qy: n(p.qy), qz: n(p.qz), qw: n(p.qw, 1),
+    vx: n(p.vx), vy: n(p.vy), vz: n(p.vz),
+    nx: n(p.nx), ny: n(p.ny, 1), nz: n(p.nz),
+    heading: n(p.heading), speed: n(p.speed), gy: n(p.gy, p.y),
+    steer: n(p.steer), thrust: n(p.thrust), lift: n(p.lift), fi: n(p.fi),
+    grounded: !!p.grounded, nitro: !!p.nitro, braking: !!p.braking,
+    onRoad: p.onRoad !== false,
+  };
+  if (p.id != null) o.id = p.id;
+  if (p.name != null) o.name = p.name;
+  if (p.kind != null) o.kind = p.kind;
+  if (p.vehicle != null) o.vehicle = p.vehicle;
+  if (p.paint != null) o.paint = p.paint;
+  if (p.lap != null) o.lap = p.lap;
+  if (p.finish != null) o.finish = p.finish;
+  return o;
 }
 
 export function dist3(a, b) {
@@ -129,6 +318,12 @@ export function slerpQuat(a, b, t) {
 }
 
 function lerpNum(a, b, u) { return a + (b - a) * u; }
+function lerpAngle(a, b, u) {
+  let d = (b || 0) - (a || 0);
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return (a || 0) + d * u;
+}
 
 function shiftPose(p, dt) {
   const o = Object.assign({}, p);
@@ -152,7 +347,7 @@ function lerpPose(a, b, u) {
     vx: lerpNum(a.vx || 0, b.vx || 0, u),
     vy: lerpNum(a.vy || 0, b.vy || 0, u),
     vz: lerpNum(a.vz || 0, b.vz || 0, u),
-    heading: lerpNum(a.heading || 0, b.heading || 0, u),
+    heading: lerpAngle(a.heading || 0, b.heading || 0, u),
     speed: lerpNum(a.speed || 0, b.speed || 0, u),
     gy: lerpNum(a.gy == null ? (a.y || 0) : a.gy, b.gy == null ? (b.y || 0) : b.gy, u),
     nx: lerpNum(a.nx || 0, b.nx || 0, u),
@@ -167,9 +362,14 @@ function lerpPose(a, b, u) {
   o.grounded = !!src.grounded;
   o.nitro = !!src.nitro;
   o.braking = !!src.braking;
+  o.onRoad = src.onRoad !== false;
+  o.thrusting = !!src.thrusting;
+  o.energy = lerpNum(a.energy == null ? (b.energy || 0) : a.energy, b.energy == null ? (a.energy || 0) : b.energy, u);
+  o.alt = lerpNum(a.alt || 0, b.alt || 0, u);
   o.kind = b.kind || a.kind;
   o.name = b.name || a.name;
   o.paint = b.paint || a.paint;
+  o.vehicle = b.vehicle || a.vehicle;
   o.fi = b.fi;
   o.lap = b.lap;
   o.finish = b.finish;
@@ -199,14 +399,14 @@ export class StateBuffer {
     this.packets.push({ t, cars: Array.isArray(cars) ? cars : [] });
     if (this.packets.length > 30) this.packets.shift();
   }
-  sample(now) {
+  sample(now, maxExtra = 0.08) {
     const pk = this.packets;
     if (!pk.length) return [];
     const target = now - this.delay;
     if (target <= pk[0].t) return pk[0].cars.map((c) => Object.assign({}, c));
     const last = pk[pk.length - 1];
     if (target >= last.t) {
-      const extra = Math.min(0.08, Math.max(0, (target - last.t) / 1000));
+      const extra = Math.min(maxExtra, Math.max(0, (target - last.t) / 1000));
       return last.cars.map((c) => shiftPose(c, extra));
     }
     let j = 0;

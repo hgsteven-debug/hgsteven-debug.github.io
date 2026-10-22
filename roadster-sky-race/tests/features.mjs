@@ -14,6 +14,7 @@ const browser = await puppeteer.launch({
 
 async function open(query) {
   if (!query.includes('nonet=1') && !query.includes('net=1')) query += '&nonet=1';
+  if (!query.includes('lang=')) query += '&lang=zh-TW';
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -30,7 +31,7 @@ async function testLoop() {
     const { track, veh, game, sim, ribbonCompression } = sky;
     const s = track.stunt;
     const order = s && s.wall0 < s.wall1 && s.wall1 < s.loop0 && s.loop0 < s.loopTop && s.loopTop < s.loop1
-      && s.loop1 <= s.inv0 && s.inv0 < s.inv1 && s.inv1 < s.fly0 && s.fly0 <= s.fly1 && s.fly1 < s.jump0
+      && s.loop1 <= s.inv0 && s.inv0 < s.inv1 && s.inv1 < s.jump0
       && s.jump0 < s.jump1 && s.jump1 < track.N;
     const slowC = ribbonCompression(-1, 1 / 22, 8);
     const fastC = ribbonCompression(-1, 1 / 22, 40);
@@ -355,12 +356,254 @@ async function testKeys() {
   await page.close();
 }
 
+async function testStuntDrive() {
+  const { page, errors } = await open('?track=stunt&q=low&ai=0&autostart=1&nocount=1&noadapt=1&nopauseblur=1');
+  const report = await page.evaluate(() => {
+    const sky = window.__sky;
+    const tr = sky.track;
+    const veh = sky.veh;
+    sky.game.freeze = true;
+    sky.game.state = 'race';
+    let maxDy = 0, maxTurn = 0, worst = null;
+    for (let i = 0; i < tr.N; i++) {
+      const j = (i + 1) % tr.N;
+      const dy = Math.abs(tr.py[j] - tr.py[i]);
+      const dot = tr.tx[i] * tr.tx[j] + tr.ty[i] * tr.ty[j] + tr.tz[i] * tr.tz[j];
+      const turn = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (dy > maxDy) maxDy = dy;
+      if (turn > maxTurn) { maxTurn = turn; worst = i; }
+    }
+    const cap = veh.t.vMax * 3.6 + 4;
+    const follow = () => {
+      const fi = veh.attached ? veh.fi : (veh.q1.fi || veh.fi || 0);
+      const look = Math.max(10, Math.min(28, (veh.speed || 0) * 0.34));
+      const f = tr.frame(fi + look);
+      let err = Math.atan2(-f.tangent.x, -f.tangent.z) - veh.heading;
+      while (err > Math.PI) err -= Math.PI * 2;
+      while (err < -Math.PI) err += Math.PI * 2;
+      const lat = veh.attached ? (veh.lat || 0) : (veh.q1.near ? veh.q1.l : 0);
+      // 橫向右為正（與地面轉向一致）。steer 為正＝向右。
+      let steer = veh.attached
+        ? -lat * 0.55
+        : -err * 0.85 - lat * 0.14;
+      const airborne = !veh.attached && (veh.airTime > 0.12 || (veh.q1 && veh.q1.gap));
+      if (airborne) steer = -err * 0.6;
+      else if (!veh.attached && Math.abs(lat) > 4.5) steer = -lat * 0.28;
+      steer = Math.max(-1, Math.min(1, steer));
+      const st = sky.input.state;
+      const target = st._target || 48;
+      const spd = Math.max(veh.speed, Math.abs(veh.speedF || 0));
+      const here = tr.kind ? tr.kind[tr.wrap(Math.floor(fi))] : 0;
+      const soon = tr.kind ? tr.kind[tr.wrap(Math.floor(fi) + 10)] : 0;
+      st.steer = steer;
+      st.throttle = spd < target ? 1 : 0.35;
+      st.brake = !veh.attached && spd > target + 12 ? 0.35 : 0;
+      st.nitro = spd < target - 6 && target >= 42;
+      st.lift = !!(veh.flipAssist || here === 4 || soon === 4);
+      st.pitch = st.lift ? 0.65 : 0;
+    };
+    const orig = sky.input.poll.bind(sky.input);
+    sky.input.poll = (dt) => { orig(dt); follow(); };
+    const drives = [];
+    for (const target of [32, 48, 64]) {
+      sky.input.state._target = target;
+      sky.game.respawns = 0;
+      veh.placeOnTrack(tr.N - 12, 0, target * 0.45);
+      let maxKmh = 0, progress = 0, prev = veh.fi, nan = false;
+      const tEnd = target >= 64 ? 80 : target >= 48 ? 100 : 110;
+      for (let t = 0; t < tEnd && progress < tr.N * 1.05; t += 5) {
+        sky.sim(5);
+        maxKmh = Math.max(maxKmh, veh.kmh);
+        let d = veh.fi - prev;
+        if (d < -tr.N / 2) d += tr.N;
+        if (d > tr.N / 2) d -= tr.N;
+        if (d > 0) progress += d;
+        prev = veh.fi;
+        if (!Number.isFinite(veh.pos.x) || !Number.isFinite(veh.kmh)) { nan = true; break; }
+      }
+      drives.push({ target, progress: Math.round(progress), need: Math.round(tr.N * 0.9), maxKmh: Math.round(maxKmh), respawns: sky.game.respawns || 0, fi: Math.round(veh.fi), nan, y: Math.round(veh.pos.y) });
+    }
+    sky.input.poll = orig;
+    const fuzz = [];
+    let seed = 11;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let trial = 0; trial < 28; trial++) {
+      const i = Math.floor(rnd() * tr.N);
+      const sp = rnd() * 75;
+      veh.placeOnTrack(i, (rnd() * 2 - 1) * 7, sp);
+      let maxKmh = 0, bad = '';
+      const inp = { steer: rnd() * 2 - 1, throttle: 0.3 + rnd() * 0.7, brake: rnd() * 0.2, nitro: rnd() > 0.4, lift: rnd() > 0.75, pitch: rnd() * 2 - 1 };
+      for (let n = 0; n < 120 * 3; n++) {
+        if (n % 20 === 0) { inp.steer = rnd() * 2 - 1; inp.throttle = rnd(); inp.nitro = rnd() > 0.5; }
+        veh.step(1 / 120, inp);
+        if (veh.events.respawn) { veh.recoverToCheckpoint(); veh.events.respawn = false; veh.events.why = ''; }
+        maxKmh = Math.max(maxKmh, veh.kmh);
+        if (!Number.isFinite(veh.pos.x) || maxKmh > cap) { bad = 'speed ' + Math.round(maxKmh); break; }
+      }
+      if (bad) fuzz.push({ trial, i, sp: Math.round(sp), bad, y: Math.round(veh.pos.y) });
+    }
+    const HALF = 12.2;
+    let minDotR = 1, minDotN = 1, maxEdge = 0;
+    const edgeAt = (i, side) => {
+      const p = tr.surface(i, side * HALF);
+      return [p.x, p.y, p.z];
+    };
+    for (let i = 0; i < tr.N; i++) {
+      const j = (i + 1) % tr.N;
+      const dr = tr.rx[i] * tr.rx[j] + tr.ry[i] * tr.ry[j] + tr.rz[i] * tr.rz[j];
+      const dn = tr.nx[i] * tr.nx[j] + tr.ny[i] * tr.ny[j] + tr.nz[i] * tr.nz[j];
+      if (dr < minDotR) minDotR = dr;
+      if (dn < minDotN) minDotN = dn;
+      for (const side of [-1, 1]) {
+        const a = edgeAt(i, side), b = edgeAt(j, side);
+        const e = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+        if (e > maxEdge) maxEdge = e;
+      }
+    }
+    let cross = null;
+    for (let i = 0; i < tr.N && !cross; i += 2) {
+      for (let j = i + 9; j < tr.N; j += 2) {
+        const gap = Math.min(j - i, tr.N - (j - i));
+        if (gap <= 8) continue;
+        const d = Math.hypot(tr.px[i] - tr.px[j], tr.py[i] - tr.py[j], tr.pz[i] - tr.pz[j]);
+        if (d < 6) { cross = { i, j, d: +d.toFixed(2) }; break; }
+      }
+    }
+    return {
+      maxDy: +maxDy.toFixed(2), maxTurn: +maxTurn.toFixed(2), worst, cap: Math.round(cap), drives, fuzz,
+      cps: (tr.checkpoints || []).length, arrows: !!(sky.world && sky.world.stuntArrows),
+      minDotR: +minDotR.toFixed(3), minDotN: +minDotN.toFixed(3), maxEdge: +maxEdge.toFixed(2), cross,
+    };
+  });
+  if (errors.length) throw new Error(errors.join('\n'));
+  if (!(report.maxDy < 4)) throw new Error('cliff ' + JSON.stringify(report));
+  if (!(report.maxTurn < 0.75)) throw new Error('kink ' + JSON.stringify(report));
+  if (!(report.minDotR > 0.9 && report.minDotN > 0.9)) throw new Error('frame twist ' + JSON.stringify(report));
+  if (!(report.maxEdge < 6)) throw new Error('seam ' + JSON.stringify(report));
+  if (report.cross) throw new Error('loop crosses the road ' + JSON.stringify(report.cross));
+  if (report.cps < 4) throw new Error('checkpoints ' + JSON.stringify(report));
+  if (!report.arrows) throw new Error('no guide arrows');
+  for (const d of report.drives) {
+    if (d.nan || d.maxKmh > report.cap) throw new Error('overspeed ' + JSON.stringify(d));
+    if (d.progress < d.need) throw new Error('did not finish a lap ' + JSON.stringify(d));
+    if (d.respawns > 8) throw new Error('too many respawns ' + JSON.stringify(d));
+  }
+  if (report.fuzz.length) throw new Error('fuzz ' + JSON.stringify(report.fuzz.slice(0, 6)));
+}
+
+function overlap(a, b) {
+  return a.x < b.x + b.w - 0.5 && a.x + a.w > b.x + 0.5 && a.y < b.y + b.h - 0.5 && a.y + a.h > b.y + 0.5;
+}
+
+async function measurePad(page) {
+  return page.evaluate(() => {
+    const box = (sel) => {
+      const el = document.querySelector(sel);
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height, t: (el.textContent || '').replace(/\s+/g, '') };
+    };
+    const gas = box('[data-t="gas"]');
+    const brake = box('[data-t="brake"]');
+    const faces = ['y', 'x', 'b', 'a'].map((k) => box('.gpad.face.' + k));
+    const stick = box('#stick');
+    const hit = (b) => {
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      const node = document.elementFromPoint(cx, cy);
+      const host = node && node.closest ? node.closest('[data-t],[data-p],#stick') : null;
+      return {
+        cx, cy,
+        key: host && (host.dataset.t || host.dataset.p || (host.id === 'stick' ? 'stick' : '')),
+        inside: cx >= 2 && cy >= 2 && cx <= innerWidth - 2 && cy <= innerHeight - 2,
+      };
+    };
+    const sky = window.__sky;
+    const gasEl = document.querySelector('[data-t="gas"]');
+    gasEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 4, clientX: gas.x + 8, clientY: gas.y + 8, pointerType: 'touch' }));
+    gasEl.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true, pointerId: 4, pointerType: 'touch' }));
+    sky.input.poll(1 / 60);
+    sky.veh.followHost = true;
+    sky.veh.events.respawn = false;
+    sky.veh.pos.y = -80;
+    sky.veh.step(1 / 30, { steer: 0, throttle: 1, brake: 0, lift: false, nitro: false, pitch: 0 });
+    const eased = sky.sync.easeGuestPose(
+      { x: sky.veh.pos.x, y: 0, z: sky.veh.pos.z, ready: true, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 0 },
+      { x: sky.veh.pos.x + 4, y: 0, z: sky.veh.pos.z, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 20 },
+      1 / 60,
+    );
+    const early = sky.sync.hostOffroadWarn({ known: true, onRoad: true, since: 0, toastAt: 0 }, false, 1000);
+    const late = sky.sync.hostOffroadWarn(early.state, false, 1600);
+    return {
+      w: innerWidth, h: innerHeight, gas, brake, faces, stick,
+      hitG: hit(gas), hitB: hit(brake),
+      held: sky.input.touch.gas === true, throttle: sky.input.state.throttle,
+      respawn: !!sky.veh.events.respawn, why: sky.veh.events.why || '',
+      step: eased.step, snapped: !!eased.snapped,
+      early: !!early.warn, late: !!late.warn,
+      toast: (document.getElementById('toast').textContent || ''),
+      forced: document.documentElement.classList.contains('force-landscape'),
+    };
+  });
+}
+
+async function testPhonePad() {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  page.on('console', (msg) => { if (msg.type() === 'error') errors.push('console: ' + msg.text()); });
+  await page.setViewport({ width: 800, height: 360, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
+  await page.goto(BASE + '?join=ABC234&q=low&noadapt=1&nopauseblur=1&nonet=1&lang=zh-TW', { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForFunction(() => window.__sky && window.__sky.track && window.__sky.game.state !== 'loading', { timeout: 90000 });
+  await page.evaluate(() => {
+    document.querySelectorAll('.screen').forEach((s) => s.classList.remove('show'));
+    document.getElementById('touch').classList.remove('hidden');
+    document.getElementById('hud').classList.remove('hidden');
+    window.__sky.game.state = 'race';
+  });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const sizes = [[800, 360], [851, 393], [915, 412], [844, 390]];
+  for (const [w, h] of sizes) {
+    await page.setViewport({ width: w, height: h, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const box = await measurePad(page);
+    if (errors.length) throw new Error(errors.join('\n'));
+    if (box.gas.t !== '加速') throw new Error('label ' + JSON.stringify(box.gas));
+    if (box.brake.t !== '煞車') throw new Error('brake label ' + box.brake.t);
+    if (!(box.gas.x > w * 0.55 && box.gas.y + box.gas.h > h * 0.7)) throw new Error('gas not lower right ' + JSON.stringify(box));
+    if (!(box.brake.x < w * 0.4 && box.brake.y > h * 0.55)) throw new Error('brake not lower left ' + JSON.stringify(box));
+    if (!box.hitG.inside || box.hitG.key !== 'gas') throw new Error('gas hit ' + JSON.stringify(box.hitG));
+    if (!box.hitB.inside || box.hitB.key !== 'brake') throw new Error('brake hit ' + JSON.stringify(box.hitB));
+    for (const f of box.faces) {
+      if (f.y < 0 || f.x < 0 || f.x + f.w > w || f.y + f.h > h) throw new Error('face offscreen ' + JSON.stringify(f));
+      if (overlap(f, box.gas)) throw new Error('face overlaps gas ' + JSON.stringify({ f, gas: box.gas }));
+    }
+    if (overlap(box.stick, box.brake)) throw new Error('stick overlaps brake ' + JSON.stringify(box));
+    if (!box.held || !(box.throttle > 0.5)) throw new Error('hold ' + JSON.stringify(box));
+    if (box.respawn || box.why) throw new Error('local off-track respawn ' + JSON.stringify(box));
+    if (!(box.step < 1.5) || box.snapped) throw new Error('smooth ' + JSON.stringify(box));
+    if (box.early || !box.late) throw new Error('warn debounce ' + JSON.stringify(box));
+  }
+  await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
+  await page.evaluate(() => {
+    document.documentElement.classList.add('force-landscape');
+    document.body.style.width = '844px';
+    document.body.style.height = '390px';
+  });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const turned = await measurePad(page);
+  if (!turned.hitG.inside || turned.hitG.key !== 'gas') throw new Error('rotated gas ' + JSON.stringify(turned));
+  if (!turned.hitB.inside || turned.hitB.key !== 'brake') throw new Error('rotated brake ' + JSON.stringify(turned));
+  if (turned.gas.t !== '加速') throw new Error('rotated label ' + turned.gas.t);
+  const pr = await page.evaluate(() => window.__sky.renderer.getPixelRatio());
+  if (!(pr <= 1.05)) throw new Error('dpr ' + pr);
+  await page.close();
+}
+
 async function testPadPage() {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
-  const res = await page.goto(BASE + 'gamepad-test.html', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const res = await page.goto(BASE + 'gamepad-test.html?lang=zh-TW', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForSelector('#status', { timeout: 10000 });
   const title = await page.title();
   if (!res.ok()) throw new Error('status ' + res.status());
@@ -373,11 +616,13 @@ try {
   const tests = [
     ['loop physics', testLoop],
     ['keyboard touch', testKeys],
+    ['phone accel pad', testPhonePad],
     ['two gamepads', testPads],
     ['tesla pad slots', testTeslaSlots],
     ['gamepad test page', testPadPage],
     ['ai lap', testAi],
     ['ai stunt loop', testAiStunt],
+    ['stunt laps and fuzz', testStuntDrive],
   ];
   for (const [name, fn] of tests) {
     try { await fn(); ok(name); }

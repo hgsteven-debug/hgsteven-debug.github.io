@@ -36,7 +36,7 @@ class Grid {
       for (let n = 0; n < a.length; n++) {
         const i = a[n];
         const kind = this.track.kind ? this.track.kind[i] : 0;
-        if (kind === KIND.LOOP || kind === KIND.INVERT || kind === KIND.FLY) continue;
+        if (kind === KIND.LOOP || kind === KIND.INVERT || kind === KIND.FLY || kind === KIND.WALL || kind === KIND.DECK) continue;
         const ddx = px[i] - x, ddz = pz[i] - z;
         const d = ddx * ddx + ddz * ddz;
         if (d < bd) { bd = d; best = i; }
@@ -390,7 +390,7 @@ export class Track {
   hasRail(fi) {
     if (this.kind) {
       const k = this.kind[this.wrap(Math.floor(fi))];
-      if (k === KIND.LOOP || k === KIND.INVERT || k === KIND.FLY) return false;
+      if (k === KIND.LOOP || k === KIND.INVERT || k === KIND.FLY || k === KIND.DECK) return false;
     }
     return !this.isGapIdx(fi);
   }

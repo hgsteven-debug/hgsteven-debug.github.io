@@ -1,5 +1,9 @@
 // 同步單元測試（不需要網路）＋ 兩個瀏覽器情境的手機加入（PeerJS 連得到才跑）。
+import fs from 'fs';
+import crypto from 'crypto';
 import * as sync from '../js/sync.js';
+import * as ice from '../js/ice.js';
+import * as relay from '../js/relay.js';
 import puppeteer from '/tmp/pptr/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
 
 const fails = [];
@@ -99,6 +103,133 @@ catch (e) { bad('reconcile / slerp', e); }
 try { testBuffer(); ok('snapshot interpolation'); }
 catch (e) { bad('snapshot interpolation', e); }
 
+function testGuestSmooth() {
+  const vis = { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 0, ready: true };
+  const moved = sync.easeGuestPose(vis, { x: 4, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 10 }, 1 / 60);
+  assert(moved.step < 0.4 && moved.step > 0.05 && !moved.snapped, JSON.stringify(moved));
+  const fwd = sync.easeGuestPose(
+    { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 0, ready: true },
+    { x: 0, y: 0, z: -4, qx: 0, qy: 0, qz: 0, qw: 1, heading: 0, speed: 40 },
+    1 / 60,
+  );
+  assert(fwd.step > moved.step && fwd.step < 1.5 && fwd.z < -0.4, JSON.stringify(fwd));
+  const wobble = { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 30, ready: true };
+  let sideStep = 0;
+  for (let i = 0; i < 20; i++) {
+    const before = wobble.x;
+    sync.easeGuestPose(wobble, { x: i % 2 ? 1 : -1, y: 0, z: -i * 0.7, heading: 0, qw: 1, speed: 40 }, 1 / 60);
+    sideStep = Math.max(sideStep, Math.abs(wobble.x - before));
+  }
+  assert(sideStep < 0.12 && wobble.z < -3, JSON.stringify({ sideStep, z: wobble.z }));
+  const far = sync.easeGuestPose({ x: 0, y: 0, z: 0, ready: true, qx: 0, qy: 0, qz: 0, qw: 1 }, { x: 40, y: 0, z: 0, qw: 1 }, 1 / 60);
+  assert(far.snapped && far.x === 40, JSON.stringify(far));
+  const road = { known: false, onRoad: true, since: 0, toastAt: 0 };
+  const still = sync.hostOffroadWarn(road, true, 1000);
+  assert(!still.warn, 'on road warned');
+  const early = sync.hostOffroadWarn(still.state, false, 1100);
+  assert(!early.warn, 'warned too soon');
+  const later = sync.hostOffroadWarn(early.state, false, 1700);
+  assert(later.warn, 'missed off-track warning');
+  const again = sync.hostOffroadWarn(later.state, false, 2000);
+  assert(!again.warn, 'repeated warning');
+  const back = sync.hostOffroadWarn(again.state, true, 2100);
+  assert(!back.warn && back.state.onRoad === true, JSON.stringify(back));
+  assert(sync.wantCssRotate({ type: 'portrait-primary', sw: 800, sh: 400, iw: 390, ih: 844 }, 'native') === true);
+  assert(sync.wantCssRotate({ type: 'portrait-primary', sw: 400, sh: 800, iw: 844, ih: 390 }, 'css') === false);
+  assert(sync.wantCssRotate({ type: 'landscape-primary', sw: 400, sh: 800, iw: 390, ih: 700 }, 'css') === false);
+  assert(sync.wantCssRotate({ type: '', sw: 844, sh: 430 }, 'native') === false, 'url bar jitter');
+  assert(sync.wantCssRotate({ type: '', sw: 390, sh: 760 }, 'css') === true);
+  assert(sync.wantCssRotate({ type: '', sw: 844, sh: 390 }, 'css') === false);
+  // 瀏覽器已橫向就不要再 CSS 轉。angle 和 window.orientation 不一致時也不要轉兩次。
+  assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 90, win: 0, iw: 915, ih: 412 }, 'css') === false, 'angle landscape, portrait type');
+  assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 0, win: 90, iw: 800, ih: 760 }, 'css') === false, 'window.orientation landscape');
+  assert(sync.wantCssRotate({ type: 'landscape-secondary', angle: 270, win: 90, iw: 390, ih: 844 }, 'css') === false, 'type landscape wins');
+  assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 0, win: 90, iw: 412, ih: 915 }, '') === true, 'layout still portrait');
+  const right = sync.viewportDeltaToUi(0, 40, 0, 1, -1, 0);
+  const left = sync.viewportDeltaToUi(0, -40, 0, 1, -1, 0);
+  const up = sync.viewportDeltaToUi(30, 0, 0, 1, -1, 0);
+  const ident = sync.viewportDeltaToUi(25, -10, 1, 0, 0, 1);
+  assert(right.x > 30 && Math.abs(right.y) < 1, JSON.stringify(right));
+  assert(left.x < -30 && Math.abs(left.y) < 1, JSON.stringify(left));
+  assert(up.y < -20 && Math.abs(up.x) < 1, JSON.stringify(up));
+  assert(Math.abs(ident.x - 25) < 1e-6 && Math.abs(ident.y + 10) < 1e-6, JSON.stringify(ident));
+  const packed = sync.packSelf({ x: 1.239, y: 2, z: 3, vx: 10.129, vy: 0, vz: 0, onRoad: false, speed: 12.3456, qw: 1 });
+  assert(packed.x === 1.24 && packed.speed === 12.35 && packed.onRoad === false, JSON.stringify(packed));
+  assert(JSON.stringify(packed).length < 400, 'self payload ' + JSON.stringify(packed).length);
+}
+
+try { testGuestSmooth(); ok('guest smooth / off-track / orientation'); }
+catch (e) { bad('guest smooth / off-track / orientation', e); }
+
+function testIceList() {
+  const now = 1792669800000;
+  const list = ice.iceServers(now);
+  const blob = JSON.stringify(list);
+  assert(blob.includes('stun:stun.l.google.com:19302'), blob);
+  assert(blob.includes('transport=tcp'), blob);
+  assert(!blob.includes('turn.peerjs.com'), blob);
+  const turn = list.find((s) => s.username);
+  const expect = crypto.createHmac('sha1', 'openrelayprojectsecret').update(turn.username).digest('base64');
+  assert(turn.credential === expect, turn.credential);
+  assert(String(turn.urls).includes(':443'), turn.urls);
+  const root = fs.readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  assert(root.includes('location.search + location.hash'), 'root redirect dropped the query');
+  const pub = relay.mqttPublish('skyroadster/v1/ABC', '{"t":"ping"}');
+  assert(relay.mqttPayload(pub) === '{"t":"ping"}', relay.mqttPayload(pub));
+}
+
+function probeRelay(spec) {
+  return new Promise((resolve) => {
+    let ws = null;
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      try { if (ws) ws.close(); } catch (e) {}
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), 4000);
+    try {
+      ws = new WebSocket(spec.url, ['mqtt']);
+      ws.onopen = () => { clearTimeout(timer); finish(true); };
+      ws.onerror = () => { clearTimeout(timer); finish(false); };
+    } catch (e) {
+      clearTimeout(timer);
+      finish(false);
+    }
+  });
+}
+
+async function testRelay() {
+  const up = [];
+  await Promise.all(relay.RELAYS.map(async (spec, i) => { if (await probeRelay(spec)) up.push(i); }));
+  if (!up.length) {
+    console.log('SKIP websocket relay (no public broker answered)');
+    return;
+  }
+  const index = up[0];
+  const code = 'ZZ' + Math.random().toString(36).slice(2, 6);
+  let got = null;
+  const opt = { index, epoch: 0, role: 'guest' };
+  const b = relay.connectRelay(code, { onMessage: (m) => { if (m && m.from === 'a') got = m; } }, opt);
+  const a = relay.connectRelay(code, {}, opt);
+  const start = Date.now();
+  while ((!a.open || !b.open) && Date.now() - start < 12000) await new Promise((r) => setTimeout(r, 50));
+  assert(a.open && b.open, 'relay not open ' + a.reason + ' / ' + b.reason + ' index ' + index);
+  assert(a.index === index && b.index === index, 'split brokers ' + a.index + ' ' + b.index);
+  a.send({ t: 'ping', from: 'a', n: 7 });
+  const wait = Date.now();
+  while (!got && Date.now() - wait < 5000) await new Promise((r) => setTimeout(r, 50));
+  a.close(); b.close();
+  assert(got && got.n === 7, JSON.stringify(got));
+  console.log('relay broker', relay.RELAYS[index].label);
+}
+
+try { testIceList(); ok('ice servers / root redirect'); }
+catch (e) { bad('ice servers / root redirect', e); }
+try { await testRelay(); ok('websocket relay'); }
+catch (e) { bad('websocket relay', e); }
+
 const BASE = process.env.SKY_BASE || 'http://127.0.0.1:8137/';
 const browser = await puppeteer.launch({
   executablePath: '/usr/bin/google-chrome',
@@ -120,7 +251,9 @@ async function openPage(url) {
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(msg.text());
   });
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  const u = new URL(url, BASE);
+  if (!u.searchParams.has('lang')) u.searchParams.set('lang', 'zh-TW');
+  await page.goto(u.toString(), { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.waitForFunction(() => window.__sky && window.__sky.track && window.__sky.game.state !== 'loading', { timeout: 90000 });
   return { page, errors };
 }
@@ -146,7 +279,7 @@ async function waitLink(hostPage, phonePage, ms) {
 }
 
 function ownErrors(errors) {
-  return errors.filter((e) => /main\.js|net\.js|sync\.js|physics\.js|race\.js|qrcode/.test(e) && !/favicon/i.test(e));
+  return errors.filter((e) => /main\.js|net\.js|sync\.js|physics\.js|race\.js|qrcode|ice\.js|relay\.js/.test(e) && !/favicon/i.test(e));
 }
 
 try {
@@ -205,10 +338,12 @@ try {
     await host.page.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 22000 });
     signal = await host.page.evaluate(() => window.__sky.net.ready ? 'ready' : ('fail:' + window.__sky.net.failMsg));
   } catch (e) { signal = 'timeout'; }
-  if (!signal.startsWith('ready')) {
+    if (!signal.startsWith('ready')) {
     console.log('SKIP phone webrtc', signal);
     await host.page.close();
   } else {
+    const hostStage = await host.page.evaluate(() => (document.getElementById('phoneStatus') || {}).textContent || '');
+    if (!hostStage.startsWith('階段：')) throw new Error('host status ' + hostStage);
     const meta = await host.page.evaluate(() => {
       const c = document.getElementById('phoneQr');
       const ctx = c.getContext('2d');
@@ -225,12 +360,16 @@ try {
     phoneUrl.searchParams.set('nopauseblur', '1');
     const phone = await openPage(phoneUrl.toString());
     await phone.page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await phone.page.waitForFunction(() => {
+      const t = (document.getElementById('joinStatus') || {}).textContent || '';
+      return t.startsWith('階段：') && t.indexOf('正在連上房間') < 0;
+    }, { timeout: 8000 });
     const linked = await waitLink(host.page, phone.page, 45000);
     if (!linked.ok) throw new Error('peers did not connect ' + JSON.stringify(linked));
     await host.page.bringToFront();
     await host.page.evaluate(() => window.__sky.startGame());
     try {
-      await phone.page.waitForFunction(() => window.__sky.game.state === 'race' || window.__sky.game.state === 'countdown', { timeout: 15000 });
+      await phone.page.waitForFunction(() => window.__sky && (window.__sky.game.state === 'race' || window.__sky.game.state === 'countdown'), { timeout: 15000, polling: 200 });
     } catch (e) {
       const dump = {
         phone: await phone.page.evaluate(() => ({
@@ -255,37 +394,99 @@ try {
       };
       throw new Error('phone did not enter race ' + JSON.stringify(dump));
     }
-    await phone.page.waitForFunction(() => window.__sky.game.state === 'race', { timeout: 15000 });
+    await phone.page.waitForFunction(() => window.__sky && window.__sky.game.state === 'race', { timeout: 15000, polling: 200 });
     await phone.page.bringToFront();
     const view = await phone.page.evaluate(() => {
       const sky = window.__sky;
-      sky.input.touch.gas = true;
-      sky.input.touch.left = true;
+      const gas = document.querySelector('[data-t="gas"]');
+      const r = gas.getBoundingClientRect();
+      const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+      gas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7, clientX: cx, clientY: cy, pointerType: 'touch' }));
+      gas.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch' }));
+      sky.input.poll(1 / 60);
+      for (let i = 0; i < 4; i++) sky.net.flushInput();
       const touch = document.getElementById('touch');
       return {
         split: !!sky.game.split,
         touch: touch && !touch.classList.contains('hidden'),
         q: sky.Q && sky.Q.scale,
         state: sky.game.state,
+        label: (gas.textContent || '').trim(),
+        held: !!sky.input.touch.gas,
+        throttle: sky.input.state.throttle,
+        dpr: sky.renderer.getPixelRatio(),
       };
     });
     if (view.split) throw new Error('phone is split ' + JSON.stringify(view));
     if (!view.touch) throw new Error('touch controls hidden ' + JSON.stringify(view));
     if (!(view.q < 0.7)) throw new Error('phone quality ' + JSON.stringify(view));
+    if (view.label !== '加速') throw new Error('gas label ' + JSON.stringify(view));
+    if (!view.held || !(view.throttle > 0.5)) throw new Error('gas hold ' + JSON.stringify(view));
+    if (!(view.dpr <= 1.05)) throw new Error('phone dpr ' + JSON.stringify(view));
     const hostView = await host.page.evaluate(() => ({
       split: !!window.__sky.game.split,
       locals: window.__sky.race.locals().length,
       kinds: window.__sky.race.racers.map((r) => r.driver.kind),
     }));
     if (hostView.split || hostView.locals !== 1 || !hostView.kinds.includes('remote')) throw new Error('host view ' + JSON.stringify(hostView));
-    await phone.page.waitForFunction(() => window.__sky.veh.speed > 4, { timeout: 8000 });
     await host.page.waitForFunction(() => {
       const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
       return !!(r && r.driver.state.throttle > 0.5);
-    }, { timeout: 10000 });
+    }, { timeout: 8000, polling: 100 });
+    const phoneAt = await phone.page.evaluate(() => ({
+      x: window.__sky.car.root.position.x,
+      z: window.__sky.car.root.position.z,
+      sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
+      sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
+    }));
+    const hostMove = await host.page.evaluate(() => {
+      const sky = window.__sky;
+      const r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+      const x0 = r.veh.pos.x, z0 = r.veh.pos.z;
+      const thr = r.driver.state.throttle;
+      const cmd = r.driver.sample();
+      for (let i = 0; i < 90; i++) r.veh.step(1 / 60, cmd);
+      sky.net.flushState();
+      return { thr, sp: r.veh.speed, moved: Math.hypot(r.veh.pos.x - x0, r.veh.pos.z - z0), x: r.veh.pos.x };
+    });
+    if (!(hostMove.thr > 0.5 && hostMove.sp > 4 && hostMove.moved > 1)) throw new Error('host throttle ' + JSON.stringify(hostMove));
+    await phone.page.waitForFunction((at) => {
+      const s = window.__sky.net.latest && window.__sky.net.latest.self;
+      return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
+    }, { timeout: 8000, polling: 100 }, phoneAt);
+    await new Promise((r) => setTimeout(r, 250));
+    const phoneMoved = await phone.page.evaluate((at) => {
+      const sky = window.__sky;
+      for (let i = 0; i < 10; i++) sky.net.tick(1 / 30);
+      const p = sky.car.root.position;
+      return Math.hypot(p.x - at.x, p.z - at.z);
+    }, phoneAt);
+    if (!(phoneMoved > 0.4)) {
+      const diag = {
+        phoneMoved,
+        phone: await phone.page.evaluate(() => {
+          const s = window.__sky.net.latest && window.__sky.net.latest.self;
+          const p = window.__sky.car.root.position;
+          return {
+            state: window.__sky.game.state, live: window.__sky.net.live, connected: window.__sky.net.connected,
+            sx: s && s.x, sz: s && s.z, x: p.x, z: p.z,
+            track: window.__sky.net.latest && window.__sky.net.latest.track,
+          };
+        }),
+        host: await host.page.evaluate(() => {
+          const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
+          return {
+            p3: window.__sky.net.p3(),
+            x: r && r.veh.pos.x, z: r && r.veh.pos.z, fi: r && r.veh.fi,
+            thr: r && r.driver.state.throttle, brk: r && r.driver.state.brake,
+          };
+        }),
+      };
+      throw new Error('phone view froze ' + JSON.stringify(diag));
+    }
     await phone.page.waitForFunction(() => window.__sky.net.ghosts >= 1 && window.__sky.net.latest && window.__sky.net.latest.standings && window.__sky.net.latest.standings.length >= 2, { timeout: 8000 });
     await phone.page.evaluate(() => window.__sky.net.disconnect());
-    await host.page.waitForFunction(() => window.__sky.net.remotes === 0, { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 500));
     const after = await host.page.evaluate(() => {
       const sky = window.__sky;
       sky.game.freeze = true;
@@ -300,7 +501,7 @@ try {
         remote: sky.race.racers.some((r) => r.driver.kind === 'remote' && !r.parked),
       };
     });
-    if (after.remote || !(after.dist > 2)) throw new Error('host stalled after drop ' + JSON.stringify(after));
+    if (!(after.dist > 2)) throw new Error('host stalled after drop ' + JSON.stringify(after));
     if (after.state !== 'race' && !(after.state === 'paused' && after.hidden)) throw new Error('host stalled after drop ' + JSON.stringify(after));
     await host.page.bringToFront();
     await host.page.evaluate(() => {
@@ -329,6 +530,134 @@ try {
 } catch (e) {
   webrtc = 'fail';
   bad('phone joins by room code', e);
+}
+
+try {
+  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1');
+  await host.page.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 22000 });
+  const ready = await host.page.evaluate(() => window.__sky.net.ready);
+  if (!ready) {
+    console.log('SKIP phone relay', await host.page.evaluate(() => window.__sky.net.failMsg));
+    await host.page.close();
+  } else {
+    await host.page.evaluate(() => window.__sky.startGame());
+    await host.page.waitForFunction(() => {
+      const t = (document.getElementById('phoneStatus') || {}).textContent || '';
+      return t.indexOf('已連到伺服器') >= 0;
+    }, { timeout: 45000 });
+    const meta = await host.page.evaluate(() => ({ url: window.__sky.net.url }));
+    if (!/[?&]relay=\d+/.test(meta.url) || !/[?&]epoch=\d+/.test(meta.url)) throw new Error('join url missing broker ' + meta.url);
+    const phoneUrl = new URL(meta.url);
+    phoneUrl.searchParams.set('track', 'canyon');
+    phoneUrl.searchParams.set('noadapt', '1');
+    phoneUrl.searchParams.set('nopauseblur', '1');
+    const phone = await browser.newPage();
+    await phone.evaluateOnNewDocument(() => {
+      const boom = function () { throw new Error('blocked'); };
+      window.RTCPeerConnection = boom;
+      window.webkitRTCPeerConnection = boom;
+    });
+    const errors = [];
+    phone.on('pageerror', (e) => errors.push(String(e && e.message || e)));
+    await phone.setViewport({ width: 915, height: 412, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    await phone.goto(phoneUrl.toString(), { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await phone.waitForFunction(() => window.__sky && window.__sky.game.state !== 'loading', { timeout: 90000, polling: 200 });
+    const linked = await waitLink(host.page, phone, 40000);
+    if (!linked.ok) throw new Error('relay did not connect ' + JSON.stringify(linked));
+    const via = await phone.evaluate(() => (document.getElementById('joinStatus') || {}).textContent || '');
+    if (via.indexOf('網頁中繼') < 0) throw new Error('not on relay ' + via);
+    await phone.bringToFront();
+    await phone.waitForFunction(() => window.__sky.game.state === 'race' || window.__sky.game.state === 'countdown', { timeout: 15000, polling: 200 });
+    await phone.waitForFunction(() => window.__sky.game.state === 'race', { timeout: 15000, polling: 200 });
+    await phone.evaluate(() => {
+      const gas = document.querySelector('[data-t="gas"]');
+      const r = gas.getBoundingClientRect();
+      gas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 9, clientX: r.x + 12, clientY: r.y + 12, pointerType: 'touch' }));
+      gas.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true, pointerId: 9, pointerType: 'touch' }));
+      window.__sky.input.poll(1 / 60);
+      for (let i = 0; i < 4; i++) window.__sky.net.flushInput();
+    });
+    await host.page.waitForFunction(() => {
+      const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
+      return !!(r && r.driver.state.throttle > 0.5);
+    }, { timeout: 8000, polling: 100 });
+    const phoneAt = await phone.evaluate(() => ({
+      x: window.__sky.car.root.position.x,
+      z: window.__sky.car.root.position.z,
+      sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
+      sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
+    }));
+    const hostMove = await host.page.evaluate(() => {
+      const sky = window.__sky;
+      const r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+      const x0 = r.veh.pos.x, z0 = r.veh.pos.z;
+      const thr = r.driver.state.throttle;
+      const cmd = r.driver.sample();
+      for (let i = 0; i < 90; i++) r.veh.step(1 / 60, cmd);
+      sky.net.flushState();
+      return { thr, sp: r.veh.speed, moved: Math.hypot(r.veh.pos.x - x0, r.veh.pos.z - z0) };
+    });
+    if (!(hostMove.thr > 0.5 && hostMove.sp > 3 && hostMove.moved > 1)) throw new Error('relay host ' + JSON.stringify(hostMove));
+    await phone.waitForFunction((at) => {
+      const s = window.__sky.net.latest && window.__sky.net.latest.self;
+      return !!(s && Math.hypot(s.x - at.sx, s.z - at.sz) > 0.5);
+    }, { timeout: 8000, polling: 100 }, phoneAt);
+    const moved = await phone.evaluate((at) => {
+      const sky = window.__sky;
+      for (let i = 0; i < 10; i++) sky.net.tick(1 / 30);
+      const p = sky.car.root.position;
+      return Math.hypot(p.x - at.x, p.z - at.z);
+    }, phoneAt);
+    if (!(moved > 0.3)) throw new Error('relay view froze ' + moved);
+    const warned = await phone.evaluate(() => (document.getElementById('toast').textContent || '') + '|' + (document.getElementById('state').textContent || ''));
+    if (warned.indexOf('離道') >= 0 || warned.indexOf('偏離賽道') >= 0) throw new Error('false off-track ' + warned);
+    await phone.close();
+    await host.page.close();
+    ok('phone relay throttle');
+  }
+} catch (e) {
+  bad('phone relay throttle', e);
+}
+
+try {
+  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1');
+  await host.page.waitForFunction(() => window.__sky && window.__sky.net && window.__sky.net.role === 'host', { timeout: 20000 });
+  await host.page.evaluate(() => window.__sky.startGame());
+  const kept = await host.page.evaluate(() => {
+    const sky = window.__sky;
+    const remote = sky.net.debugJoin('same-player');
+    const r = sky.race.racers.find((x) => x.driver && x.driver.kind === 'remote');
+    if (!remote || !r) return { err: 'no remote' };
+    const startFi = r.veh.fi;
+    r._token = 7;
+    r.lap.n = 4;
+    r.lap.t = 18;
+    r.veh.placeOnTrack(40, 1.5, 20);
+    const placed = r.veh.fi;
+    sky.net.debugBlip();
+    sky.sim(0.35);
+    const held = sky.net.p3();
+    const again = sky.net.debugJoin('same-player');
+    const back = sky.net.p3();
+    sky.net.debugExpire();
+    const gone = sky.net.p3();
+    sky.net.debugJoin('same-player');
+    const fresh = sky.net.p3();
+    return { startFi, placed, held, back, gone, fresh, same: again === remote || !!(back && back.token === 7) };
+  });
+  if (kept.err) throw new Error(kept.err);
+  if (!kept.held || kept.held.lap !== 4 || !kept.held.holding) throw new Error('blip dropped the car ' + JSON.stringify(kept));
+  if (Math.abs(kept.held.fi - kept.placed) > 18) throw new Error('blip teleported ' + JSON.stringify(kept));
+  if (Math.abs(kept.held.fi - kept.startFi) < 12) throw new Error('blip returned to the start ' + JSON.stringify(kept));
+  if (!kept.back || kept.back.lap !== 4 || kept.back.token !== 7 || kept.back.holding) throw new Error('rejoin reset P3 ' + JSON.stringify(kept));
+  if (Math.abs(kept.back.fi - kept.placed) > 18) throw new Error('rejoin moved P3 ' + JSON.stringify(kept));
+  if (kept.gone) throw new Error('grace did not expire ' + JSON.stringify(kept));
+  if (!kept.fresh || kept.fresh.lap !== 1 || kept.fresh.token !== 0) throw new Error('new join after grace ' + JSON.stringify(kept));
+  if (Math.abs(kept.fresh.fi - kept.startFi) > 2) throw new Error('new join was not at the start ' + JSON.stringify(kept));
+  await host.page.close();
+  ok('phone blip keeps P3 laps');
+} catch (e) {
+  bad('phone blip keeps P3 laps', e);
 }
 
 await browser.close();

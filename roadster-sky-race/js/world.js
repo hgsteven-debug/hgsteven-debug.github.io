@@ -60,20 +60,20 @@ export class World {
 
   async build(progress = () => {}) {
     const steps = [
-      ['天空與光線', () => this.buildSky()],
-      ['地形', () => this.buildTerrain()],
-      ['賽道路面', () => this.buildRoad()],
-      ['護欄與路標', () => this.buildRails()],
-      ['岩石與山脈', () => this.buildScenery()],
-      ['能量環', () => this.buildRings()],
-      ['特色結構', () => this.buildExtras()],
+      ['load.sky', () => this.buildSky()],
+      ['load.land', () => this.buildTerrain()],
+      ['load.road', () => this.buildRoad()],
+      ['load.rails', () => this.buildRails()],
+      ['load.rocks', () => this.buildScenery()],
+      ['load.rings', () => this.buildRings()],
+      ['load.extras', () => this.buildExtras()],
     ];
     for (let i = 0; i < steps.length; i++) {
       progress((i / steps.length), steps[i][0]);
       await nextFrame();
       steps[i][1]();
     }
-    progress(1, '完成');
+    progress(1, 'load.done');
     // 調整環境反射強度
     this.scene.traverse((o) => {
       if (o.material && o.material.isMeshStandardMaterial && o.material.envMapIntensity === 1) o.material.envMapIntensity = 0.55;
@@ -572,6 +572,77 @@ export class World {
     }
     this.scene.add(group);
     this.extras = group;
+    this._stuntGuides();
+  }
+
+  // 迴旋試煉：路面箭頭與檢查門，標出該往哪開。
+  _stuntGuides() {
+    const tr = this.track;
+    if (!tr || !tr.stunt || !tr.frame) return;
+    const idxs = [];
+    for (let i = 0; i < tr.N; i += 14) {
+      if (tr.hiddenRoad && tr.hiddenRoad(i)) continue;
+      idxs.push(i);
+    }
+    if (idxs.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute([
+        0, 0.02, -1.15,
+        0.62, 0.02, 0.55,
+        0.16, 0.02, 0.28,
+        0, 0.02, -1.15,
+        -0.16, 0.02, 0.28,
+        -0.62, 0.02, 0.55,
+      ], 3));
+      const arrows = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({
+        color: 0xffffff, toneMapped: false, side: THREE.DoubleSide,
+      }), idxs.length);
+      const right = new THREE.Vector3(), up = new THREE.Vector3(), fwd = new THREE.Vector3();
+      const m = new THREE.Matrix4();
+      const col = new THREE.Color();
+      idxs.forEach((i, n) => {
+        const f = tr.frame(i);
+        const kind = tr.kind ? tr.kind[tr.wrap(i)] : 0;
+        if (kind === 2) col.setHex(0x7ad7ff);
+        else if (kind === 3 || kind === 4) col.setHex(0xff8ad4);
+        else if (kind === 1) col.setHex(0xffb703);
+        else col.setHex(0xffe29a);
+        right.copy(f.right).multiplyScalar(2.35);
+        up.copy(f.normal).multiplyScalar(1);
+        fwd.copy(f.tangent).multiplyScalar(-2.7);
+        m.makeBasis(right, up, fwd);
+        m.setPosition(f.pos.x + f.normal.x * 0.28, f.pos.y + f.normal.y * 0.28, f.pos.z + f.normal.z * 0.28);
+        arrows.setMatrixAt(n, m);
+        arrows.setColorAt(n, col);
+      });
+      arrows.instanceMatrix.needsUpdate = true;
+      if (arrows.instanceColor) arrows.instanceColor.needsUpdate = true;
+      this.scene.add(arrows);
+      this.stuntArrows = arrows;
+    }
+    const cps = tr.checkpoints || [];
+    if (!cps.length) return;
+    const postGeo = new THREE.BoxGeometry(0.42, 6.2, 0.42);
+    const beamGeo = new THREE.BoxGeometry(ROAD_HALF * 2 + 1.6, 0.38, 0.38);
+    const gmat = new THREE.MeshBasicMaterial({ color: 0xffcc66, toneMapped: false });
+    const gates = new THREE.Group();
+    for (const raw of cps) {
+      const i = tr.wrap(raw);
+      if (i < 24) continue;
+      const f = tr.frame(i);
+      if (f.normal.y < 0.55) continue;
+      const left = new THREE.Mesh(postGeo, gmat);
+      const rightM = new THREE.Mesh(postGeo, gmat);
+      left.position.copy(f.pos).addScaledVector(f.right, -(ROAD_HALF + 0.2)).addScaledVector(f.normal, 3.1);
+      rightM.position.copy(f.pos).addScaledVector(f.right, ROAD_HALF + 0.2).addScaledVector(f.normal, 3.1);
+      const beam = new THREE.Mesh(beamGeo, gmat);
+      const bm = new THREE.Matrix4().makeBasis(f.right, f.normal, f.tangent);
+      beam.quaternion.setFromRotationMatrix(bm);
+      beam.position.copy(f.pos).addScaledVector(f.normal, 6.2);
+      gates.add(left, rightM, beam);
+    }
+    this.scene.add(gates);
+    this.stuntGates = gates;
   }
 
   updateRings(dt, time) {

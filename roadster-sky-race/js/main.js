@@ -5,7 +5,8 @@ import { CarModel, paintsOf } from './car.js';
 import { VEHICLES, DEFAULT_VEHICLE, vehicleById } from './vehicles.js';
 import { TRACKS, DEFAULT_TRACK, trackById } from './tracks.js';
 import { Vehicle } from './physics.js';
-import { InputManager, isVirtualPad, padButtonDown, padStickHot } from './input.js';
+import { InputManager, isVirtualPad, padButtonDown, padStickHot, profileLabel } from './input.js';
+import { initLocale, onLocale, applyDom, t, getLocale, vehicleText, paintLabel } from './i18n.js';
 import { UI, shortPadName } from './ui.js';
 import { Hud } from './hud.js';
 import { GameAudio } from './audio.js';
@@ -17,6 +18,7 @@ import { AiDriver } from './ai.js';
 import { createHost, createGuest, drawRoomQr } from './net.js';
 import {
   normalizeCode, formatCode, joinUrl, heldInput, reconcileDecision, StateBuffer, zeroInput,
+  packSelf, packPose, easeGuestPose, hostOffroadWarn, wantCssRotate,
 } from './sync.js';
 import * as syncApi from './sync.js';
 
@@ -28,13 +30,30 @@ if (joinCode && !params.get('q')) qname = 'low';
 if (!QUALITY[qname]) qname = 'med';
 const Q = QUALITY[qname];
 const $ = (id) => document.getElementById(id);
-const CAM_NAMES = ['追尾', '低角度', '車內', '遠景'];
+initLocale();
+const camName = (i) => t('cam.' + i);
 const PHYS_DT = 1 / 120;
 
 let renderer, scene, camera, camera2, world, track, car, veh, hud, ui, audio, input, race;
 let hostNet = null, guestNet = null;
 const ghosts = new Map();
 const guestBuf = new StateBuffer(100);
+const guestSelfBuf = new StateBuffer(90);
+const guestEase = { x: 0, y: 0, z: 0, heading: 0, qx: 0, qy: 0, qz: 0, qw: 1, speed: 0, ready: false };
+const guestVis = {
+  on: false, pos: new THREE.Vector3(), q: new THREE.Quaternion(), n: new THREE.Vector3(0, 1, 0),
+  heading: 0, speed: 0, speedF: 0, energy: 100,
+  grounded: true, nitroOn: false, thrusting: false, braking: false, thrust: 0, lift: 0,
+  steerAngle: 0, accel: 0, latAccel: 0, groundY: 0, alt: 0,
+  get kmh() { return this.speed * 3.6; },
+};
+let guestSelfAt = 0;
+let guestRoad = { known: false, onRoad: true, since: 0, toastAt: 0 };
+let orientSticky = '';
+let orientTimer = 0;
+let orientPending = '';
+let viewLock = null;
+let lastApplied = '';
 let guestLive = false;
 let guestTrackReady = false;
 let guestTries = 0;
@@ -59,12 +78,39 @@ function fail(msg, err) {
   if (t) { t.style.color = '#ff9a8a'; t.innerHTML = msg; }
 }
 
-function baseDpr() { return Math.min(window.devicePixelRatio || 1, 2); }
+function baseDpr() { return Math.min(window.devicePixelRatio || 1, game.guest ? 1 : 2); }
+function viewSize() {
+  const forced = document.documentElement.classList.contains('force-landscape');
+  if (!forced) { viewLock = null; return { w: window.innerWidth, h: window.innerHeight }; }
+  const w = window.innerHeight, h = window.innerWidth;
+  if (!viewLock) viewLock = { w, h };
+  else if (Math.abs(w - viewLock.w) > 120 || Math.abs(h - viewLock.h) > 120) viewLock = { w, h };
+  return viewLock;
+}
+function applyForceBox() {
+  const b = document.body;
+  if (!b) return;
+  if (!document.documentElement.classList.contains('force-landscape')) {
+    b.style.width = '';
+    b.style.height = '';
+    return;
+  }
+  const { w, h } = viewSize();
+  b.style.width = w + 'px';
+  b.style.height = h + 'px';
+}
 function applySize() {
-  const pr = baseDpr() * Q.scale * game.dyn;
+  applyForceBox();
+  if (!renderer) return;
+  const scale = game.guest ? Math.min(Q.scale, 0.62) : Q.scale;
+  const pr = baseDpr() * scale * game.dyn;
+  const { w, h } = viewSize();
+  const key = pr.toFixed(3) + ':' + Math.round(w) + 'x' + Math.round(h);
+  if (key === lastApplied) return;
+  lastApplied = key;
   renderer.setPixelRatio(pr);
-  renderer.setSize(innerWidth, innerHeight, false);
-  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
   if (hud) hud.resize();
 }
 
@@ -73,7 +119,7 @@ async function boot() {
     const canvas = $('gl');
     try {
       renderer = new THREE.WebGLRenderer({ canvas, antialias: Q.aa, powerPreference: 'high-performance', stencil: false });
-    } catch (e) { return fail('此瀏覽器無法啟用 WebGL，無法執行遊戲。請改用較新的 Chromium 瀏覽器。', e); }
+    } catch (e) { return fail(t('boot.webgl'), e); }
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     scene = new THREE.Scene();
@@ -87,8 +133,8 @@ async function boot() {
     const tid = (qTrack && TRACKS.some((t) => t.id === qTrack)) ? qTrack : trackById(store.get('track', DEFAULT_TRACK)).id;
     world = new World(renderer, scene, qname, tid);
     track = world.track;
-    await world.build((p, label) => { $('loadBar').style.width = Math.round(p * 80) + '%'; $('loadTxt').textContent = `載入中：${label}…`; });
-    $('loadTxt').textContent = '載入中：車輛…';
+    await world.build((p, label) => { $('loadBar').style.width = Math.round(p * 80) + '%'; $('loadTxt').textContent = t('load.step', { label: t(label) }); });
+    $('loadTxt').textContent = t('load.step', { label: t('load.car') });
     await new Promise((r) => setTimeout(r, 0));
 
     const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
@@ -96,6 +142,7 @@ async function boot() {
     scene.add(car.root); scene.add(car.blob);
     veh = new Vehicle(track);
     veh.setTune(vehicleById(vid).tune);
+    if (game.guest) veh.followHost = true;
     game.lap.best = store.get('best.' + track.id, store.get('best', null));
     hud = new Hud(track, world);
 
@@ -105,14 +152,29 @@ async function boot() {
       onTrack: (id) => { store.set('track', id); const u = new URL(location.href); u.searchParams.delete('track'); location.href = u.toString(); },
       onQuality: (q) => { store.set('quality', q); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u.toString(); },
       getQuality: () => qname, onVolume: (v) => audio.setVolume(v), getVolume: () => audio.volume,
-      onTouchMode: () => {}, onTouchPress: (p) => { input.pressed[p] = true; game.touchPressed = p; },
+      onTouchMode: () => {}, onTouchPress: (p) => { input.noteTouchPress(p); game.touchPressed = p; },
       onBackTop: () => { if (game.state === 'paused') resume(); },
       onJoinRetry: retryGuest, onJoinLeave: leaveGuestRoom,
     });
     input.onProfileChange = (prof) => ui.applyProfile(prof);
+    onLocale(() => {
+      applyDom();
+      ui.buildGarage();
+      ui.buildTracks();
+      ui.refreshTracks();
+      ui.applyProfile();
+      paintJoinCar();
+      updateLobby();
+      const link = document.querySelector('a[href^="gamepad-test"]');
+      if (link) link.href = 'gamepad-test.html?lang=' + encodeURIComponent(getLocale());
+      try { if (hostNet && hostNet.relabel) hostNet.relabel(); } catch (e) {}
+      try { if (guestNet && guestNet.relabel) guestNet.relabel(); } catch (e) {}
+    });
+    const link = document.querySelector('a[href^="gamepad-test"]');
+    if (link) link.href = 'gamepad-test.html?lang=' + encodeURIComponent(getLocale());
     ui.applyProfile(input.profile);
     input.onPadChange = (on, gp) => {
-      if (hud && game.state === 'race') hud.toast(on ? '🎮 搖桿已連接' : '🎮 搖桿已中斷', 1500);
+      if (hud && game.state === 'race') hud.toast(on ? t('toast.padOn') : t('toast.padOff'), 1500);
     };
 
     $('loadBar').style.width = '92%';
@@ -123,13 +185,17 @@ async function boot() {
     renderer.render(scene, camera);
     $('loadBar').style.width = '100%';
 
-    window.addEventListener('resize', applySize);
+    window.addEventListener('resize', () => { syncPhoneOrientation(); applySize(); });
+    window.addEventListener('orientationchange', () => { syncPhoneOrientation(); applySize(); });
+    for (const ev of ['pointerdown', 'touchend', 'click']) {
+      window.addEventListener(ev, () => { tryLockLandscape(); }, { passive: true });
+    }
     window.addEventListener('pagehide', (ev) => {
       if (ev.persisted) return;
-      try { if (guestNet && !guestNet._destroyed) guestNet.send({ t: 'bye' }); } catch (e) {}
+      try { if (guestNet && !guestNet._destroyed) guestNet.destroy(); } catch (e) {}
     });
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, () => audio.init(), { passive: true });
-    document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'race') pause(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'race' && params.get('nopauseblur') !== '1') pause(); });
     window.addEventListener('blur', () => { if (game.state === 'race' && params.get('nopauseblur') !== '1') pause(); });
 
     if (qTrack && TRACKS.some((t) => t.id === qTrack)) { ui.trackId = qTrack; ui.refreshTracks(); }
@@ -151,6 +217,29 @@ async function boot() {
         get ghosts() { return ghosts.size; },
         get latest() { return guestNet && guestNet.latest; },
         get live() { return guestLive; },
+        get seq() { return guestNet ? guestNet.seq : 0; },
+        flushInput() {
+          if (!guestNet) return 0;
+          input.poll(1 / 60);
+          return guestNet.noteInput(input.state, performance.now());
+        },
+        flushState() {
+          try { flushNet(true); } catch (e) {}
+        },
+        tick(dt) { syncCar(dt || (1 / 60)); },
+        debugJoin(nonce) { return hostNet && hostNet.debugJoin ? hostNet.debugJoin(nonce) : null; },
+        debugBlip() { return !!(hostNet && hostNet.debugBlip && hostNet.debugBlip()); },
+        debugExpire() { return !!(hostNet && hostNet.debugExpire && hostNet.debugExpire()); },
+        p3() {
+          const r = race && race.racers.find((x) => x.driver && x.driver.kind === 'remote' && !String(x.netId || '').endsWith('-done'));
+          if (!r) return null;
+          const remote = hostNet && hostNet.remotes && hostNet.remotes.find((x) => x.racer === r);
+          return {
+            x: r.veh.pos.x, z: r.veh.pos.z, fi: r.veh.attached ? r.veh.fi : r.veh.q1.fi,
+            lap: r.lap ? r.lap.n : 0, lapT: r.lap ? r.lap.t : 0, name: r.name,
+            holding: !!(remote && remote.holding), token: r._token || 0,
+          };
+        },
         get trackReady() { return guestTrackReady; },
         get sent() { return hostNet ? (hostNet.sent || 0) : 0; },
         get lastErr() { return (hostNet && hostNet.lastErr) || ''; },
@@ -166,7 +255,10 @@ async function boot() {
       ui.show('join');
       const jc = $('joinCode');
       if (jc) jc.textContent = formatCode(joinCode);
-      setJoinStatus('正在連上房間 ' + formatCode(joinCode) + '…', 'wait');
+      const pg = $('btnPauseGarage'); if (pg) pg.classList.remove('hidden');
+      paintJoinCar();
+      setJoinStatus(t('guest.scanning'), 'wait');
+      syncPhoneOrientation();
       if (!netOff) beginGuest();
     } else {
       ui.show('start');
@@ -176,7 +268,7 @@ async function boot() {
     last = performance.now();
     requestAnimationFrame(frame);
   } catch (e) {
-    fail('載入失敗：' + (e && e.message ? e.message : e), e);
+    fail(t('load.fail', { msg: e && e.message ? e.message : e }), e);
   }
 }
 
@@ -200,12 +292,109 @@ function savedPaint(vid) {
   const list = paintsOf(vid), k = store.get('paint.' + vid, null);
   return list.some((p) => p.key === k) ? k : list[0].key;
 }
-// 換車：重建車輛模型、套用該車的物理調校；paintKey 省略時使用該車上次選的車漆
-function setVehicle(id, paintKey) {
+function validPaint(vid, paint) {
+  const list = paintsOf(vid);
+  return list.some((p) => p.key === paint) ? paint : list[0].key;
+}
+function paintJoinCar() {
+  const el = $('joinCar');
+  if (!el || !car) return;
+  const def = vehicleById(car.vehicleId);
+  const pd = paintsOf(def.id).find((p) => p.key === car.paintKey);
+  const text = vehicleText(def.id, def.name);
+  el.textContent = t('join.car', { name: text.name, paint: pd ? paintLabel(pd.key) : '' });
+}
+let guestCarPick = null;
+let orientLockTried = false;
+function orientSample() {
+  if (typeof window !== 'undefined' && window.__skyOrient) {
+    const o = window.__skyOrient;
+    return {
+      type: o.type || '',
+      angle: Number.isFinite(+o.angle) ? +o.angle : null,
+      win: Number.isFinite(+o.win) ? +o.win : null,
+      sw: o.sw || 0,
+      sh: o.sh || 0,
+      iw: o.iw || window.innerWidth,
+      ih: o.ih || window.innerHeight,
+    };
+  }
+  const ori = (typeof screen !== 'undefined' && screen.orientation) || null;
+  const type = (ori && ori.type) || '';
+  const angle = ori && Number.isFinite(ori.angle) ? ori.angle : null;
+  const win = typeof window.orientation === 'number' ? window.orientation : null;
+  let sw = (typeof screen !== 'undefined' && screen.width) || 0;
+  let sh = (typeof screen !== 'undefined' && screen.height) || 0;
+  if (!type) {
+    const iw = window.innerWidth, ih = window.innerHeight;
+    const screenPortrait = sh > sw;
+    const viewPortrait = ih > iw + 80;
+    const viewLandscape = iw > ih + 80;
+    if ((screenPortrait && viewLandscape) || (!screenPortrait && viewPortrait && sw > 0)) {
+      sw = iw;
+      sh = ih;
+    }
+  }
+  return { type, angle, win, sw, sh, iw: window.innerWidth, ih: window.innerHeight };
+}
+function syncPhoneOrientation() {
+  if (!game.guest) {
+    document.documentElement.classList.remove('force-landscape');
+    orientSticky = '';
+    orientPending = '';
+    if (orientTimer) { clearTimeout(orientTimer); orientTimer = 0; }
+    applyForceBox();
+    return;
+  }
+  const want = wantCssRotate(orientSample(), orientSticky);
+  const key = want ? 'css' : 'native';
+  const on = document.documentElement.classList.contains('force-landscape');
+  if (want === on && orientSticky) return;
+  if (orientPending === key && orientTimer) return;
+  orientPending = key;
+  if (orientTimer) clearTimeout(orientTimer);
+  const wait = orientSticky ? 280 : 0;
+  orientTimer = setTimeout(() => {
+    orientTimer = 0;
+    if (!game.guest) return;
+    const still = wantCssRotate(orientSample(), orientSticky);
+    if ((still ? 'css' : 'native') !== key) return;
+    document.documentElement.classList.toggle('force-landscape', still);
+    orientSticky = still ? 'css' : 'native';
+    orientPending = '';
+    viewLock = null;
+    lastApplied = '';
+    applyForceBox();
+    applySize();
+  }, wait);
+}
+async function tryLockLandscape() {
+  if (!game.guest || orientLockTried) return;
+  orientLockTried = true;
+  const el = document.documentElement;
+  try {
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req && !document.fullscreenElement) await req.call(el);
+  } catch (e) { /* iOS Safari 沒有頁面全螢幕 */ }
+  try {
+    if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+  } catch (e) { /* 鎖不住就用 CSS 把整個畫面轉成橫向 */ }
+  syncPhoneOrientation();
+  applySize();
+}
+// 換車：重建車輛模型、套用該車的物理調校；paintKey 省略時使用該車上次選的車漆。
+// 手機加入時，房主指定的車不寫進這支手機自己的車庫；玩家自己換車才會通知房主。
+function setVehicle(id, paintKey, opts) {
+  const opt = opts || {};
+  const persist = opt.persist !== false;
+  const notify = opt.notify !== false;
   const def = vehicleById(id);
-  const pk = paintKey || savedPaint(def.id);
-  store.set('vehicle', def.id);
-  if (car.vehicleId === def.id) { car.setPaint(pk); store.set('paint.' + def.id, car.paintKey); return car; }
+  const pk = validPaint(def.id, paintKey || (persist ? savedPaint(def.id) : car.paintKey));
+  if (car.vehicleId === def.id && car.paintKey === pk) {
+    if (notify && game.guest) rememberGuestCar(def.id, pk);
+    paintJoinCar();
+    return car;
+  }
   const prevCar = car;
   scene.remove(car.root, car.blob); car.dispose();
   car = new CarModel(Q, def.id, pk); car.setPaint(pk);
@@ -213,12 +402,18 @@ function setVehicle(id, paintKey) {
   if (race) { const p = race.racers[0]; if (p && p.car === prevCar) p.car = car; }
   if (window.__sky) window.__sky.car = car;
   veh.setTune(def.tune);
-  veh.energy = 100;
-  store.set('vehicle', def.id); store.set('paint.' + def.id, car.paintKey);
+  if (!opt.keepEnergy) veh.energy = 100;
+  if (persist) { store.set('vehicle', def.id); store.set('paint.' + def.id, car.paintKey); }
+  if (notify && game.guest) rememberGuestCar(def.id, car.paintKey);
   game.camSnap = true;
   syncCar(0);
+  paintJoinCar();
   try { renderer.compile(scene, camera); } catch (e) { /* */ }
   return car;
+}
+function rememberGuestCar(id, paint) {
+  guestCarPick = { vehicle: id, paint };
+  try { if (guestNet && guestNet.connected) guestNet.send({ t: 'car', vehicle: id, paint }); } catch (e) {}
 }
 
 // ---------------- 狀態控制 ----------------
@@ -288,7 +483,7 @@ function startGame() {
     const aveh = new Vehicle(track);
     aveh.setTune(tune);
     ais.push(makeRacer({
-      name: `電腦 ${i + 1}`, driver: new AiDriver(track, opt.diff), veh: aveh, car: acar, lap: freshLap(null),
+      name: t('race.cpu', { n: i + 1 }), cpuN: i + 1, driver: new AiDriver(track, opt.diff), veh: aveh, car: acar, lap: freshLap(null),
     }));
   }
   const roster = humans.concat(ais);
@@ -303,11 +498,11 @@ function startGame() {
     L.last = lapTime;
     const isBest = L.best == null || lapTime < L.best;
     if (isBest) { L.best = lapTime; store.set('best.' + track.id, lapTime); store.set('best', lapTime); }
-    hud.toast(isBest ? `第 ${L.n} 圈完成・新最佳！` : `第 ${L.n} 圈完成`, 2500);
+    hud.toast(isBest ? t('toast.lapBest', { n: L.n }) : t('toast.lap', { n: L.n }), 2500);
     audio.beep(true);
     input.rumble(0.4, 0.7, 250);
   };
-  race.onMiss = () => hud.toast('請沿賽道完整跑完一圈', 1800);
+  race.onMiss = () => hud.toast(t('toast.miss'), 1800);
   race.onResetRings = () => world.resetRings();
   roster.forEach((r, i) => {
     const lat = roster.length === 1 ? 0 : (i - mid) * gap;
@@ -384,39 +579,59 @@ function quit() {
   flushNet(true);
 }
 
+function paintForRemote(def, slot) {
+  const list = paintsOf(def.id).map((p) => p.key);
+  const hostPaint = car && car.paintKey;
+  const prefer = ['blue', 'red', 'white', 'black', 'silver', 'steel'];
+  for (const k of prefer) if (list.includes(k) && k !== hostPaint) return k;
+  return list[(slot || 0) % list.length] || list[0];
+}
+function ensureRemoteCar(remote) {
+  if (!remote) return;
+  if (remote.vehicle && remote.paint) {
+    remote.paint = validPaint(remote.vehicle, remote.paint);
+    remote.vehicle = vehicleById(remote.vehicle).id;
+    return;
+  }
+  const def = vehicleById(store.get('vehicle', DEFAULT_VEHICLE));
+  remote.vehicle = def.id;
+  remote.paint = paintForRemote(def, remote.slot || 0);
+}
 function welcomeFor(remote) {
   const opt = raceOptions();
-  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+  ensureRemoteCar(remote);
   return {
-    t: 'welcome', track: track.id, vehicle: vid, ai: opt.count, diff: opt.diff,
+    t: 'welcome', track: track.id, vehicle: remote.vehicle, paint: remote.paint,
+    ai: opt.count, diff: opt.diff,
     laps: RACE_LAPS, slot: remote.slot, name: remote.name,
   };
 }
 function poseOf(r) {
   const v = r.veh;
-  const n = (x, d = 0) => (Number.isFinite(x) ? x : d);
-  return {
+  return packPose({
     id: r.netId || r.name,
     name: r.name,
     kind: r.driver && r.driver.kind,
+    vehicle: r.car && r.car.vehicleId,
     paint: r.car && r.car.paintKey,
-    x: n(v.pos.x), y: n(v.pos.y), z: n(v.pos.z),
-    qx: n(v.q.x), qy: n(v.q.y), qz: n(v.q.z), qw: n(v.q.w, 1),
-    vx: n(v.vel.x), vy: n(v.vel.y), vz: n(v.vel.z),
-    nx: n(v.n.x), ny: n(v.n.y, 1), nz: n(v.n.z),
-    heading: n(v.heading), speed: n(v.speed), gy: n(v.groundY, v.pos.y),
-    grounded: !!v.grounded, nitro: !!v.nitroOn, thrust: n(v.thrust), lift: n(v.lift),
-    braking: !!v.braking, steer: n(v.steerAngle),
-    fi: n(v.attached ? v.fi : (v.q1.fi || 0)),
+    x: v.pos.x, y: v.pos.y, z: v.pos.z,
+    qx: v.q.x, qy: v.q.y, qz: v.q.z, qw: v.q.w,
+    vx: v.vel.x, vy: v.vel.y, vz: v.vel.z,
+    nx: v.n.x, ny: v.n.y, nz: v.n.z,
+    heading: v.heading, speed: v.speed, gy: v.groundY,
+    grounded: !!v.grounded, nitro: !!v.nitroOn, thrust: v.thrust, lift: v.lift,
+    braking: !!v.braking, steer: v.steerAngle,
+    fi: v.attached ? v.fi : (v.q1.fi || 0),
+    onRoad: !!v.onRoad,
     lap: r.lap ? r.lap.n : 1,
     finish: r.finish == null ? null : r.finish,
-  };
+  });
 }
 function netStateFor(remote) {
   const cars = [];
   if (race) {
     for (const r of race.racers) {
-      if (!r.veh) continue;
+      if (!r.veh || r === remote.racer) continue;
       const pose = poseOf(r);
       if (Number.isFinite(pose.x) && Number.isFinite(pose.z)) cars.push(pose);
     }
@@ -427,13 +642,15 @@ function netStateFor(remote) {
   let self = null, selfLap = null, selfId = null;
   if (remote.racer && remote.racer.veh) {
     selfId = remote.racer.netId;
-    try { self = remote.racer.veh.exportState(); } catch (e) { self = null; }
+    try { self = packSelf(remote.racer.veh.exportState()); } catch (e) { self = null; }
     const L = remote.racer.lap;
     selfLap = L ? { n: L.n, t: L.t, last: L.last, best: L.best } : null;
   }
+  ensureRemoteCar(remote);
   return {
     t: 'state', now: performance.now(), race: game.state, cd: game.countdown, track: track.id,
     ack: remote.seq | 0, selfId, self, selfLap, standings, cars,
+    selfVehicle: remote.vehicle, selfPaint: remote.paint,
   };
 }
 function flushNet(force) {
@@ -447,7 +664,10 @@ function applyRemoteInputs() {
   const now = performance.now();
   for (const remote of hostNet.remotes) {
     if (!remote.driver) continue;
-    try { remote.driver.push(heldInput(remote, now)); } catch (e) {}
+    try {
+      if (remote.holding) remote.driver.push({ steer: 0, throttle: 0, brake: 1, lift: false, nitro: false, pitch: 0 });
+      else remote.driver.push(heldInput(remote, now));
+    } catch (e) {}
   }
 }
 function refreshRaceMode() {
@@ -457,13 +677,35 @@ function refreshRaceMode() {
   if (active.length < 2 && !anyFinish) race.raceMode = false;
   else race.raceMode = race.racers.length > 1;
 }
+function mountRemoteCar(remote) {
+  ensureRemoteCar(remote);
+  const def = vehicleById(remote.vehicle);
+  const rcar = new CarModel(QUALITY.low, def.id, remote.paint);
+  rcar.setPaint(remote.paint);
+  scene.add(rcar.root); scene.add(rcar.blob);
+  if (remote.racer) {
+    const old = remote.racer.car;
+    if (old && old !== car) {
+      scene.remove(old.root, old.blob);
+      try { old.dispose(); } catch (e) {}
+    }
+    remote.racer.car = rcar;
+    remote.racer.veh.setTune(def.tune);
+  }
+  return rcar;
+}
+function onRemoteCar(remote, data) {
+  if (!remote || !data) return;
+  const def = vehicleById(data.vehicle);
+  remote.vehicle = def.id;
+  remote.paint = validPaint(def.id, data.paint);
+  if (remote.racer) mountRemoteCar(remote);
+}
 function attachRemoteRacer(remote) {
   if (!race || !remote || remote.racer) return remote.racer;
-  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
-  const tune = vehicleById(vid).tune;
-  const paints = ['steel', 'blue', 'white', 'black'];
-  const rcar = new CarModel(QUALITY.low, vid, paints[remote.slot % paints.length]);
-  scene.add(rcar.root); scene.add(rcar.blob);
+  const def = vehicleById(remote.vehicle || store.get('vehicle', DEFAULT_VEHICLE));
+  const tune = def.tune;
+  const rcar = mountRemoteCar(remote);
   const rveh = new Vehicle(track);
   rveh.setTune(tune);
   const r = makeRacer({
@@ -504,7 +746,7 @@ function parkRemoteRacer(remote) {
   if (!r) { if (remote) remote.racer = null; return; }
   r.parked = true;
   r.netId = (r.netId || 'r') + '-done';
-  if (r.name.indexOf('離線') < 0) r.name += '（離線）';
+  if (!r.offlineTagged) { r.offlineTagged = true; r.name += t('race.offline'); }
   remote.racer = null;
   refreshRaceMode();
 }
@@ -516,7 +758,8 @@ function paintHostStatus(info) {
   if (urlEl) urlEl.textContent = info.url || '';
   if (st) {
     st.textContent = info.text || '';
-    st.className = 'padline' + (info.kind === 'joined' || info.kind === 'ready' ? ' ok' : '');
+    const flag = info.kind === 'joined' || info.kind === 'ready' ? ' ok' : info.kind === 'fail' ? ' bad' : info.kind === 'warn' ? ' warn' : '';
+    st.className = 'padline' + flag;
   }
   const hint = $('phoneHint');
   if (hint) hint.className = 'small dim' + (info.kind === 'fail' ? ' bad' : info.kind === 'warn' ? ' warn' : '');
@@ -540,9 +783,10 @@ function beginHost() {
         else detachRemoteRacer(remote);
         if (game.state === 'race') checkResults();
       } catch (e) {}
-      if (why !== 'replaced' && hud && (game.state === 'race' || game.state === 'countdown')) hud.toast('手機玩家已離開，比賽繼續', 1800);
+      if (why !== 'replaced' && hud && (game.state === 'race' || game.state === 'countdown')) hud.toast(t('toast.left'), 1800);
     },
     onReset: (remote) => { try { if (remote.racer) resetRacer(remote.racer); } catch (e) {} },
+    onCar: onRemoteCar,
     welcome: welcomeFor,
     state: (remote) => {
       if (game.state === 'loading') return null;
@@ -578,12 +822,18 @@ function onGuestWelcome(msg) {
     return;
   }
   guestTrackReady = true;
-  setJoinStatus('已加入房間 ' + formatCode(joinCode) + '，等待房主開始', 'ok');
+  if (guestCarPick) {
+    setVehicle(guestCarPick.vehicle, guestCarPick.paint, { persist: false, keepEnergy: true });
+  } else if (msg && msg.vehicle) {
+    setVehicle(msg.vehicle, msg.paint, { persist: false, notify: false, keepEnergy: true });
+  }
+  setJoinStatus(t('guest.waitHost', { how: linkHow(guestNet.via) }), 'ok');
 }
 function onGuestState(msg) {
   if (!guestNet || !msg) return;
   guestNet.latest = msg;
   guestNet.connected = true;
+  if (!guestCarPick && msg.selfVehicle) setVehicle(msg.selfVehicle, msg.selfPaint, { persist: false, notify: false, keepEnergy: true });
   const cars = (msg.cars || []).filter((c) => c && c.id !== msg.selfId);
   guestBuf.push(performance.now(), cars);
   if (msg.selfLap) {
@@ -592,19 +842,18 @@ function onGuestState(msg) {
     guestLap.last = msg.selfLap.last;
     guestLap.best = msg.selfLap.best;
   }
-  if (msg.self) pendingSnap = msg;
-  if (!guestTrackReady) {
-    const want = msg.track;
-    if (want && want !== track.id && TRACKS.some((t) => t.id === want)) {
-      const u = new URL(location.href);
-      u.searchParams.set('join', joinCode);
-      u.searchParams.set('track', want);
-      if (!params.get('q')) u.searchParams.set('q', 'low');
-      location.replace(u.toString());
-      return;
-    }
-    guestTrackReady = true;
+  const wantTrack = msg.track;
+  if (wantTrack && wantTrack !== track.id && TRACKS.some((t) => t.id === wantTrack)) {
+    const u = new URL(location.href);
+    u.searchParams.set('join', joinCode);
+    u.searchParams.set('track', wantTrack);
+    if (!params.get('q')) u.searchParams.set('q', 'low');
+    location.replace(u.toString());
+    return;
   }
+  if (msg.self) noteHostSelf(msg);
+  else pendingSnap = null;
+  guestTrackReady = true;
   const phase = msg.race;
   if (!guestLive && (phase === 'countdown' || phase === 'race' || phase === 'paused')) enterGuestRace(msg);
   if (guestLive && (phase === 'countdown' || phase === 'race') && (game.state === 'results' || game.state === 'menu')) enterGuestRace(msg);
@@ -621,13 +870,13 @@ function onGuestState(msg) {
   if (phase === 'race' && game.state === 'countdown') {
     game.state = 'race';
     game.hostPaused = false;
-    if (hud) { hud.count('出發！'); setTimeout(() => hud && hud.count(''), 700); }
+    if (hud) { hud.count(t('toast.go')); setTimeout(() => hud && hud.count(''), 700); }
   }
   if (phase === 'paused' && (game.state === 'race' || game.state === 'countdown')) {
     game.hostPaused = true;
     game.prevState = game.state;
     game.state = 'paused';
-    if (hud) hud.toast('房主暫停了', 1500);
+    if (hud) hud.toast(t('toast.hostPause'), 1500);
   }
   if (phase === 'race' && game.state === 'paused' && game.hostPaused) {
     game.hostPaused = false;
@@ -638,57 +887,60 @@ function onGuestState(msg) {
 function onGuestFail(msg) {
   if (guestNet) { guestNet.failed = true; guestNet.failMsg = msg; }
   setJoinStatus(msg, 'bad');
-  showBanner(msg);
-  if (!msg || msg.indexOf('已經有一位') >= 0 || msg.indexOf('不支援') >= 0) return;
-  if (guestNet && guestNet.connected) return;
-  if (guestRetryTimer || guestTries > 3) return;
-  guestRetryTimer = setTimeout(() => {
-    guestRetryTimer = null;
-    if (guestNet && guestNet.connected) return;
-    retryGuest();
-  }, 900);
+  if (guestLive) showBanner(msg);
+  else showBanner('');
 }
 function onGuestClose(info) {
   if (!guestNet || guestNet._destroyed) return;
   guestNet.connected = false;
   if (info && info.full) return;
   if (info && info.replaced) {
-    setJoinStatus('已改由另一台手機加入這個房間。', 'bad');
-    showBanner('已改由另一台手機加入。');
+    setJoinStatus(t('guest.replaced'), 'bad');
+    showBanner(t('guest.replacedBanner'));
     return;
   }
-  if (guestLive) showBanner('連線中斷。比賽在房主那邊會繼續。正在重新連線…');
-  else setJoinStatus('連線中斷。正在重新連線…', 'bad');
+  if (guestLive) showBanner(t('guest.dropLive'));
+  else setJoinStatus(t('guest.drop'), 'bad');
   if (guestRetryTimer) return;
   guestRetryTimer = setTimeout(() => {
     guestRetryTimer = null;
     retryGuest();
   }, 800);
 }
+function onGuestStage(info) {
+  if (!info) return;
+  if (guestNet && guestNet.connected) {
+    if (guestLive) { showBanner(''); return; }
+    setJoinStatus(t('guest.waitHost', { how: linkHow(guestNet.via) }), 'ok');
+    return;
+  }
+  if (guestLive) showBanner(t('guest.lost'));
+  setJoinStatus(info.text || '', info.kind === 'fail' ? 'bad' : 'wait');
+}
 function beginGuest() {
   if (!game.guest || netOff) return;
   if (guestNet) { try { guestNet.destroy(); } catch (e) {} guestNet = null; }
-  setJoinStatus('正在連上房間 ' + formatCode(joinCode) + '…', 'wait');
+  setJoinStatus(t('guest.scanning'), 'wait');
+  const relayIndex = Number(params.get('relay'));
+  const relayEpoch = Number(params.get('epoch'));
   guestNet = createGuest(joinCode, {
     onWelcome: onGuestWelcome,
     onState: onGuestState,
     onFail: onGuestFail,
     onClose: onGuestClose,
+    onStatus: onGuestStage,
+    relayIndex: Number.isFinite(relayIndex) ? relayIndex : 0,
+    relayEpoch: Number.isFinite(relayEpoch) ? relayEpoch : 0,
   });
 }
 function retryGuest() {
   if (!game.guest) return;
-  guestTries += 1;
-  if (guestTries > 3) {
-    const msg = '連不上這個房間。請確認代碼與網路。嚴格的防火牆或對稱 NAT 可能擋下點對點連線。';
-    setJoinStatus(msg, 'bad');
-    showBanner(guestLive ? msg : '');
-    return;
-  }
+  guestTries = 0;
+  if (guestRetryTimer) { clearTimeout(guestRetryTimer); guestRetryTimer = null; }
   beginGuest();
 }
 function leaveGuestRoom() {
-  try { if (guestNet) guestNet.destroy(); } catch (e) {}
+  try { if (guestNet) guestNet.destroy({ gone: true }); } catch (e) {}
   const u = new URL(location.href);
   u.searchParams.delete('join');
   location.href = u.toString();
@@ -699,7 +951,10 @@ function enterGuestRace(msg) {
   ui.hideAll();
   hud.show(true);
   setSplit(false);
+  veh.followHost = true;
   veh.energy = 100;
+  guestEase.ready = false;
+  guestVis.on = false;
   veh.placeOnTrack(track.wrap(track.N - 10), 6, 0);
   game.camYaw = veh.heading;
   game.camSnap = true;
@@ -715,6 +970,10 @@ function enterGuestRace(msg) {
 function leaveGuestRace() {
   guestLive = false;
   pendingSnap = null;
+  guestSelfAt = 0;
+  guestVis.on = false;
+  guestEase.ready = false;
+  guestRoad = { known: false, onRoad: true, since: 0, toastAt: 0 };
   clearGhosts();
   setSplit(false);
   game.state = 'menu';
@@ -723,7 +982,7 @@ function leaveGuestRace() {
   const sb = $('standings'); if (sb) sb.classList.add('hidden');
   veh.placeOnTrack(track.wrap(track.N - 10), 0, 0);
   ui.show('join');
-  if (guestNet && guestNet.connected) setJoinStatus('已加入房間 ' + formatCode(joinCode) + '，等待房主開始', 'ok');
+  if (guestNet && guestNet.connected) setJoinStatus(t('guest.inRoom', { code: formatCode(joinCode) }), 'ok');
 }
 function showGuestResults(msg) {
   guestLive = true;
@@ -731,7 +990,7 @@ function showGuestResults(msg) {
   const list = $('resultsList');
   const rows = (msg && msg.standings) || [];
   if (list) {
-    list.innerHTML = rows.map((r, i) => `<div>${i + 1}. ${r.name}　${r.finish != null ? fmtTime(r.finish) : '未完成'}</div>`).join('');
+    list.innerHTML = rows.map((r, i) => `<div>${i + 1}. ${r.name}　${r.finish != null ? fmtTime(r.finish) : t('results.dnf')}</div>`).join('');
   }
   ui.show('results');
   if (hud) hud.count('');
@@ -762,13 +1021,17 @@ function syncGhosts(dt) {
   const poses = guestBuf.sample(performance.now());
   guestPoses = poses;
   const seen = new Set();
-  const vid = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
+  const fallback = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
   for (const pose of poses) {
     if (!pose || !pose.id) continue;
     seen.add(pose.id);
+    const vid = vehicleById(pose.vehicle || fallback).id;
+    const paint = validPaint(vid, pose.paint || 'white');
     let g = ghosts.get(pose.id);
-    if (!g) {
-      const c = new CarModel(QUALITY.low, vid, pose.paint || 'white');
+    if (!g || g.car.vehicleId !== vid || g.car.paintKey !== paint) {
+      if (g) releaseRemoteCar({ car: g.car });
+      const c = new CarModel(QUALITY.low, vid, paint);
+      c.setPaint(paint);
       scene.add(c.root); scene.add(c.blob);
       g = { car: c };
       ghosts.set(pose.id, g);
@@ -809,7 +1072,7 @@ function toggleFullscreen() {
     const d = document, el = d.documentElement;
     if (!d.fullscreenElement && !d.webkitFullscreenElement) (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
     else (d.exitFullscreen || d.webkitExitFullscreen).call(d);
-  } catch (e) { hud && hud.toast('此瀏覽器不支援全螢幕', 1500); }
+  } catch (e) { hud && hud.toast(t('toast.fullScreen'), 1500); }
 }
 function nearestGap(v) {
   const subject = v || veh;
@@ -820,7 +1083,10 @@ function nearestGap(v) {
 }
 function respawnRacer(r, why) {
   const v = r ? r.veh : veh;
-  if (!track.gaps.length) { v.placeOnTrack(track.wrap(track.N - 10), r ? r.lat0 : 0, 20); }
+  const msg = (v.events && v.events.why) || why;
+  if (v.events) v.events.why = '';
+  if (track.checkpoints && track.checkpoints.length && v.recoverToCheckpoint) v.recoverToCheckpoint();
+  else if (!track.gaps.length) v.placeOnTrack(track.wrap(track.N - 10), r ? r.lat0 : 0, 20);
   else {
     const g = nearestGap(v);
     v.placeOnTrack(track.wrap(g.g0 - track.rampRows - 32), r ? r.lat0 : 0, 24);
@@ -830,7 +1096,7 @@ function respawnRacer(r, why) {
     game.respawns = (game.respawns || 0) + 1;
     hud.flash();
     game.camSnap = true; game.camYaw = v.heading;
-    if (why) hud.toast(why, 2200);
+    if (msg) hud.toast(msg, 2200);
   } else if (r.cam) { r.cam.snap = true; r.cam.yaw = v.heading; }
 }
 function respawn(why) { respawnRacer(race ? race.racers[0] : null, why); }
@@ -841,7 +1107,7 @@ function resetRacer(r) {
   if (v.q1.gap && track.gaps.length) idx = track.wrap(nearestGap(v).g0 - track.rampRows - 32);
   v.placeOnTrack(idx, r.lat0 || 0, 0);
   v.energy = Math.max(v.energy, 30);
-  if (r.primary) { game.camSnap = true; game.camYaw = v.heading; hud.toast('已回到賽道', 1200); }
+  if (r.primary) { game.camSnap = true; game.camYaw = v.heading; hud.toast(t('toast.reset'), 1200); }
   else if (r.cam) { r.cam.snap = true; r.cam.yaw = v.heading; }
 }
 function resetToTrack() {
@@ -852,7 +1118,7 @@ function resetToTrack() {
     veh.placeOnTrack(idx, 0, 0);
     veh.energy = Math.max(veh.energy, 30);
     game.camSnap = true; game.camYaw = veh.heading;
-    hud.toast('已回到賽道', 1200);
+    hud.toast(t('toast.reset'), 1200);
   }
 }
 
@@ -870,12 +1136,12 @@ function updateLap(dt) {
         lap.last = t;
         const isBest = lap.best == null || t < lap.best;
         if (isBest) { lap.best = t; store.set('best.' + track.id, t); store.set('best', t); }
-        hud.toast(isBest ? `第 ${lap.n} 圈完成・新最佳！` : `第 ${lap.n} 圈完成`, 2500);
+        hud.toast(isBest ? t('toast.lapBest', { n: lap.n }) : t('toast.lap', { n: lap.n }), 2500);
         audio.beep(true);
         lap.n++; lap.t = 0; lap.cp = [false, false, false];
         world.resetRings();
         input.rumble(0.4, 0.7, 250);
-      } else if (lap.cp.some(Boolean)) hud.toast('請沿賽道完整跑完一圈', 1800);
+      } else if (lap.cp.some(Boolean)) hud.toast(t('toast.miss'), 1800);
     } else if (lap.prevFi < N * 0.2 && fi > N * 0.8) {
       lap.cp = [false, false, false];
     }
@@ -904,7 +1170,7 @@ function updateRings(dt) {
         v.vel.x *= 1 + k; v.vel.z *= 1 + k;
       }
       if (h.primary) {
-        hud.toast('⚡ 能量環  +能量 +加速', 1000);
+        hud.toast(t('toast.ring'), 1000);
         audio.ding();
         input.rumble(0.3, 0.8, 140);
         game.shake = Math.max(game.shake, 0.25);
@@ -931,7 +1197,65 @@ function syncOne(dt, v, c, impact) {
   c.blob.material.opacity = (Q.shadows && !game.split ? 0.4 : 0.8) * clamp(1 - v.alt / 22, 0.05, 1);
   c.root.visible = true;
 }
+function selfAsPose(s) {
+  const p = packSelf(s);
+  if (!p) return null;
+  return {
+    id: 'self',
+    x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw,
+    vx: p.vx, vy: p.vy, vz: p.vz, heading: p.heading, speed: p.speed,
+    gy: p.groundY, nx: p.nx, ny: p.ny, nz: p.nz,
+    grounded: p.grounded, nitro: p.nitroOn, thrust: p.thrust, lift: p.lift,
+    braking: p.braking, steer: p.steerAngle, onRoad: p.onRoad,
+    energy: p.energy, alt: p.alt, thrusting: p.thrusting,
+  };
+}
+function noteHostSelf(msg) {
+  if (!msg || !msg.self || (msg.track && msg.track !== track.id)) return;
+  const pose = selfAsPose(msg.self);
+  if (!pose || !Number.isFinite(pose.x)) return;
+  const now = performance.now();
+  guestSelfBuf.push(now, [pose]);
+  guestSelfAt = now;
+  pendingSnap = null;
+  const road = hostOffroadWarn(guestRoad, pose.onRoad, now);
+  guestRoad = road.state;
+  if (road.warn && guestLive && game.state === 'race' && hud) hud.toast(t('toast.offroad'), 1400);
+}
+function sampleGuestView(dt) {
+  if (!game.guest || !guestSelfAt || performance.now() - guestSelfAt > 500) {
+    guestVis.on = false;
+    return null;
+  }
+  const poses = guestSelfBuf.sample(performance.now(), 0);
+  const p = poses && poses[0];
+  if (!p || !Number.isFinite(p.x)) { guestVis.on = false; return null; }
+  easeGuestPose(guestEase, p, dt);
+  guestVis.pos.set(guestEase.x, guestEase.y, guestEase.z);
+  guestVis.q.set(guestEase.qx || 0, guestEase.qy || 0, guestEase.qz || 0, guestEase.qw == null ? 1 : guestEase.qw);
+  guestVis.heading = guestEase.heading || 0;
+  guestVis.speed = guestEase.speed || 0;
+  guestVis.speedF = guestVis.speed;
+  if (guestVis.n) guestVis.n.set(p.nx || 0, p.ny == null ? 1 : p.ny, p.nz || 0);
+  if (!guestVis.n || guestVis.n.lengthSq() < 1e-8) guestVis.n.set(0, 1, 0);
+  else guestVis.n.normalize();
+  guestVis.groundY = Number.isFinite(p.gy) ? p.gy : guestVis.pos.y;
+  guestVis.grounded = p.grounded !== false;
+  guestVis.nitroOn = !!p.nitro;
+  guestVis.thrust = p.thrust || 0;
+  guestVis.lift = p.lift || 0;
+  guestVis.thrusting = !!p.thrusting || guestVis.thrust > 0.2;
+  guestVis.braking = !!p.braking;
+  guestVis.steerAngle = p.steer || 0;
+  guestVis.energy = Number.isFinite(p.energy) ? p.energy : veh.energy;
+  guestVis.alt = Number.isFinite(p.alt) ? p.alt : 0;
+  guestVis.accel = 0;
+  guestVis.latAccel = 0;
+  guestVis.on = true;
+  return guestVis;
+}
 function syncCar(dt) {
+  if (game.guest) { syncOne(dt, sampleGuestView(dt) || veh, car, 0); return; }
   if (!race) { syncOne(dt, veh, car, game.impactForCar || 0); game.impactForCar = 0; return; }
   for (const r of race.racers) {
     const hit = r.primary ? (game.impactForCar || 0) : (r.impactForCar || 0);
@@ -941,8 +1265,8 @@ function syncCar(dt) {
 }
 
 // ---------------- 相機 ----------------
-function updateCamera(dt, subject, cam, decay = true) {
-  const v = subject ? subject.veh : veh;
+function updateCamera(dt, subject, cam, decay = true, viewVeh) {
+  const v = viewVeh || (subject ? subject.veh : veh);
   const cmodel = subject ? subject.car : car;
   cam = cam || camera;
   const st = subject ? subject.cam : null;
@@ -957,12 +1281,13 @@ function updateCamera(dt, subject, cam, decay = true) {
     cam.position.copy(camPos);
     cam.lookAt(v.pos.x, v.pos.y + ly, v.pos.z);
     cam.fov = damp(cam.fov, 45, 5, dt);
-    cam.setViewOffset(innerWidth, innerHeight, -innerWidth * 0.27, 0, innerWidth, innerHeight);
+    const vs = viewSize();
+    cam.setViewOffset(vs.w, vs.h, -vs.w * 0.27, 0, vs.w, vs.h);
     cam.updateProjectionMatrix();
     return;
   }
   if (cam.view && cam.view.enabled) cam.clearViewOffset();
-  const lam = snap ? 999 : mode === 2 ? 40 : v.grounded ? 5.5 : 3.5;
+  const lam = snap ? 999 : mode === 2 ? 40 : viewVeh ? 2.2 : (v.grounded ? 5.5 : 3.5);
   const yaw0 = st ? st.yaw : game.camYaw;
   const yaw = yaw0 + wrapAngle(v.heading - yaw0) * (1 - Math.exp(-lam * dt));
   if (st) st.yaw = yaw; else game.camYaw = yaw;
@@ -982,14 +1307,18 @@ function updateCamera(dt, subject, cam, decay = true) {
     const h = [2.5, 1.5, 0, 5.2][mode] * cv.height + clamp(v.alt, 0, 40) * 0.12;
     const tx = v.pos.x - dir.x * dist, tz = v.pos.z - dir.z * dist, ty = v.pos.y + h;
     if (snap) cpos.set(tx, ty, tz);
-    else { cpos.x = damp(cpos.x, tx, 16, dt); cpos.z = damp(cpos.z, tz, 16, dt); cpos.y = damp(cpos.y, ty, 7, dt); }
+    else {
+      const follow = viewVeh ? 6 : 16;
+      cpos.x = damp(cpos.x, tx, follow, dt); cpos.z = damp(cpos.z, tz, follow, dt); cpos.y = damp(cpos.y, ty, viewVeh ? 4 : 7, dt);
+    }
     const gy = track.groundHeight(cpos.x, cpos.z) + 0.8;
     if (cpos.y < gy) cpos.y = gy;
     cam.position.copy(cpos);
     const ahead = [7, 9, 0, 6][mode];
     cam.lookAt(v.pos.x + dir.x * ahead, v.pos.y + [1.2, 1.0, 0, 1.0][mode] * cv.height + clamp(v.alt, 0, 40) * 0.04, v.pos.z + dir.z * ahead);
   }
-  const k = smoothstep(40, 110, sp) * 0.012 + (v.nitroOn ? 0.012 : 0) + game.shake * 0.05 + (v.thrusting ? 0.004 : 0);
+  const noise = game.guest ? 0 : (smoothstep(40, 110, sp) * 0.012 + (v.nitroOn ? 0.012 : 0) + (v.thrusting ? 0.004 : 0));
+  const k = game.guest ? 0 : noise + game.shake * 0.05;
   if (k > 0.0005 && game.state === 'race') {
     cam.position.x += (Math.random() - 0.5) * k * 2;
     cam.position.y += (Math.random() - 0.5) * k * 2 - game.kick;
@@ -1034,6 +1363,8 @@ function frame(now) {
   if (!(dt > 0)) return;
   dt = Math.min(dt, 0.1);
   game.time += dt;
+  try { if (hostNet && hostNet.poll) hostNet.poll(now); } catch (e) {}
+  try { if (guestNet && guestNet.poll) guestNet.poll(now); } catch (e) {}
   if (!game.freeze) {
     if (race && game.state !== 'menu') race.pollHumans(dt);
     else input.poll(dt);
@@ -1047,12 +1378,15 @@ function frame(now) {
   if (game.state === 'countdown' || game.state === 'race') {
     if (pressed.pause) { pause(); }
     else {
-      if (pressed.camera) { game.camMode = (game.camMode + 1) % CAM_NAMES.length; game.camSnap = true; }
+      if (pressed.camera) { game.camMode = (game.camMode + 1) % 4; game.camSnap = true; }
       if (game.state === 'race') {
         if (!game.freeze) {
           if (pressed.reset) {
-            if (game.guest && guestNet) guestNet.send({ t: 'reset' });
-            resetToTrack();
+            if (game.guest) {
+              if (game.outbox) game.outbox.push({ t: 'reset' });
+              if (guestNet) guestNet.send({ t: 'reset' });
+              else if (!game.outbox) resetToTrack();
+            } else resetToTrack();
           }
           const p2 = race && race.locals()[1];
           if (p2 && p2.input && p2.input.pressed.reset) resetRacer(p2);
@@ -1060,18 +1394,21 @@ function frame(now) {
           let steps = 0;
           if (game.guest) {
             if (guestNet) guestNet.noteInput(input.state, performance.now());
-            while (game.acc >= PHYS_DT && steps < 6) {
-              veh.step(PHYS_DT, input.state);
-              if (guestNet) guestNet.noteSubstep();
-              game.acc -= PHYS_DT; steps++;
-            }
-            if (steps === 6) game.acc = 0;
-            handleEvents(dt);
-            if (pendingSnap) {
-              try { applyReconcile(pendingSnap); } catch (e) {}
-              pendingSnap = null;
-              veh.events.impact = 0; veh.events.wall = 0; veh.events.respawn = false; veh.events.offroad = false;
-            }
+            const freshHost = guestSelfAt > 0 && performance.now() - guestSelfAt < 400;
+            if (!freshHost) {
+              while (game.acc >= PHYS_DT && steps < 4) {
+                veh.step(PHYS_DT, input.state);
+                if (guestNet) guestNet.noteSubstep();
+                game.acc -= PHYS_DT; steps++;
+              }
+              if (steps === 4) game.acc = 0;
+            } else game.acc = 0;
+            veh.events.respawn = false;
+            veh.events.why = '';
+            veh.events.offroad = false;
+            veh.events.impact = 0;
+            veh.events.wall = 0;
+            pendingSnap = null;
           } else {
             try { applyRemoteInputs(); } catch (e) {}
             while (game.acc >= PHYS_DT && steps < 6) {
@@ -1091,7 +1428,7 @@ function frame(now) {
         const c = Math.ceil(game.countdown - 0.4);
         if (c !== game.lastCount) {
           game.lastCount = c;
-          if (c > 0) { hud.count(String(c)); audio.beep(false); } else { hud.count('出發！'); audio.beep(true); }
+          if (c > 0) { hud.count(String(c)); audio.beep(false); } else { hud.count(t('toast.go')); audio.beep(true); }
         }
         if (game.countdown <= 0.4 && game.state === 'countdown') { game.state = 'race'; setTimeout(() => hud.count(''), 700); }
         if (race) for (const r of race.racers) r.veh.energy = 100;
@@ -1100,7 +1437,7 @@ function frame(now) {
         const c = Math.ceil((game.countdown || 0) - 0.4);
         if (c !== game.lastCount) {
           game.lastCount = c;
-          if (c > 0) { hud.count(String(c)); audio.beep(false); } else hud.count('出發！');
+          if (c > 0) { hud.count(String(c)); audio.beep(false); } else hud.count(t('toast.go'));
         }
       }
     }
@@ -1113,28 +1450,34 @@ function frame(now) {
   world.updateRings(dt, game.time);
   if (game.split && race && race.locals().length > 1 && game.state !== 'menu') renderSplit(dt);
   else {
-    updateCamera(dt);
-    world.update(camera, veh.pos);
+    const view = game.guest && guestVis.on ? guestVis : null;
+    updateCamera(dt, null, null, true, view);
+    world.update(camera, (view || veh).pos);
     renderer.render(scene, camera);
   }
 
   // HUD / 音效
   if (game.state === 'countdown' || game.state === 'race' || game.state === 'paused') {
-    const stLabel = veh.nitroOn ? '氮氣加速' : !veh.grounded ? (veh.thrusting ? '推進飛行' : '滯空') : (!veh.onRoad ? '離開路面' : '地面行駛');
+    const shown = game.guest && guestVis.on ? guestVis : veh;
+    const onRoad = game.guest && guestRoad.known ? guestRoad.onRoad : shown.onRoad !== false;
+    const stLabel = shown.nitroOn ? t('hud.nitro') : !shown.grounded ? (shown.thrusting ? t('hud.flying') : t('hud.air')) : (!onRoad ? t('hud.off') : t('hud.ground'));
     const lapView = game.guest && guestLive ? guestLap : game.lap;
-    hud.update(dt, veh, lapView, CAM_NAMES[game.camMode], game.guest ? '📱 觸控開車' : padText(), stLabel);
+    hud.update(dt, shown, lapView, camName(game.camMode), game.guest ? t('hud.touchDrive') : padText(), stLabel);
     if (game.guest && guestPoses.length) {
-      hud.drawMinimap(veh, guestPoses.map((p) => ({ veh: { pos: { x: p.x, z: p.z }, heading: p.heading || 0 }, driver: { kind: p.kind || 'remote' } })));
-    } else hud.drawMinimap(veh, race ? race.racers : null);
-    hud.fx(dt, veh, Q.fx && game.state === 'race' && !game.split);
+      hud.drawMinimap(shown, guestPoses.map((p) => ({ veh: { pos: { x: p.x, z: p.z }, heading: p.heading || 0 }, driver: { kind: p.kind || 'remote' } })));
+    } else hud.drawMinimap(shown, race ? race.racers : null);
+    hud.fx(dt, shown, !game.guest && Q.fx && game.state === 'race' && !game.split);
     updateStandings();
   }
   if (audio.ctx && audio.ctx.state === 'suspended' && (input.anyPadInput || pressed.pause)) audio.init();
-  audio.update(veh.speed, veh.thrust, veh.lift, veh.nitroOn, veh.grounded, game.state === 'race');
+  {
+    const shown = game.guest && guestVis.on ? guestVis : veh;
+    audio.update(shown.speed, shown.thrust, shown.lift, shown.nitroOn, shown.grounded, game.state === 'race');
+  }
   updateTouchVisibility();
   const pi = input.padInfo;
   const sp = $('startPad');
-  if (sp) { sp.className = 'padline' + (pi.connected ? ' ok' : ''); const t = pi.connected ? `🎮 已連接：${shortPadName(pi.id)}（${input.profile.name}）` : '🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵'; if (sp.textContent !== t) sp.textContent = t; }
+  if (sp) { sp.className = 'padline' + (pi.connected ? ' ok' : ''); const label = pi.connected ? t('start.pad.on', { name: shortPadName(pi.id), profile: profileLabel(input.profile) }) : t('start.pad.wait'); if (sp.textContent !== label) sp.textContent = label; }
   if (game.state === 'menu' && !game.guest) pollLobby();
   try { flushNet(false); } catch (e) {}
   adaptResolution(dt);
@@ -1170,8 +1513,7 @@ function handleEvents(dt) {
       if (pad && ev.impact > 3) pad.rumble(0.4, 0.5, 120, true);
     }
     if (ev.respawn) {
-      if (game.guest && guestNet) guestNet.send({ t: 'reset' });
-      respawnRacer(race ? r : null, r.primary || !race ? '墜入峽谷！回到跳台前' : '');
+      if (!(game.guest && (r.primary || !race))) respawnRacer(race ? r : null, r.primary || !race ? t('toast.canyon') : '');
     }
     ev.impact = 0; ev.wall = 0; ev.respawn = false; ev.offroad = false;
   }
@@ -1197,7 +1539,7 @@ function updateStandings() {
 function showResults() {
   const list = $('resultsList');
   if (list && race) {
-    list.innerHTML = race.standings().map((r, i) => `<div>${i + 1}. ${r.name}　${r.finish != null ? fmtTime(r.finish) : '未完成'}</div>`).join('');
+    list.innerHTML = race.standings().map((r, i) => `<div>${i + 1}. ${r.name}　${r.finish != null ? fmtTime(r.finish) : t('results.dnf')}</div>`).join('');
   }
   ui.show('results');
 }
@@ -1214,7 +1556,7 @@ function escPad(s) {
   return String(s).replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
 }
 function mappingLabel(gp) {
-  if (!gp || gp.mapping == null || gp.mapping === '') return '（非標準）';
+  if (!gp || gp.mapping == null || gp.mapping === '') return t('lobby.nonstd');
   return gp.mapping === 'standard' ? 'standard' : String(gp.mapping);
 }
 function updateLobby() {
@@ -1222,17 +1564,18 @@ function updateLobby() {
   if (!p1 || !p2 || !input) return;
   const pi = input.padInfo;
   const p1real = pi.connected && !isVirtualPad(pi.id);
-  const t1 = p1real ? `P1：手把 ${pi.index}　${shortPadName(pi.id)}` : 'P1：鍵盤、觸控（沒有第二支手把時也是你）';
+  const t1 = p1real ? t('start.p1.pad', { index: pi.index, name: shortPadName(pi.id) }) : t('start.p1.keys');
   if (p1.textContent !== t1) p1.textContent = t1;
   p1.className = 'padline' + (p1real ? ' ok' : '');
   const hint = $('startP2Hint');
-  if (hint && hint.textContent !== '第二支搖桿：按任一鍵加入 P2') hint.textContent = '第二支搖桿：按任一鍵加入 P2';
+  const hintText = t('start.p2.hint');
+  if (hint && hint.textContent !== hintText) hint.textContent = hintText;
   if (lobby.p2) {
-    const t2 = `P2：手把 ${lobby.p2.index}　${shortPadName(lobby.p2.id)}（上下分屏）。按 Back／Select／－ 離開。`;
+    const t2 = t('start.p2.on', { index: lobby.p2.index, name: shortPadName(lobby.p2.id) });
     if (p2.textContent !== t2) p2.textContent = t2;
     p2.className = 'padline ok';
   } else {
-    const t2 = 'P2：用另一支手把按任意鍵加入，上下分屏。鍵盤與觸控在沒有第二支手把時都是 P1。';
+    const t2 = t('start.p2.off');
     if (p2.textContent !== t2) p2.textContent = t2;
     p2.className = 'padline';
   }
@@ -1240,21 +1583,21 @@ function updateLobby() {
   if (!box) return;
   const slots = input.getPadList();
   const lines = [];
-  if (!slots.length) lines.push('<div>（尚未回報手把槽）</div>');
+  if (!slots.length) lines.push('<div>' + t('lobby.empty') + '</div>');
   for (let i = 0; i < slots.length; i++) {
     const gp = slots[i];
     if (!gp || gp.connected === false) {
-      lines.push(`<div>[${i}] （空）</div>`);
+      lines.push(`<div>[${i}] ${t('lobby.slotEmpty')}</div>`);
       continue;
     }
     const virt = isVirtualPad(gp);
-    let role = '未加入';
+    let role = t('lobby.out');
     let cls = '';
-    if (virt) { role = '車機虛擬（不使用）'; cls = 'virt'; }
+    if (virt) { role = t('lobby.virt'); cls = 'virt'; }
     else if (p1real && pi.index === gp.index) { role = 'P1'; cls = 'p1'; }
     else if (lobby.p2 && lobby.p2.index === gp.index) { role = 'P2'; cls = 'p2'; }
     const idx = Number.isFinite(gp.index) ? gp.index : i;
-    lines.push(`<div class="${cls}">[${idx}] ${escPad(gp.id || '（無 id）')}　${escPad(mappingLabel(gp))}　${role}</div>`);
+    lines.push(`<div class="${cls}">[${idx}] ${escPad(gp.id || t('lobby.noId'))}　${escPad(mappingLabel(gp))}　${role}</div>`);
   }
   const html = lines.join('');
   if (box.innerHTML !== html) box.innerHTML = html;
@@ -1322,10 +1665,17 @@ function pollLobby() {
 
 function padText() {
   const p = input.padInfo;
-  if (!p.connected) return '🎮 未偵測到搖桿（按任一鍵喚醒）';
-  let t = '🎮 ' + shortPadName(p.id);
-  if (p.mapping !== 'standard') t += '（非標準映射，請至按鍵設定）';
-  return t;
+  if (!p.connected) return t('hud.padWake');
+  let label = '🎮 ' + shortPadName(p.id);
+  if (p.mapping !== 'standard') label += t('hud.padNonstd');
+  return label;
+}
+
+function linkHow(via) {
+  if (via === 'ws') return t('how.ws');
+  if (via === 'relay') return t('how.turn');
+  if (via === 'direct') return t('how.direct');
+  return t('how.joined');
 }
 
 function updateTouchVisibility() {
