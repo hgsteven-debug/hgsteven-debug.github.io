@@ -149,7 +149,13 @@ async function boot() {
     ui = new UI(input, {
       onStart: () => { if (!game.guest) startGame(); }, onResume: resume, onRestart: () => { if (!game.guest) startGame(); }, onQuit: quit,
       onFullscreen: toggleFullscreen, onVehicle: setVehicle, getCar: () => car,
-      onTrack: (id) => { store.set('track', id); const u = new URL(location.href); u.searchParams.delete('track'); location.href = u.toString(); },
+      onTrack: (id) => {
+        store.set('track', id);
+        try { sessionStorage.setItem('skyroadster.flow', 'tracks'); } catch (e) {}
+        const u = new URL(location.href);
+        u.searchParams.delete('track');
+        location.href = u.toString();
+      },
       onQuality: (q) => { store.set('quality', q); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u.toString(); },
       getQuality: () => qname, onVolume: (v) => audio.setVolume(v), getVolume: () => audio.volume,
       onTouchMode: () => {}, onTouchPress: (p) => { input.noteTouchPress(p); game.touchPressed = p; },
@@ -251,6 +257,11 @@ async function boot() {
     };
     game.state = 'menu';
     ui.refreshTracks();
+    let resumeFlow = '';
+    try {
+      resumeFlow = sessionStorage.getItem('skyroadster.flow') || '';
+      sessionStorage.removeItem('skyroadster.flow');
+    } catch (e) {}
     if (game.guest) {
       ui.show('join');
       const jc = $('joinCode');
@@ -260,6 +271,9 @@ async function boot() {
       setJoinStatus(t('guest.scanning'), 'wait');
       syncPhoneOrientation();
       if (!netOff) beginGuest();
+    } else if (resumeFlow === 'tracks') {
+      ui.enterFlow('tracks');
+      if (!netOff) beginHost();
     } else {
       ui.show('start');
       if (!netOff) beginHost();

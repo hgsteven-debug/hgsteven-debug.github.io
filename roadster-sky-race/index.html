@@ -66,28 +66,51 @@
   </div>
 </div>
 
-<!-- 開始畫面 -->
-<div id="s-start" class="screen">
+<!-- 標題 -->
+<div id="s-start" class="screen flow">
+  <div class="titlebar">
+    <div class="seg" data-group="lang">
+      <button class="btn" data-lang="zh-TW">繁中</button>
+      <button class="btn" data-lang="en">EN</button>
+      <button class="btn" data-lang="fr">FR</button>
+      <button class="btn" data-lang="ja">日本語</button>
+      <button class="btn" data-lang="ko">한국어</button>
+    </div>
+    <button class="btn iconbtn" data-act="settings" data-i18n-aria="menu.settings" aria-label="畫質與設定">⚙</button>
+  </div>
   <div class="card">
     <h1><span data-i18n="title.main">天空飛馳</span> <small data-i18n="title.sub">Sky Roadster</small></h1>
     <p class="sub" data-i18n="tagline">致敬未來跑車的粉絲作品・會飛的賽車</p>
-    <div class="setrow stack"><span data-i18n="menu.lang">語言</span>
-      <div class="seg" data-group="lang">
-        <button class="btn" data-lang="zh-TW">繁中</button>
-        <button class="btn" data-lang="en">EN</button>
-        <button class="btn" data-lang="fr">FR</button>
-        <button class="btn" data-lang="ja">日本語</button>
-        <button class="btn" data-lang="ko">한국어</button>
-      </div>
-    </div>
     <div class="notice">🅿️ <b data-i18n="notice.title">僅限停車（P 檔）時遊玩</b><br><span data-i18n="notice.body">Tesla 車機瀏覽器只允許在停妥時使用網頁遊戲。行駛中請勿操作，確保安全。</span></div>
-    <div id="startCar" class="carline" data-i18n="start.carEmpty">目前車輛：—</div>
-    <div id="startTrack" class="carline" data-i18n="start.trackEmpty">目前賽道：—</div>
+    <button class="btn primary xl" data-act="flow-start" data-i18n="flow.start">開始</button>
+  </div>
+</div>
+
+<!-- 模式 -->
+<div id="s-mode" class="screen flow">
+  <div class="card">
+    <h2 data-i18n="mode.title">選擇模式</h2>
+    <p class="sub" data-i18n="mode.hint">單人直接選車。多人可以接手把，或用手機掃碼加入。</p>
+    <div class="menu col">
+      <button class="btn xl" data-mode="solo" data-act="mode-solo" data-i18n="mode.solo">單人</button>
+      <button class="btn xl" data-mode="multi" data-act="mode-multi" data-i18n="mode.multi">多人</button>
+    </div>
+    <div class="flowbar">
+      <button class="btn" data-act="back" data-i18n="flow.back">返回</button>
+    </div>
+  </div>
+</div>
+
+<!-- 多人：手把與手機 -->
+<div id="s-lobby" class="screen flow">
+  <div class="card">
+    <h2 data-i18n="lobby.title">一起開</h2>
+    <p class="sub" data-i18n="lobby.hint">第二支手把按任意鍵加入。手機掃右側 QR。準備好就繼續。</p>
     <div id="startPad" class="padline" data-i18n="start.pad.wait">🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵</div>
-    <div id="startPads" class="padlist" data-i18n="lobby.empty">（尚未回報手把槽）</div>
     <div id="startP1" class="padline" data-i18n="start.p1.short">P1：鍵盤、觸控，或第一支手把</div>
     <p id="startP2Hint" class="padhint" data-i18n="start.p2.hint">第二支搖桿：按任一鍵加入 P2</p>
     <div id="startP2" class="padline" data-i18n="start.p2.off">P2：用另一支手把按任意鍵加入，上下分屏。鍵盤與觸控在沒有第二支手把時都是 P1。</div>
+    <div id="startPads" class="padlist" data-i18n="lobby.empty">（尚未回報手把槽）</div>
     <div id="phoneJoin" class="phonejoin">
       <div class="grow">
         <div id="phoneStatus" class="padline" data-i18n="start.phone">P3：用手機掃碼加入，在自己的螢幕開車</div>
@@ -96,6 +119,41 @@
         <p id="phoneHint" class="small dim" data-i18n="start.phoneHint">車機畫面仍是一人或上下兩人。第三人用手機加入同一場。連不上時，這台比賽照常進行。</p>
       </div>
       <canvas id="phoneQr" class="hidden" width="168" height="168" aria-label="加入比賽的 QR code"></canvas>
+    </div>
+    <div class="flowbar">
+      <button class="btn" data-act="back" data-i18n="flow.back">返回</button>
+      <button class="btn primary xl" data-act="flow-next" data-i18n="lobby.next">繼續</button>
+    </div>
+  </div>
+</div>
+
+<div id="s-garage" class="screen">
+  <div class="card wide">
+    <h2 data-i18n="garage.title">選擇車輛</h2>
+    <div id="vlist" class="vgrid"></div>
+    <div class="vinfo">
+      <div class="vhead"><h3 id="vname"></h3><span id="vtag" class="dim"></span></div>
+      <p id="vdesc" class="sub"></p>
+      <div id="vstats" class="vstats"></div>
+    </div>
+    <div class="setrow"><span data-i18n="garage.paint">車色</span><div class="seg" id="vpaints"></div></div>
+    <div class="flowbar">
+      <button class="btn when-wizard" data-act="back" data-i18n="flow.back">返回</button>
+      <button class="btn primary xl when-wizard hidden" data-act="flow-next" data-i18n="flow.next">下一步</button>
+      <button class="btn primary when-browse" data-act="back" data-i18n="garage.back">完成</button>
+    </div>
+    <p class="small dim" data-i18n="garage.hint">搖桿：十字鍵／左搖桿選擇，確認鍵選取，返回鍵離開。選擇會自動儲存。所有車型皆為原創造型，沒有任何商標或標誌。</p>
+  </div>
+</div>
+
+<div id="s-tracks" class="screen">
+  <div class="card wide">
+    <h2 data-i18n="tracks.title">選擇賽道</h2>
+    <div id="tlist" class="tgrid"></div>
+    <div class="vinfo">
+      <div class="vhead"><h3 id="tname"></h3><span id="ttag" class="dim"></span></div>
+      <p id="tdesc" class="sub"></p>
+      <p id="tbest" class="sub dim" data-i18n="tracks.bestNone">最佳單圈：—</p>
     </div>
     <div class="setrow"><span data-i18n="start.ai">電腦對手</span>
       <div class="seg" id="aiCount">
@@ -112,52 +170,27 @@
         <button class="btn" data-diff="hard" data-i18n="diff.hard">困難</button>
       </div>
     </div>
-    <p class="small dim" data-i18n="start.note">車機上最多兩人、畫面上下各一半。第三人用手機掃碼，在自己的螢幕開同一場。沒有第二支手把時，鍵盤和觸控都是 P1。電腦對手可以一起跑。</p>
-    <div class="menu">
-      <button class="btn primary" data-act="start" data-i18n="menu.start">開始遊戲</button>
-      <button class="btn" data-act="tracks" id="btnTracks" data-i18n="menu.tracks">選擇賽道</button>
-      <button class="btn" data-act="garage" id="btnGarage" data-i18n="menu.garage">選擇車輛</button>
-      <button class="btn" data-act="mapping" data-i18n="menu.mapping">按鍵設定</button>
-      <button class="btn" data-act="settings" data-i18n="menu.settings">畫質與設定</button>
-      <button class="btn" data-act="fullscreen" data-i18n="menu.full">全螢幕</button>
-      <a class="btn" href="gamepad-test.html" data-i18n="menu.padtest">搖桿測試頁</a>
+    <div class="flowbar">
+      <button class="btn when-wizard" data-act="back" data-i18n="flow.back">返回</button>
+      <button class="btn primary xl when-wizard hidden" data-act="flow-next" data-i18n="flow.next">下一步</button>
+      <button class="btn primary when-browse" data-act="back" data-i18n="tracks.done">完成</button>
     </div>
-    <div class="legend" id="legend">
-      <div><b data-i18n="legend.stick">左搖桿</b> <span data-i18n="legend.steer">轉向</span></div><div><b data-k="thr">ZR</b> <span data-i18n="legend.gas">加速</span></div><div><b data-k="brk">ZL</b> <span data-i18n="legend.brake">煞車／倒車</span></div>
-      <div><b data-k="lift">B</b> <span data-i18n="legend.lift">起飛推進器</span></div><div><b data-k="nitro">A</b> <span data-i18n="legend.nitro">氮氣</span></div><div><b data-k="cam">Y</b> <span data-i18n="legend.cam">切換視角</span></div>
-      <div><b data-k="reset">X</b> <span data-i18n="legend.reset">回到賽道</span></div><div><b data-k="pause">＋</b> <span data-i18n="legend.pause">暫停</span></div><div><b data-i18n="legend.pitch">左搖桿上下</b> <span data-i18n="legend.pitchDo">空中升降</span></div>
-    </div>
-    <p class="small dim" id="padProfile"></p>
-  </div>
-</div>
-
-<!-- 選擇車輛 -->
-<div id="s-tracks" class="screen">
-  <div class="card wide">
-    <h2 data-i18n="tracks.title">選擇賽道</h2>
-    <div id="tlist" class="tgrid"></div>
-    <div class="vinfo">
-      <div class="vhead"><h3 id="tname"></h3><span id="ttag" class="dim"></span></div>
-      <p id="tdesc" class="sub"></p>
-      <p id="tbest" class="sub dim" data-i18n="tracks.bestNone">最佳單圈：—</p>
-    </div>
-    <div class="menu"><button class="btn primary" data-act="back" data-i18n="tracks.done">完成</button></div>
     <p class="small dim" data-i18n="tracks.hint">搖桿／鍵盤可導覽。選擇會自動儲存；切換賽道會重新載入場景。</p>
   </div>
 </div>
 
-<div id="s-garage" class="screen">
-  <div class="card wide">
-    <h2 data-i18n="garage.title">選擇車輛</h2>
-    <div id="vlist" class="vgrid"></div>
-    <div class="vinfo">
-      <div class="vhead"><h3 id="vname"></h3><span id="vtag" class="dim"></span></div>
-      <p id="vdesc" class="sub"></p>
-      <div id="vstats" class="vstats"></div>
+<div id="s-ready" class="screen flow">
+  <div class="card">
+    <h2 data-i18n="ready.title">準備出發</h2>
+    <div id="readyMode" class="carline"></div>
+    <div id="startCar" class="carline" data-i18n="start.carEmpty">目前車輛：—</div>
+    <div id="startTrack" class="carline" data-i18n="start.trackEmpty">目前賽道：—</div>
+    <div class="carline" data-i18n="results.sub">兩圈衝刺</div>
+    <div id="readyAi" class="carline"></div>
+    <div class="flowbar">
+      <button class="btn" data-act="back" data-i18n="flow.back">返回</button>
+      <button class="btn primary xl" data-act="start" data-i18n="ready.go">開跑</button>
     </div>
-    <div class="setrow"><span data-i18n="garage.paint">車色</span><div class="seg" id="vpaints"></div></div>
-    <div class="menu"><button class="btn primary" data-act="back" data-i18n="garage.back">完成</button></div>
-    <p class="small dim" data-i18n="garage.hint">搖桿：十字鍵／左搖桿選擇，確認鍵選取，返回鍵離開。選擇會自動儲存。所有車型皆為原創造型，沒有任何商標或標誌。</p>
   </div>
 </div>
 
@@ -256,6 +289,18 @@
       <div class="seg" data-group="rumble"><button class="btn" data-r="1" data-i18n="set.on">開</button><button class="btn" data-r="0" data-i18n="set.off">關</button></div></div>
     <div class="setrow"><span data-i18n="set.touch">觸控按鍵</span>
       <div class="seg" data-group="touch"><button class="btn" data-tc="auto" data-i18n="touch.auto">自動</button><button class="btn" data-tc="on" data-i18n="touch.show">顯示</button><button class="btn" data-tc="off" data-i18n="touch.hide">隱藏</button></div></div>
+    <h3 data-i18n="set.extra">其他</h3>
+    <div class="menu">
+      <button class="btn" data-act="mapping" data-i18n="menu.mapping">按鍵設定</button>
+      <button class="btn" data-act="fullscreen" data-i18n="menu.full">全螢幕</button>
+      <a class="btn" href="gamepad-test.html" data-i18n="menu.padtest">搖桿測試頁</a>
+    </div>
+    <div class="legend" id="legend">
+      <div><b data-i18n="legend.stick">左搖桿</b> <span data-i18n="legend.steer">轉向</span></div><div><b data-k="thr">ZR</b> <span data-i18n="legend.gas">加速</span></div><div><b data-k="brk">ZL</b> <span data-i18n="legend.brake">煞車／倒車</span></div>
+      <div><b data-k="lift">B</b> <span data-i18n="legend.lift">起飛推進器</span></div><div><b data-k="nitro">A</b> <span data-i18n="legend.nitro">氮氣</span></div><div><b data-k="cam">Y</b> <span data-i18n="legend.cam">切換視角</span></div>
+      <div><b data-k="reset">X</b> <span data-i18n="legend.reset">回到賽道</span></div><div><b data-k="pause">＋</b> <span data-i18n="legend.pause">暫停</span></div><div><b data-i18n="legend.pitch">左搖桿上下</b> <span data-i18n="legend.pitchDo">空中升降</span></div>
+    </div>
+    <p class="small dim" id="padProfile"></p>
     <div class="menu"><button class="btn primary" data-act="back" data-i18n="set.back">返回</button></div>
     <p class="small dim" id="qinfo"></p>
   </div>
