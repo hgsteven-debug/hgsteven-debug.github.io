@@ -90,7 +90,7 @@ function fail(msg, err) {
   host.appendChild(btn);
 }
 
-function baseDpr() { return Math.min(window.devicePixelRatio || 1, game.guest ? 1 : 2); }
+function baseDpr() { return Math.min(window.devicePixelRatio || 1, game.guest ? 1 : 1.5); }
 function viewSize() {
   const forced = document.documentElement.classList.contains('force-landscape');
   if (!forced) { viewLock = null; return { w: window.innerWidth, h: window.innerHeight }; }
@@ -115,7 +115,7 @@ function applySize() {
   applyForceBox();
   if (!renderer) return;
   const scale = game.guest ? Math.min(Q.scale, 0.62) : Q.scale;
-  const pr = baseDpr() * scale * game.dyn;
+  const pr = Math.min(game.guest ? 1 : 1.5, baseDpr() * scale * game.dyn);
   const { w, h } = viewSize();
   const key = pr.toFixed(3) + ':' + Math.round(w) + 'x' + Math.round(h);
   if (key === lastApplied) return;
@@ -209,7 +209,13 @@ async function boot() {
     renderer.render(scene, camera);
     $('loadBar').style.width = '100%';
 
-    window.addEventListener('resize', () => { syncPhoneOrientation(); applySize(); });
+    window.addEventListener('resize', () => { syncPhoneOrientation(); applySize(); game._presentAt = 0; });
+    try {
+      const swHost = location.hostname || '';
+      if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      }
+    } catch (e) {}
     window.addEventListener('orientationchange', () => { syncPhoneOrientation(); applySize(); });
     for (const ev of ['pointerdown', 'touchend', 'click']) {
       window.addEventListener(ev, () => { tryLockLandscape(); }, { passive: true });
@@ -897,16 +903,19 @@ function onGuestWelcome(msg) {
 }
 function onGuestState(msg) {
   if (!guestNet || !msg) return;
+  const prev = guestNet.latest;
+  const packetVehicle = msg.selfVehicle;
+  if (!msg.standings && prev && prev.standings) msg.standings = prev.standings;
   guestNet.latest = msg;
   guestNet.connected = true;
-  if (!guestCarPick && msg.selfVehicle) setVehicle(msg.selfVehicle, msg.selfPaint, { persist: false, notify: false, keepEnergy: true });
+  if (!guestCarPick && packetVehicle) setVehicle(packetVehicle, msg.selfPaint, { persist: false, notify: false, keepEnergy: true });
   const cars = (msg.cars || []).filter((c) => c && c.id !== msg.selfId);
   guestBuf.push(performance.now(), cars);
   if (msg.selfLap) {
     if (Number.isFinite(msg.selfLap.n)) guestLap.n = msg.selfLap.n;
     if (Number.isFinite(msg.selfLap.t)) guestLap.t = msg.selfLap.t;
-    guestLap.last = msg.selfLap.last;
-    guestLap.best = msg.selfLap.best;
+    if (msg.selfLap.last !== undefined) guestLap.last = msg.selfLap.last;
+    if (msg.selfLap.best !== undefined) guestLap.best = msg.selfLap.best;
   }
   const wantTrack = msg.track;
   if (wantTrack && wantTrack !== track.id && TRACKS.some((t) => t.id === wantTrack)) {
@@ -1535,15 +1544,22 @@ function frame(now) {
     if (pressed.pause && ui.current === 'pause') resume();
   }
 
-  syncCar(dt);
-  if (game.guest && guestLive) { try { syncGhosts(dt); } catch (e) {} }
-  world.updateRings(dt, game.time);
-  if (game.split && race && race.locals().length > 1 && game.state !== 'menu') renderSplit(dt);
-  else {
-    const view = game.guest && guestVis.on ? guestVis : null;
-    updateCamera(dt, null, null, true, view);
-    world.update(camera, (view || veh).pos);
-    renderer.render(scene, camera);
+  // 比賽中每幀畫。選單和結算最多 4Hz，暫停最多 1Hz，避免車機在不動的畫面空轉。
+  const racing = game.state === 'countdown' || game.state === 'race';
+  if (game._shown !== game.state) { game._shown = game.state; game._presentAt = 0; }
+  const draw = racing || (now - (game._presentAt || 0) >= (game.state === 'paused' ? 1000 : 250));
+  if (draw) {
+    syncCar(dt);
+    if (game.guest && guestLive) { try { syncGhosts(dt); } catch (e) {} }
+    world.updateRings(dt, game.time);
+    if (game.split && race && race.locals().length > 1 && game.state !== 'menu') renderSplit(dt);
+    else {
+      const view = game.guest && guestVis.on ? guestVis : null;
+      updateCamera(dt, null, null, true, view);
+      world.update(camera, (view || veh).pos);
+      renderer.render(scene, camera);
+    }
+    game._presentAt = now;
   }
 
   // HUD / 音效
@@ -1789,9 +1805,17 @@ function paintDebug() {
   el.classList.remove('hidden');
   const net = game.guest ? guestNet : hostNet;
   const d = net && net.joinDebug ? net.joinDebug() : null;
-  el.textContent = d
-    ? ['stage ' + d.stage, 'signal ' + d.signal, 'cand ' + d.cand, 'pair ' + d.pair, 'proven ' + d.proven, 'via ' + d.via].join('\n')
-    : 'net off';
+  const fmtB = (n) => {
+    n = n || 0;
+    if (n >= 1000000) return (n / 1e6).toFixed(1) + ' MB/s';
+    if (n >= 10000) return (n / 1000).toFixed(1) + ' kB/s';
+    return Math.round(n) + ' B/s';
+  };
+  const lines = d
+    ? ['stage ' + d.stage, 'signal ' + d.signal, 'cand ' + d.cand, 'pair ' + d.pair, 'proven ' + d.proven, 'via ' + d.via, 'up ' + fmtB(d.up), 'dn ' + fmtB(d.down)]
+    : ['net off'];
+  if (d && d.per) lines.push('per ' + fmtB(d.per));
+  el.textContent = lines.join('\n');
 }
 function linkHow(via) {
   if (via === 'ws') return t('how.ws');

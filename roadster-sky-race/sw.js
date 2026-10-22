@@ -1,0 +1,26 @@
+// 同網域的靜態檔在連得上時更新快取，斷線時用上次成功的回應。
+const CACHE = 'sky-roadster-v1';
+
+self.addEventListener('install', () => { self.skipWaiting(); });
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  let url;
+  try { url = new URL(req.url); } catch (e) { return; }
+  if (url.origin !== self.location.origin) return;
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    try {
+      const res = await fetch(req);
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    } catch (e) {
+      const hit = await cache.match(req);
+      if (hit) return hit;
+      throw e;
+    }
+  })());
+});
