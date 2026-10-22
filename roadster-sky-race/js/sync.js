@@ -342,7 +342,7 @@ export function packSelf(s) {
     qx: n(s.qx), qy: n(s.qy), qz: n(s.qz), qw: n(s.qw, 1),
     vx: n(s.vx), vy: n(s.vy), vz: n(s.vz),
     heading: n(s.heading), speed: n(speed),
-    energy: n(s.energy, 100),
+    energy: Math.max(0, Math.min(100, n(s.energy, 100))),
     grounded: !!s.grounded,
     onRoad: s.onRoad !== false,
     nitroOn: !!s.nitroOn,

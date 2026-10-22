@@ -50,6 +50,23 @@ export const TRACKS = [
     gaps: [],
     height: { a: 0.6, b: 0.25, c: 0.1, pa: 1, pb: 2, pc: 3, oa: 0.2, ob: 1 },
   },
+  {
+    id: 'moon', name: '月球賽道', tag: '賽道 5',
+    desc: '低重力月球環道。g = 1.62 m/s²。隕石坑緣是跳台，滯空比地球長，抓地較少。',
+    theme: 'moon',
+    moon: true,
+    gravity: 1.62,
+    ctrl: [
+      [0, 40], [210, 20], [400, -40], [520, -180], [500, -360],
+      [340, -480], [140, -500], [-40, -420], [-190, -280],
+      [-250, -120], [-170, 20], [-40, 60],
+    ],
+    gaps: [],
+    height: { a: 8, b: 4, c: 1.5, pa: 2, pb: 3, pc: 5, oa: 0.3, ob: 1.1 },
+    crests: [0.16, 0.42, 0.7],
+    crestH: 6.5,
+    crestBoost: 6,
+  },
 ];
 export const DEFAULT_TRACK = 'canyon';
 
@@ -115,5 +132,18 @@ export const THEMES = {
     rock: 0x8b9198,
     skyKind: 'day',
     ring: [0.25, 1.5, 2.1],
+  },
+  moon: {
+    label: '月球',
+    fog: [0.02, 0.025, 0.03], fogDen: 0.00018,
+    sun: [0.25, 0.86, 0.2], sunCol: 0xe7eef8, sunInt: 1.7,
+    hemiSky: 0x10141c, hemiGnd: 0x3c4046, hemiInt: 0.4,
+    horizon: 0x05060a,
+    sand: [0x8d9198, 0x6c7076, 0x4a4e54, 0x2c3036, 0xb4b8be],
+    road: [0x5a5f66, 0x2a2e34],
+    rail: 0xc5ccd4, post: 0x3a4048, refl: 0x9ecbff,
+    rock: 0x9aa0a6,
+    skyKind: 'space',
+    ring: [0.55, 0.78, 0.95],
   },
 };

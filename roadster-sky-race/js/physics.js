@@ -8,6 +8,11 @@ import { KIND, ribbonCompression } from './stunts.js';
 const G = 9.81;
 const ENERGY_MAX = 100;
 
+function trackGravity(tr) {
+  const g = tr && tr.def && +tr.def.gravity;
+  return g > 0.4 && g < 25 ? g : G;
+}
+
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _n = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _qT = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ'), _up = new THREE.Vector3(0, 1, 0);
 const _tf = new THREE.Vector3(), _tr = new THREE.Vector3();
@@ -53,6 +58,13 @@ export class Vehicle {
     this._trapDist = 0;
     this._oobT = 0;
     this._lip = 0;
+    this.ghostT = 0;
+    this._crawlT = 0;
+    this._fastT = 0;
+    this._nudged = false;
+    this.mass = 1800;
+    this._px = 0; this._py = 0; this._pz = 0;
+    this._throttle = 0;
   }
 
   _frameSlot(name) {
@@ -117,6 +129,10 @@ export class Vehicle {
     this._railT = 0;
     this._onRail = false;
     this._wx = null;
+    this.ghostT = 1.5;
+    this._crawlT = 0;
+    this._fastT = 0;
+    this._nudged = false;
     if (tr.kind && tr.kind[i] && tr.kind[i] !== KIND.FLY) {
       this.attached = true;
       this.grounded = true;
@@ -244,19 +260,21 @@ export class Vehicle {
   }
   _stepAttached(dt, inp) {
     const tr = this.tr, ev = this.events, t = this.t;
+    const g = trackGravity(tr);
     const f0 = tr.frame(this.fi, this._blankFrame());
     let vf = this.speedF || 0;
     let vlat = this.vlat || 0;
     const thr = inp.throttle || 0, brk = inp.brake || 0;
+    this._throttle = thr;
     let af = 0;
     if (thr > 0.01) af += thr * t.accel * Math.max(0, 1 - Math.max(0, vf) / t.vRef);
-    if (brk > 0.01 && vf > 0.5) af -= brk * t.brake;
+    if (brk > 0.01 && vf > 0.5 && !(thr > 0.5 && vf < 3)) af -= brk * t.brake;
     af -= t.drag * vf * Math.abs(vf);
     const back = tr.frame(this.fi - 0.8, this._frameSlot('_fb'));
     const ahead = tr.frame(this.fi + 0.8, this._frameSlot('_fa'));
     const span = Math.max(0.5, ahead.pos.distanceTo(back.pos));
     const slope = clamp((ahead.pos.y - back.pos.y) / span, -1, 1);
-    af += -G * slope;
+    af += -g * slope;
     this.nitroOn = !!inp.nitro && this.energy > 0.5 && (thr > 0.1 || vf > 5);
     if (this.nitroOn) {
       af += t.nitro * Math.max(0, 1 - vf / (t.vRef * 1.35));
@@ -267,7 +285,7 @@ export class Vehicle {
     const cap = t.vMax || 90;
     if (vf > cap) vf = cap;
     else if (vf < -cap * 0.4) vf = -cap * 0.4;
-    vlat += -G * f0.right.y * dt;
+    vlat += -g * f0.right.y * dt;
     // 鬆開搖桿時把車拉回路面中央，高牆才不會一路滑出去。
     vlat += clamp(-(this.lat || 0) * 4.5, -14, 14) * dt;
     const kn = clamp(f0.kn, -0.05, 0.08);
@@ -314,8 +332,8 @@ export class Vehicle {
     if (this._wx == null) { this._wx = this.pos.x; this._wy = this.pos.y; this._wz = this.pos.z; }
     const moved = Math.hypot(this.pos.x - this._wx, this.pos.y - this._wy, this.pos.z - this._wz);
     this._wx = this.pos.x; this._wy = this.pos.y; this._wz = this.pos.z;
-    if (this.pos.y < -30 || !Number.isFinite(this.pos.x)) { ev.respawn = true; if (!ev.why) ev.why = '偏離賽道，回到檢查點'; }
-    if (this._safeT > 0) { this._safeT -= dt; this._trapT = 0; this._trapDist = 0; this._oobT = 0; return; }
+    if (this.pos.y < -30 || !Number.isFinite(this.pos.x)) { ev.respawn = true; if (!ev.why) ev.why = 'off'; }
+    if (this._safeT > 0) { this._safeT -= dt; this._trapT = 0; this._trapDist = 0; this._oobT = 0; this._crawlT = 0; return; }
     const away = !this.attached && ((this.q1.al || 0) > 34 || (this.q1.d || 0) > 40);
     const oob = this.pos.y < -8 || away || !Number.isFinite(this.pos.y);
     this._oobT = oob ? (this._oobT || 0) + dt : 0;
@@ -324,21 +342,51 @@ export class Vehicle {
     // 貼著護欄磨、油門踩著卻快不起來：約兩秒回到檢查點。停在路面中央不算。
     const grinding = this._onRail && this.speed < 9 && this.thrust > 0.15 && !this.attached;
     this._railT = grinding ? (this._railT || 0) + dt : 0;
+    const g = trackGravity(this.tr);
+    const airLim = 1.6 * (9.81 / g);
+    const roadY = (this.q1 && this.q1.near) ? this.q1.y : this.groundY;
+    const longFall = this.airTime > airLim && !this.thrusting && this.pos.y < roadY - 8;
     if ((this._lip || 0) > 1.2 || this._oobT > 2 || this._railT > 2) {
       ev.respawn = true;
-      ev.why = this._oobT > 2 && (this._lip || 0) <= 1.2 && this._railT <= 2 ? '偏離賽道，回到檢查點' : '卡住了，回到檢查點';
+      ev.why = this._oobT > 2 && (this._lip || 0) <= 1.2 && this._railT <= 2 ? 'off' : 'stuck';
     } else if (this._trapT >= 2) {
       const pinned = this._trapDist < 2.2 && (
         this.speed > 8 || (this._lip || 0) > 0.2 || (!this.onRoad && this.speed < 4)
-        || (this.airTime > 1.6 && !this.thrusting)
+        || longFall
         || (!this.attached && this.q1.near && this.q1.al > 16 && this.speed < 8)
       );
       if (pinned) {
         ev.respawn = true;
-        ev.why = '卡住了，回到檢查點';
+        ev.why = 'stuck';
       }
       this._trapT = 0;
       this._trapDist = 0;
+    }
+    // 油門按住、車速仍低於約 3 km/h：先沿車頭推一把，滿 3 秒就回上一個檢查點。
+    const thrHeld = (this._throttle || 0) > 0.5;
+    const crawling = thrHeld && this.speed < 0.85 && !this.attached;
+    if (crawling) {
+      this._crawlT = (this._crawlT || 0) + dt;
+      this._fastT = 0;
+      if (this._crawlT > 1.4 && !this._nudged) {
+        this._nudged = true;
+        const hdg = this.heading;
+        this.vel.x += -Math.sin(hdg) * 7;
+        this.vel.z += -Math.cos(hdg) * 7;
+        this.pos.y += 0.35;
+      }
+      if (this._crawlT > 3) {
+        ev.respawn = true;
+        ev.why = 'stuck';
+        this._crawlT = 0;
+      }
+    } else if (thrHeld && this.speed >= 0.85) {
+      this._fastT = (this._fastT || 0) + dt;
+      if (this._fastT > 0.45) { this._crawlT = 0; this._nudged = false; }
+    } else {
+      this._crawlT = 0;
+      this._fastT = 0;
+      this._nudged = false;
     }
   }
 
@@ -377,6 +425,9 @@ export class Vehicle {
   }
 
   step(dt, inp) {
+    this._px = this.pos.x; this._py = this.pos.y; this._pz = this.pos.z;
+    if (this.ghostT > 0) this.ghostT -= dt;
+    this._throttle = (inp && inp.throttle) || 0;
     if (this.detachCool > 0) this.detachCool -= dt;
     if (this.tr.hasRibbon) {
       if (this.attached) { this._stepAttached(dt, inp); return; }
@@ -384,6 +435,7 @@ export class Vehicle {
       if (this.attached) { this._stepAttached(dt, inp); return; }
     }
     const tr = this.tr, ev = this.events, t = this.t;
+    const g = trackGravity(tr);
     const h = this.heading;
     const sp0 = this.vel.length();
     _fwd.set(-Math.sin(h), 0, -Math.cos(h)); _right.set(Math.cos(h), 0, -Math.sin(h));
@@ -421,7 +473,7 @@ export class Vehicle {
         else af += thr * t.accel * Math.max(0, 1 - vf / t.vRef);
       }
       this.braking = false;
-      if (brk > 0.01) {
+      if (brk > 0.01 && !(thr > 0.5 && vf < 3)) {
         if (vf > 0.8) { af -= brk * t.brake; this.braking = true; }
         else if (thr < 0.05) af -= brk * t.brake * 0.29 * Math.max(0, 1 + vf / 14);
       }
@@ -429,7 +481,7 @@ export class Vehicle {
       if (thr < 0.01 && brk < 0.01) af -= clamp(vf, -1, 1) * 1.6; // 能量回收
       if (this.nitroOn) af += t.nitro * Math.max(0, 1 - vf / (t.vRef * 1.35));
       // 坡度重力分量
-      const gsx = n.x * G * n.y, gsy = -G + n.y * G * n.y, gsz = n.z * G * n.y;
+      const gsx = n.x * g * n.y, gsy = -g + n.y * g * n.y, gsz = n.z * g * n.y;
       af += gsx * _f.x + gsy * _f.y + gsz * _f.z;
       ar += gsx * _r.x + gsy * _r.y + gsz * _r.z;
       let gripScale = 1;
@@ -438,7 +490,7 @@ export class Vehicle {
       const steer = inp.steer;
       if (brk > 0.3 && Math.abs(steer) > 0.25 && vf > 12) gripScale *= 0.55;     // 煞車漂移
       else if (thr > 0.7 && Math.abs(steer) > 0.6 && vf > 3 && vf < 32) gripScale *= 0.8; // 低速出彎甩尾
-      const gN = G * n.y + 0.0004 * vf * vf;
+      const gN = g * n.y + 0.0004 * vf * vf;
       const maxLat = t.grip * gN * gripScale;
       const gripA = clamp(-vr * 9, -maxLat, maxLat);
       ar += gripA;
@@ -448,7 +500,7 @@ export class Vehicle {
       this.steerAngle = damp(this.steerAngle, sa, 14, dt);
       // 座標系：heading 增加＝逆時針（俯視）＝向左轉；steer 為正＝向右，所以偏航速率取負號
       const yawKin = -vf * Math.tan(this.steerAngle) / this.wb;
-      const yawLat = -steer * t.steer * t.grip * G / Math.max(Math.abs(vf), 4) * Math.sign(vf || 1) * Math.min(1, Math.abs(vf) / 3);
+      const yawLat = -steer * t.steer * t.grip * g / Math.max(Math.abs(vf), 4) * Math.sign(vf || 1) * Math.min(1, Math.abs(vf) / 3);
       let yawT = Math.abs(yawKin) < Math.abs(yawLat) ? yawKin : yawLat;
       if (Math.abs(vf) < 0.2) yawT = 0;
       this.yawRate = damp(this.yawRate, yawT, t.yawResp, dt);
@@ -473,9 +525,9 @@ export class Vehicle {
       if (wantLift) {
         const desiredVy = clamp((this.hover - this.alt) * 1.4, -7, t.climb);
         this.hover = clamp(this.hover + inp.pitch * 14 * dt, 2.5, t.hMax);
-        const aT = clamp(G + (desiredVy - this.vel.y) * 5, 0, t.liftA);
-        this.vel.y += (aT - G) * dt;
-        drain = (15 + 14 * Math.max(0, aT - G) / 22) * t.liftDrain / t.eCap;
+        const aT = clamp(g + (desiredVy - this.vel.y) * 5, 0, t.liftA);
+        this.vel.y += (aT - g) * dt;
+        drain = (15 + 14 * Math.max(0, aT - g) / 22) * t.liftDrain / t.eCap;
         this.lift = clamp(aT / 22, 0.25, 1);
         // 水平推力
         const a = thr * t.airThrust - brk * 14;
@@ -491,7 +543,7 @@ export class Vehicle {
         }
         this.thrust = clamp(thr * 0.5 + (this.nitroOn ? 1 : 0), 0, 1);
       } else {
-        this.vel.y -= G * dt;
+        this.vel.y -= g * dt;
         this.heading -= inp.steer * 0.35 * dt;
         if (hs > 0.5) {
           const t = 1 - Math.exp(-0.12 * dt);
@@ -540,13 +592,22 @@ export class Vehicle {
     const rise = gy - this.pos.y;
     const overGap = tr.isGapIdx(tr._q.fi);
     if (!overGap && this.airTime < 0.35 && rise > 1.15 && this.pos.y < gy - 0.5) {
-      // 垂直斷面。只退回水平位置，不要把車身拉上斷面，也不要讓垂直速度一直累加。
-      this.pos.x = px; this.pos.z = pz;
-      this.vel.x *= -0.15; this.vel.z *= -0.15;
-      if (this.vel.y > 0) this.vel.y = 0;
-      ev.wall = Math.max(ev.wall, sp0);
-      this.grounded = false;
-      this._lip = (this._lip || 0) + dt;
+      // 低矮路緣：油門踩著就爬過去。高牆才退回，而且不要把速度反轉釘在原地。
+      const climbing = rise < 2.6 && (inp.throttle || 0) > 0.35;
+      if (climbing) {
+        this.pos.y = gy + 0.02;
+        if (this.vel.y < 1.2) this.vel.y = 1.2;
+        this._lip = 0;
+        this.grounded = true;
+        this.airTime = 0;
+      } else {
+        this.pos.x = px; this.pos.z = pz;
+        this.vel.x *= 0.35; this.vel.z *= 0.35;
+        if (this.vel.y > 0) this.vel.y = 0;
+        ev.wall = Math.max(ev.wall, sp0);
+        this.grounded = false;
+        this._lip = (this._lip || 0) + dt;
+      }
     } else if (this.pos.y <= gy) {
       this._lip = 0;
       this.pos.y = gy;
@@ -608,6 +669,12 @@ export class Vehicle {
           const push = 9 * dt;
           this.vel.x -= q2.rx * side * push; this.vel.z -= q2.rz * side * push;
         }
+        if ((inp.throttle || 0) > 0.4 && this.speed < 2) {
+          this.vel.x -= q2.rx * side * 8;
+          this.vel.z -= q2.rz * side * 8;
+          this.vel.x += (q2.tx || 0) * 5;
+          this.vel.z += (q2.tz || 0) * 5;
+        }
       }
     }
     this._prevL = q2.l;
@@ -615,7 +682,7 @@ export class Vehicle {
     // 墜入峽谷
     if (!this.followHost && q2.near && tr.pitEdge(q2.fi) > 0.5 && this.pos.y < q2.y - 7.5) {
       ev.respawn = true;
-      ev.why = '';
+      ev.why = 'off';
     }
     if (tr.obstacles && this.pos.y < 80) {
       for (let oi = 0; oi < tr.obstacles.length; oi++) {
@@ -692,7 +759,7 @@ export class Vehicle {
     this.heading = n(s.heading);
     this.yawRate = n(s.yawRate);
     this.steerAngle = n(s.steerAngle);
-    this.energy = n(s.energy, 100);
+    this.energy = clamp(n(s.energy, 100), 0, ENERGY_MAX);
     this.hover = n(s.hover, 9);
     this.grounded = !!s.grounded;
     this.thrusting = !!s.thrusting;

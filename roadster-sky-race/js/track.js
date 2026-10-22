@@ -148,8 +148,21 @@ export class Track {
     this.hasRibbon = false;
     this.obstacles = [];
     this.stunt = null;
+    this.boosts = [];
+    if (def.crests && def.crests.length) {
+      const span = Math.max(8, Math.round(26 / this.ds));
+      const crestH = def.crestH || 6;
+      for (const f of def.crests) {
+        const c = wrap(Math.round(f * N));
+        for (let k = -span; k <= span; k++) {
+          const u = 1 - Math.abs(k) / span;
+          py[wrap(c + k)] += crestH * u * u;
+        }
+        this.boosts.push({ i: c, v: def.crestBoost || 6 });
+      }
+    }
     this.checkpoints = null;
-    if (def.city) {
+    if (def.city || def.moon) {
       const nCp = 8;
       const step = Math.max(1, Math.round(N / nCp));
       this.checkpoints = [];
@@ -249,6 +262,14 @@ export class Track {
   }
   // 進入特技大跳躍起點時給一點向上速度（只有標了 boost 的缺口）
   jumpBoost(fi) {
+    if (this.boosts) {
+      for (const b of this.boosts) {
+        let a = fi - b.i;
+        if (a < -this.N / 2) a += this.N;
+        if (a > this.N / 2) a -= this.N;
+        if (a > -2 && a < 4) return b.v;
+      }
+    }
     for (const g of this.gaps) {
       if (!g.boost) continue;
       let a = fi - g.g0;
@@ -329,6 +350,9 @@ export class Track {
 
   // 自然地形（不含道路影響）
   natural(x, z, d) {
+    if (this.def && this.def.moon) {
+      return (fbm2(x * 0.01, z * 0.01, 3) - 0.48) * 2.4 + (fbm2(x * 0.04 + 4, z * 0.04, 2) - 0.5) * 0.6;
+    }
     const dunes = (fbm2(x * 0.006, z * 0.006, 4) - 0.35) * 14 + (fbm2(x * 0.03 + 9, z * 0.03, 2) - 0.4) * 1.6;
     const mW = smoothstep(130, 520, d);
     let m = 0;
@@ -340,22 +364,32 @@ export class Track {
     return dunes + m;
   }
 
-  // 地形網格高度（道路下方略為壓低，避免 z-fighting）
-  terrainHeight(x, z) {
-    const q = this.query(x, z, this._q2);
-    if (!q.near) return this.natural(x, z, q.d) + 0;
+  // 路肩先維持路面高度，避免沙丘或路緣在車輪底下形成一堵牆。
+  offRoadY(x, z, q, sink) {
+    if (!q.near) return this.natural(x, z, q.d);
     const tb = Math.tan(q.bank);
+    const sign = Math.sign(q.l) || 1;
+    const edgeY = q.y - sign * ROAD_HALF_K * tb - (q.al <= ROAD_HALF_K ? sink : Math.min(sink, 0.15));
+    const city = !!(this.def && this.def.city);
+    const hold = city ? 26 : 8;
+    const far = city ? 78 : 75;
     let h;
-    if (q.al <= ROAD_HALF_K) {
-      h = q.y - q.l * tb - 1.0;
-    } else {
-      const edgeY = q.y - Math.sign(q.l) * ROAD_HALF_K * tb - 0.15;
-      const t = smoothstep(ROAD_HALF_K + 3, ROAD_HALF_K + 75, q.al);
+    if (q.al <= ROAD_HALF_K) h = q.y - q.l * tb - sink;
+    else if (q.al <= ROAD_HALF_K + hold) h = q.y - sign * ROAD_HALF_K * tb - 0.15;
+    else {
+      const t = smoothstep(ROAD_HALF_K + hold, ROAD_HALF_K + far, q.al);
       h = lerp(edgeY, this.natural(x, z, q.al), t);
     }
     const e = this.pitEdge(q.fi);
     if (e > 0) h -= PIT_DEPTH * e * (1 - smoothstep(ROAD_HALF_K + 1, ROAD_HALF_K + 13, q.al));
     return h;
+  }
+
+  // 地形網格高度（道路下方略為壓低，避免 z-fighting）
+  terrainHeight(x, z) {
+    const q = this.query(x, z, this._q2);
+    const sink = q.near && q.al <= ROAD_HALF_K ? 1.0 : 0.15;
+    return this.offRoadY(x, z, q, sink);
   }
 
   // 物理地面高度（道路使用精確面）
@@ -365,18 +399,7 @@ export class Track {
     return this.terrainHeightFromQuery(x, z, q);
   }
   terrainHeightFromQuery(x, z, q) {
-    if (!q.near) return this.natural(x, z, q.d);
-    const tb = Math.tan(q.bank);
-    let h;
-    if (q.al <= ROAD_HALF_K) h = q.y - q.l * tb - 0.15;
-    else {
-      const edgeY = q.y - Math.sign(q.l) * ROAD_HALF_K * tb - 0.15;
-      const t = smoothstep(ROAD_HALF_K + 3, ROAD_HALF_K + 75, q.al);
-      h = lerp(edgeY, this.natural(x, z, q.al), t);
-    }
-    const e = this.pitEdge(q.fi);
-    if (e > 0) h -= PIT_DEPTH * e * (1 - smoothstep(ROAD_HALF_K + 1, ROAD_HALF_K + 13, q.al));
-    return h;
+    return this.offRoadY(x, z, q, 0.15);
   }
 
   // 路面上索引 i、橫向 l 的世界座標

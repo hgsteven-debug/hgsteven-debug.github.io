@@ -358,6 +358,12 @@ export function connectRelay(code, handlers, opts) {
 
 // 同時掛兩台 broker。房主的 epoch 只由第一台前進，第二台跟著重開。
 // 同一則訊息帶 mid，收到第二次就丟掉。
+// 房主的鏡像連線也會收到自己發出的封包。兩邊若都用 epoch-序號，手機的油門會被當成重複而丟掉。
+export function makeRelayMidPrefix(role) {
+  const side = role === 'host' ? 'h' : 'g';
+  return side + Math.random().toString(36).slice(2, 8);
+}
+
 export function connectRelayFan(code, handlers, opts) {
   const opt = opts || {};
   const list = opt.relays && opt.relays.length ? opt.relays : RELAYS;
@@ -365,6 +371,7 @@ export function connectRelayFan(code, handlers, opts) {
   const h = handlers || {};
   const role = opt.role === 'host' ? 'host' : 'guest';
   const mids = makeMidWindow(64);
+  const midPrefix = makeRelayMidPrefix(role);
   let seq = 1;
   let mirror = null;
   let primary = null;
@@ -435,7 +442,7 @@ export function connectRelayFan(code, handlers, opts) {
   state.send = (obj) => {
     if (!obj) return false;
     const body = Object.assign({}, obj);
-    if (body.mid == null) body.mid = state.epoch + '-' + (seq++);
+    if (body.mid == null) body.mid = midPrefix + '-' + (seq++);
     const a = primary && primary.send(body);
     const b = mirror && mirror.send(body);
     return !!(a || b);

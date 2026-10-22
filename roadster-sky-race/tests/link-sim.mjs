@@ -1,6 +1,7 @@
 // 丟包與延遲下，輸入歷史仍能把方向與點按送到房主。不開瀏覽器。
 import * as sync from '../js/sync.js';
 import * as ice from '../js/ice.js';
+import { makeRelayMidPrefix } from '../js/relay.js';
 import { trackById, TRACKS } from '../js/tracks.js';
 
 const fails = [];
@@ -150,6 +151,13 @@ function testLinkHelpers() {
   assert(merged.x === next.x && merged.speed === next.speed && merged.y === prev.y, JSON.stringify(merged));
   const mids = sync.makeMidWindow(4);
   assert(mids.accept('a') && !mids.accept('a') && mids.accept(null));
+  const hostPre = makeRelayMidPrefix('host');
+  const guestPre = makeRelayMidPrefix('guest');
+  assert(hostPre.startsWith('h') && guestPre.startsWith('g') && hostPre !== guestPre, hostPre + ' ' + guestPre);
+  assert(makeRelayMidPrefix('guest') !== guestPre, 'prefix reused');
+  const echo = sync.makeMidWindow(64);
+  for (let i = 1; i <= 80; i++) echo.accept(hostPre + '-' + i);
+  assert(echo.accept(guestPre + '-1') && echo.accept(guestPre + '-12'), 'guest mid eaten by host echo');
   const remote = { seq: 0, cmd: sync.zeroInput(), lastAt: 0 };
   const applied = sync.acceptInputs(remote, {
     seq: 5, steer: 0.4, throttle: 1, brake: 0, lift: false, nitro: false, pitch: 0,
@@ -169,6 +177,18 @@ function testLinkHelpers() {
   assert(trackById('stunt').id === 'city');
   assert(trackById('city').city === true);
   assert(TRACKS.some((t) => t.id === 'canyon') && TRACKS.some((t) => t.id === 'coast'));
+  assert(TRACKS.some((t) => t.id === 'moon' && t.gravity === 1.62));
+  assert(ice.nextJoinStage({ age: 1000, rtcOk: true, policy: 'all' }) === 'direct');
+  assert(ice.nextJoinStage({ age: 5000, rtcOk: true, policy: 'all' }) === 'turn');
+  assert(ice.nextJoinStage({ age: 5000, rtcOk: true, policy: 'all', iceDirect: true }) === 'direct');
+  assert(ice.nextJoinStage({ age: 9000, rtcOk: true, policy: 'all' }) === 'mqtt');
+  assert(ice.nextJoinStage({ age: 1000, rtcOk: false }) === 'mqtt');
+  assert(ice.nextJoinStage({ age: 2000, rtcOk: true, policy: 'relay' }) === 'turn');
+  assert(ice.nextJoinStage({ age: 9000, rtcOk: true, policy: 'relay' }) === 'mqtt');
+  assert(ice.nextJoinStage({ age: 10000, rtcOk: true, proven: true, connected: true, via: 'ws' }) === 'mqtt');
+  assert(ice.nextJoinStage({ age: 10000, rtcOk: true, proven: true, connected: true, via: 'direct' }) === 'direct');
+  const packed = sync.packSelf({ x: 0, y: 0, z: 0, energy: 300, vx: 0, vy: 0, vz: 0 });
+  assert(packed.energy === 100, 'energy cap ' + packed.energy);
 }
 
 try { testLinkHelpers(); ok('link kind, delta, ice policy, legacy track'); }

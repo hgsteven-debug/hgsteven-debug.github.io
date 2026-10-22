@@ -6,7 +6,7 @@ import {
   STATE_GAP_MS, INPUT_GAP_MS, LINK_STALE_MS, REMOTE_GRACE_MS, hostStillThere,
   INPUT_HISTORY, acceptInputs, stateGapMs, deltaPose, mergePose, linkQuality, linkKind, lanIsolationHint,
 } from './sync.js';
-import { webrtcSupport, rtcConfig } from './ice.js';
+import { webrtcSupport, rtcConfig, nextJoinStage, JOIN_TOTAL_MS } from './ice.js';
 import { connectRelayFan } from './relay.js';
 import { t, getLocale } from './i18n.js';
 
@@ -119,15 +119,34 @@ function noteCandidate(bag, cand) {
   if (!bag || !cand) return;
   const typ = cand.type || '';
   const text = cand.candidate || '';
-  if (typ === 'host' || text.indexOf('typ host') >= 0 || text.indexOf('.local') >= 0) bag.sawLocalHost = true;
+  let kind = typ;
+  if (text.indexOf('typ relay') >= 0) kind = 'relay';
+  else if (text.indexOf('typ srflx') >= 0) kind = 'srflx';
+  else if (text.indexOf('typ prflx') >= 0) kind = 'prflx';
+  else if (text.indexOf('typ host') >= 0 || text.indexOf('.local') >= 0) kind = 'host';
+  if (kind === 'host' || text.indexOf('typ host') >= 0 || text.indexOf('.local') >= 0) bag.sawLocalHost = true;
+  if (!bag.candTypes) bag.candTypes = { host: 0, srflx: 0, relay: 0, prflx: 0 };
+  if (bag.candTypes[kind] != null) bag.candTypes[kind]++;
 }
 
 function restartIce(pc, bag) {
   if (!pc || typeof pc.restartIce !== 'function') return;
-  const now = performance.now();
-  if (bag && bag._iceKick && now - bag._iceKick < 2000) return;
-  if (bag) bag._iceKick = now;
+  if (bag && bag._iceOnce) return;
+  if (bag) bag._iceOnce = true;
   try { pc.restartIce(); } catch (e) {}
+}
+
+function promoteTurn(pc, bag) {
+  if (!pc) return;
+  try {
+    if (typeof pc.setConfiguration === 'function') {
+      const cfg = typeof pc.getConfiguration === 'function' ? pc.getConfiguration() : {};
+      cfg.iceTransportPolicy = 'relay';
+      pc.setConfiguration(cfg);
+    }
+  } catch (e) {}
+  try { pc.restartIce(); } catch (e) {}
+  if (bag) bag._iceOnce = true;
 }
 
 function watchIce(pc, bag, onChange) {
@@ -139,8 +158,10 @@ function watchIce(pc, bag, onChange) {
     if (st === 'disconnected' || st === 'failed') {
       bag.rtcLive = false;
       bag.rejoin = true;
-      if (st === 'failed') bag.iceFailed = true;
-      restartIce(pc, bag);
+      if (st === 'failed') {
+        bag.iceFailed = true;
+        restartIce(pc, bag);
+      }
     } else if (st === 'connected' || st === 'completed') {
       bag.rejoin = false;
       bag.iceFailed = false;
@@ -172,6 +193,11 @@ function sampleLink(s) {
 
 function relayOpts(h, role, index, epoch) {
   return Object.assign({}, (h && h.relayOpts) || {}, { role, index, epoch });
+}
+
+function labelVia(via, policy) {
+  if (policy === 'relay' && (!via || via === 'webrtc')) return 'relay';
+  return via;
 }
 
 function how(via) {
@@ -215,6 +241,9 @@ export function createHost(handlers) {
     sawRemoteHost: false,
     iceFailed: false,
     rejoin: false,
+    stage: rtcConfig().iceTransportPolicy === 'relay' ? 'turn' : 'direct',
+    candTypes: { host: 0, srflx: 0, relay: 0, prflx: 0 },
+    _joinT: performance.now(),
     _destroyed: false,
     _gen: 0,
     _reopening: false,
@@ -347,7 +376,7 @@ export function createHost(handlers) {
     if (incoming !== 'ws') {
       pathOf(conn).then((via) => {
         if (session._destroyed || prev.conn !== conn) return;
-        prev.via = via;
+        prev.via = labelVia(via, session.policy);
         mark();
       });
     }
@@ -408,7 +437,7 @@ export function createHost(handlers) {
     if (incoming !== 'ws') {
       pathOf(conn).then((via) => {
         if (session._destroyed || remote.conn !== conn) return;
-        remote.via = via;
+        remote.via = labelVia(via, session.policy);
         mark();
       });
     }
@@ -523,6 +552,10 @@ export function createHost(handlers) {
       return;
     }
     const webrtc = session.remotes.find((r) => r.nonce === nonce && r.rtcLive === true && r.via !== 'ws' && r.conn && r.conn.open);
+    if (webrtc && msg.t === 'reset') {
+      try { if (h.onReset) h.onReset(webrtc); } catch (e) {}
+      return;
+    }
     if (webrtc) return;
     wsPeer(nonce).emit('data', msg);
   }
@@ -601,7 +634,8 @@ export function createHost(handlers) {
       mark();
       const pc = conn.peerConnection;
       if (pc) {
-        const bag = { sawLocalHost: session.sawLocalHost, rtcLive: true, rejoin: false, iceFailed: false };
+        const bag = { sawLocalHost: session.sawLocalHost, rtcLive: true, rejoin: false, iceFailed: false, candTypes: { host: 0, srflx: 0, relay: 0, prflx: 0 } };
+        conn._skyBag = bag;
         watchIce(pc, bag, (st) => {
           session.sawLocalHost = session.sawLocalHost || bag.sawLocalHost;
           const remote = session.remotes.find((r) => r.conn === conn);
@@ -624,9 +658,9 @@ export function createHost(handlers) {
             pathOf(conn, session).then((via) => {
               if (session._destroyed) return;
               if (remote && remote.conn === conn) {
-                remote.pathKind = via;
+                remote.pathKind = labelVia(via, session.policy);
                 if (remote.rtcLive === true) {
-                  remote.via = via;
+                  remote.via = remote.pathKind;
                   remote.linkTier = linkQuality({ rtt: remote.rtt, via, age: 0 });
                 }
               }
@@ -747,10 +781,41 @@ export function createHost(handlers) {
   session.send = (remote, msg) => {
     try { if (remote && remote.conn && remote.conn.open && msg) remote.conn.send(msg); } catch (e) {}
   };
+  function tickHostJoin(now) {
+    for (const remote of session.remotes) {
+      if (!remote || remote.holding) continue;
+      const age = now - (remote.joinedAt || now);
+      const live = remote.rtcLive === true || (remote.via === 'ws' && remote.lastBeat && now - remote.lastBeat < 2500);
+      const stage = nextJoinStage({
+        age,
+        rtcOk: !!session.rtc.ok,
+        proven: live,
+        connected: live,
+        policy: session.policy,
+        iceDirect: !!(remote.iceUp && remote.pathKind === 'direct'),
+        via: live ? (remote.rtcLive === true ? (remote.pathKind || remote.via || 'direct') : 'ws') : '',
+      });
+      remote.stage = stage;
+      if (!live && stage === 'turn' && !remote._turnTried && session.policy !== 'relay') {
+        remote._turnTried = true;
+        promoteTurn(remote.conn && remote.conn.peerConnection, remote.conn && remote.conn._skyBag);
+      }
+      if (!live && stage === 'mqtt' && remote.stageAt !== 'mqtt') {
+        remote.stageAt = 'mqtt';
+        remote.rtcLive = false;
+        if (!remote.via || remote.via === 'webrtc') remote.via = 'ws';
+      }
+      const bag = remote.conn && remote.conn._skyBag;
+      if (bag && bag.candTypes) remote.candTypes = bag.candTypes;
+    }
+    const r0 = session.remotes[0];
+    session.stage = r0 && r0.stage ? r0.stage : session.stage;
+  }
   session.poll = (now) => {
     if (session._destroyed) return;
     runDue(deadlines, now);
     if (relay) relay.poll(now);
+    tickHostJoin(now);
     expireHeld(now);
     for (const remote of session.remotes) {
       if (now - (remote._pingAt || 0) < 1000) continue;
@@ -791,6 +856,20 @@ export function createHost(handlers) {
     const remote = session.remotes[0];
     if (remote) holdRemote(remote);
     return !!remote;
+  };
+  session.joinDebug = () => {
+    const remote = session.remotes[0];
+    const bag = (remote && remote.conn && remote.conn._skyBag) || session;
+    const c = (remote && remote.candTypes) || bag.candTypes || session.candTypes || {};
+    return {
+      stage: (remote && remote.stage) || session.stage || '',
+      signal: session.peerOpen ? 'open' : (session.peerDetail || 'boot'),
+      cand: 'host ' + (c.host || 0) + ' srflx ' + (c.srflx || 0) + ' relay ' + (c.relay || 0) + ' prflx ' + (c.prflx || 0),
+      pair: (remote && (remote.pathKind || remote.via)) || '',
+      proven: remote && remote.rtcLive === true ? 1 : 0,
+      via: remote ? remote.via : '',
+      rtc: remote ? remote.rtcLive : null,
+    };
   };
   session.debugExpire = () => {
     const remote = session.remotes.find((r) => r.holding) || session.remotes[0];
@@ -866,6 +945,12 @@ export function createGuest(code, handlers) {
     heardHost: false,
     lastPeerAt: 0,
     policy: rtcConfig().iceTransportPolicy,
+    stage: !webrtcSupport().ok ? 'mqtt' : (rtcConfig().iceTransportPolicy === 'relay' ? 'turn' : 'direct'),
+    stageAt: performance.now(),
+    _joinT: performance.now(),
+    candTypes: { host: 0, srflx: 0, relay: 0, prflx: 0 },
+    provenAt: 0,
+    _turnTried: rtcConfig().iceTransportPolicy === 'relay',
     sawLocalHost: false,
     sawRemoteHost: false,
     iceFailed: false,
@@ -954,7 +1039,7 @@ export function createGuest(code, handlers) {
     if (conn && conn.open && session.rtcLive !== false) {
       try { conn.send(msg); dcOk = true; } catch (e) { session.rtcLive = false; }
     }
-    if (session.rtcLive === true && dcOk && msg.t !== 'bye') return;
+    if (session.rtcLive === true && dcOk && msg.t !== 'bye' && msg.t !== 'reset') return;
     try { if (relay) relay.send(Object.assign({ from: nonce }, msg)); } catch (e) {}
   }
   session.send = send;
@@ -963,6 +1048,9 @@ export function createGuest(code, handlers) {
     if (session._destroyed || !data || typeof data !== 'object') return;
     if (via === 'ws' && session.rtcLive) return;
     if (data.lan) session.sawRemoteHost = true;
+    if (data.t === 'ping' || data.t === 'pong' || data.t === 'welcome' || data.t === 'state' || data.t === 'input') {
+      session.provenAt = performance.now();
+    }
     if (data.t === 'ping') {
       send({ t: 'pong', n: data.n, at: data.at, lan: session.sawLocalHost ? 1 : 0 });
       return;
@@ -984,7 +1072,7 @@ export function createGuest(code, handlers) {
       session.connected = true;
       session.failed = false;
       session._failedOnce = false;
-      session.via = via === 'ws' ? (session.rtcLive === true ? session.via : 'ws') : (session.pathKind || 'webrtc');
+      session.via = via === 'ws' ? (session.rtcLive === true ? session.via : 'ws') : labelVia(session.pathKind || 'webrtc', session.policy);
       if (via !== 'ws') { session.dcSeen = true; if (session.iceUp || session.pathKind === 'direct' || session.pathKind === 'relay') session.rtcLive = true; }
       if (via === 'ws' && session.rtcGaveUp) retirePeer();
       emit('ok');
@@ -992,10 +1080,10 @@ export function createGuest(code, handlers) {
     } else if (data.t === 'state') {
       session.lastPeerAt = performance.now();
       session.heardHost = true;
-      if (via === 'webrtc') session.via = session.rtcLive === true ? (session.pathKind || 'webrtc') : (session.via || 'ws');
+      if (via === 'webrtc') session.via = session.rtcLive === true ? labelVia(session.pathKind || 'webrtc', session.policy) : (session.via || 'ws');
       else if (!session.via) session.via = 'ws';
       session.connected = true;
-      if (via !== 'ws') { session.dcSeen = true; if (session.iceUp || session.pathKind === 'direct' || session.pathKind === 'relay') session.rtcLive = true; if (session.rtcLive === true) session.via = session.pathKind || 'webrtc'; }
+      if (via !== 'ws') { session.dcSeen = true; if (session.iceUp || session.pathKind === 'direct' || session.pathKind === 'relay') session.rtcLive = true; if (session.rtcLive === true) session.via = labelVia(session.pathKind || 'webrtc', session.policy); }
       if (via === 'ws' && session.rtcGaveUp) retirePeer();
       try { if (h.onState) h.onState(data); } catch (e) {}
     } else if (data.t === 'full') {
@@ -1043,6 +1131,7 @@ export function createGuest(code, handlers) {
     const armGuestIce = () => {
       const pc = next && next.peerConnection;
       if (!pc) return;
+      next._skyBag = session;
       watchIce(pc, session, (st) => {
         if (st === 'failed' || st === 'disconnected') {
           session.peerDetail = 'peer.rejoin';
@@ -1054,9 +1143,9 @@ export function createGuest(code, handlers) {
           session.iceUp = true;
           pathOf(next, session).then((via) => {
             if (session._destroyed) return;
-            session.pathKind = via;
+            session.pathKind = labelVia(via, session.policy);
             if (session.dcSeen) session.rtcLive = true;
-            if (session.rtcLive === true && session.connected) { session.via = via; emit('ok'); }
+            if (session.rtcLive === true && session.connected) { session.via = session.pathKind; emit('ok'); }
           });
         }
       });
@@ -1069,8 +1158,8 @@ export function createGuest(code, handlers) {
       send({ t: 'hello', nonce, name: 'P3' });
       pathOf(next, session).then((via) => {
         if (session._destroyed) return;
-        session.pathKind = via;
-        if (session.connected && session.via !== 'ws') { session.via = via; emit('ok'); }
+        session.pathKind = labelVia(via, session.policy);
+        if (session.connected && session.via !== 'ws') { session.via = session.pathKind; emit('ok'); }
       });
       arm(deadlines, 8000, () => {
         if (session.connected || session._destroyed) return;
@@ -1207,10 +1296,52 @@ export function createGuest(code, handlers) {
     },
   }, relayOpts(h, 'guest', relayIndex, relayEpoch));
 
+  function tickGuestJoin(now) {
+    if (session.connected && session.rtcLive === true && session.via !== 'ws') {
+      session.stage = (session.pathKind === 'relay' || session.policy === 'relay') ? 'turn' : 'direct';
+      return;
+    }
+    const age = now - (session._joinT || now);
+    const live = !!(session.connected && session.provenAt && (session.rtcLive === true || session.via === 'ws'));
+    const stage = nextJoinStage({
+      age,
+      rtcOk: !!(session.rtc && session.rtc.ok),
+      proven: !!session.provenAt,
+      connected: live,
+      policy: session.policy,
+      iceDirect: !!(session.iceUp && session.pathKind === 'direct'),
+      via: live ? (session.rtcLive === true ? (session.pathKind || session.via || 'direct') : 'ws') : '',
+    });
+    if (live) {
+      session.stage = stage;
+      return;
+    }
+    if (stage === 'turn' && !session._turnTried && session.policy !== 'relay') {
+      session._turnTried = true;
+      session.stage = 'turn';
+      session.stageAt = now;
+      promoteTurn(conn && conn.peerConnection, session);
+    } else if (stage === 'mqtt' && session.stage !== 'mqtt') {
+      session.stage = 'mqtt';
+      session.stageAt = now;
+      session.rtcGaveUp = true;
+      session.rtcLive = false;
+      if (session.wsOpen || session.heardHost) session.via = 'ws';
+    } else if (stage === 'direct' || stage === 'turn') {
+      session.stage = stage;
+    }
+    if (stage === 'mqtt' && !session.connected && age > JOIN_TOTAL_MS + 4000) {
+      session.wsGaveUp = true;
+      session.rtcGaveUp = true;
+      session.peerDetail = session.peerDetail || 'guest.timeout';
+      checkDone();
+    }
+  }
   session.poll = (now) => {
     if (session._destroyed) return;
     runDue(deadlines, now);
     if (relay) relay.poll(now);
+    tickGuestJoin(now);
     if (session.heardHost && !hostStillThere(session.lastPeerAt, now)) {
       session.heardHost = false;
       session.connected = false;
@@ -1249,6 +1380,19 @@ export function createGuest(code, handlers) {
     }, 120);
   };
   session.relabel = () => emit(session.connected ? 'joined' : (session.failed ? 'fail' : 'wait'));
+  session.joinDebug = () => {
+    const bag = (conn && conn._skyBag) || session;
+    const c = bag.candTypes || session.candTypes || {};
+    return {
+      stage: session.stage || '',
+      signal: session.connected ? 'joined' : (session._signalled ? 'signalled' : (session._finding ? 'finding' : (session._opened ? 'open' : (session.peerDetail || 'boot')))),
+      cand: 'host ' + (c.host || 0) + ' srflx ' + (c.srflx || 0) + ' relay ' + (c.relay || 0) + ' prflx ' + (c.prflx || 0),
+      pair: session.pathKind || session.via || '',
+      proven: session.provenAt ? 1 : 0,
+      via: session.via || '',
+      rtc: session.rtcLive,
+    };
+  };
   session.linkSample = () => sampleLink(session);
   emit('wait');
   startPeer();

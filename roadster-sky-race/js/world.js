@@ -19,6 +19,15 @@ const SKY_FRAG = `
 varying vec3 vDir; uniform vec3 sunDir; uniform float skyKind;
 void main(){
   vec3 d = normalize(vDir); float h = d.y;
+  if (skyKind > 2.5) {
+    float stars = step(0.996, fract(sin(dot(d * 90.0, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
+    float stars2 = step(0.9985, fract(sin(dot(d.zyx * 140.0, vec3(39.346, 11.135, 83.155))) * 24634.6345));
+    vec3 col = vec3(0.0) + vec3(0.85, 0.9, 1.0) * stars + vec3(1.0) * stars2;
+    gl_FragColor = vec4(col, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
+  }
   vec3 horizon, mid, zenith;
   if (skyKind > 1.5) { // night
     horizon = vec3(0.10,0.12,0.22); mid = vec3(0.04,0.06,0.16); zenith = vec3(0.01,0.02,0.08);
@@ -86,7 +95,7 @@ export class World {
     const geo = new THREE.SphereGeometry(50, 32, 16);
     const mat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { sunDir: { value: new THREE.Vector3(...this.theme.sun).normalize() }, skyKind: { value: this.theme.skyKind === 'night' ? 2.0 : (this.theme.skyKind === 'sunset' ? 1.0 : 0.0) } },
+      uniforms: { sunDir: { value: new THREE.Vector3(...this.theme.sun).normalize() }, skyKind: { value: this.theme.skyKind === 'space' ? 3.0 : (this.theme.skyKind === 'night' ? 2.0 : (this.theme.skyKind === 'sunset' ? 1.0 : 0.0)) } },
     });
     const sky = new THREE.Mesh(geo, mat);
     sky.renderOrder = -10; sky.frustumCulled = false;
@@ -573,7 +582,75 @@ export class World {
     this.scene.add(group);
     this.extras = group;
     this._cityBlocks();
+    this._moonSet();
     this._stuntGuides();
+  }
+
+  // 月球：地球、慢落的塵、低面數隕石。
+  _moonSet() {
+    const tr = this.track;
+    if (!tr || !tr.def || !tr.def.moon) return;
+    const b = tr.bounds;
+    const cx = (b.minX + b.maxX) / 2;
+    const cz = (b.minZ + b.maxZ) / 2;
+    const earth = new THREE.Mesh(
+      new THREE.SphereGeometry(26, 18, 12),
+      new THREE.MeshBasicMaterial({ color: 0x2d6eb8 }),
+    );
+    const land = new THREE.Mesh(
+      new THREE.SphereGeometry(26.3, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0x3c8f4e }),
+    );
+    land.scale.set(0.72, 0.55, 0.42);
+    land.position.set(8, 6, 10);
+    earth.add(land);
+    const cloud = new THREE.Mesh(
+      new THREE.SphereGeometry(27.2, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0xe7eef5, transparent: true, opacity: 0.28, depthWrite: false }),
+    );
+    earth.add(cloud);
+    earth.position.set(cx - 180, (tr.py[0] || 0) + 150, cz - 220);
+    this.scene.add(earth);
+    this.earth = earth;
+
+    const n = this.qname === 'low' ? 70 : 160;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * 70;
+      pos[i * 3 + 1] = 0.3 + Math.random() * 3.2;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 70;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const dust = new THREE.Points(geo, new THREE.PointsMaterial({
+      color: 0xc8c4bc, size: 0.45, transparent: true, opacity: 0.55, depthWrite: false, sizeAttenuation: true,
+    }));
+    this.scene.add(dust);
+    this.moonDust = dust;
+
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 1, metalness: 0 });
+    const q = tr.newQuery();
+    const rng = (i) => {
+      const x = Math.sin(i * 12.9898) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    for (let i = 0; i < 14; i++) {
+      const f = rng(i + 3);
+      const ang = f * Math.PI * 2;
+      const rad = 40 + rng(i + 9) * 80;
+      const x = cx + Math.cos(ang) * rad;
+      const z = cz + Math.sin(ang) * rad;
+      tr.query(x, z, q);
+      if (q.near && q.al < 24) continue;
+      const bowl = new THREE.Mesh(new THREE.TorusGeometry(4 + f * 6, 0.55, 4, 7), rockMat);
+      bowl.rotation.x = Math.PI / 2;
+      bowl.position.set(x, tr.terrainHeight(x, z) + 0.2, z);
+      this.extras.add(bowl);
+      const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(1.1 + f * 1.6, 0), rockMat);
+      stone.position.set(x + 6, tr.terrainHeight(x + 6, z + 4) + 0.8, z + 4);
+      stone.rotation.set(f, f * 2, 0.3);
+      this.extras.add(stone);
+    }
   }
 
   // 街道環道：離開路面的方塊樓，沒有招牌或標誌。
@@ -715,6 +792,16 @@ export class World {
   // 每幀：天空跟隨相機、陰影跟隨車輛
   update(camera, carPos) {
     this.sky.position.copy(camera.position);
+    if (this.moonDust && carPos) {
+      const attr = this.moonDust.geometry.attributes.position;
+      const arr = attr.array;
+      for (let i = 1; i < arr.length; i += 3) {
+        arr[i] -= 0.012;
+        if (arr[i] < 0.15) arr[i] = 2.4 + (i % 7) * 0.2;
+      }
+      attr.needsUpdate = true;
+      this.moonDust.position.set(carPos.x, carPos.y, carPos.z);
+    }
     if (this.sun) {
       const tx = this.q.shadows ? Math.round(carPos.x / 2) * 2 : carPos.x;
       const tz = this.q.shadows ? Math.round(carPos.z / 2) * 2 : carPos.z;

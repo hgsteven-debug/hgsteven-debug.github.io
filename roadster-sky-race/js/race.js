@@ -2,6 +2,8 @@
 // LOCAL_LIMIT 目前是 2（上下分屏）。想加到 4 人時，提高這個數字並多切幾塊畫面即可。
 import { AiDriver } from './ai.js';
 
+const ROAD_HALF = 11;
+
 export const LOCAL_LIMIT = 2;
 export const RACE_LAPS = 2;
 
@@ -70,29 +72,113 @@ export class Race {
 
   collide() {
     const rs = this.racers;
-    const min = 2.35;
+    const R = 1.15;
+    const min = R * 2;
+    this.lastBump = 0;
     for (let i = 0; i < rs.length; i++) {
       for (let j = i + 1; j < rs.length; j++) {
-        if (rs[i].parked || rs[j].parked) continue;
-        const a = rs[i].veh, b = rs[j].veh;
-        if (Math.abs(a.pos.y - b.pos.y) > 2.4) continue;
-        const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
-        const d2 = dx * dx + dz * dz;
-        if (d2 >= min * min || d2 < 1e-6) continue;
-        const d = Math.sqrt(d2);
-        const push = (min - d) * 0.55;
-        const nx = dx / d, nz = dz / d;
-        if (a.attached) a.lat = Math.max(-10, Math.min(10, (a.lat || 0) - push));
-        else { a.pos.x -= nx * push; a.pos.z -= nz * push; }
-        if (b.attached) b.lat = Math.max(-10, Math.min(10, (b.lat || 0) + push));
-        else { b.pos.x += nx * push; b.pos.z += nz * push; }
-        const rel = (b.vel.x - a.vel.x) * nx + (b.vel.z - a.vel.z) * nz;
-        if (rel < 0) {
-          const imp = -rel * 0.32;
-          a.vel.x -= nx * imp; a.vel.z -= nz * imp;
-          b.vel.x += nx * imp; b.vel.z += nz * imp;
+        const ra = rs[i], rb = rs[j];
+        if (ra.parked || rb.parked) continue;
+        const a = ra.veh, b = rb.veh;
+        if ((a.ghostT || 0) > 0 || (b.ghostT || 0) > 0) continue;
+        const ax0 = a._px != null ? a._px : a.pos.x;
+        const ay0 = a._py != null ? a._py : a.pos.y;
+        const az0 = a._pz != null ? a._pz : a.pos.z;
+        const bx0 = b._px != null ? b._px : b.pos.x;
+        const by0 = b._py != null ? b._py : b.pos.y;
+        const bz0 = b._pz != null ? b._pz : b.pos.z;
+        let best = 1e9, bu = 1;
+        const samples = 4;
+        for (let s = 0; s <= samples; s++) {
+          const u = s / samples;
+          const dx = (bx0 + (b.pos.x - bx0) * u) - (ax0 + (a.pos.x - ax0) * u);
+          const dy = (by0 + (b.pos.y - by0) * u) - (ay0 + (a.pos.y - ay0) * u);
+          const dz = (bz0 + (b.pos.z - bz0) * u) - (az0 + (a.pos.z - az0) * u);
+          const d = Math.hypot(dx, dy, dz);
+          if (d < best) { best = d; bu = u; }
         }
+        const now = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y, b.pos.z - a.pos.z);
+        if (best >= min && now >= min) continue;
+        const u = best < now ? bu : 1;
+        const ax = ax0 + (a.pos.x - ax0) * u;
+        const ay = ay0 + (a.pos.y - ay0) * u;
+        const az = az0 + (a.pos.z - az0) * u;
+        const bx = bx0 + (b.pos.x - bx0) * u;
+        const by = by0 + (b.pos.y - by0) * u;
+        const bz = bz0 + (b.pos.z - bz0) * u;
+        let nx = bx - ax, ny = by - ay, nz = bz - az;
+        let dist = Math.hypot(nx, ny, nz);
+        if (dist < 1e-4) { nx = 1; ny = 0; nz = 0; dist = min; }
+        else { nx /= dist; ny /= dist; nz /= dist; }
+        const overlap = min - Math.min(best, now);
+        if (!(overlap > 0)) continue;
+        const ma = Math.max(400, a.mass || ra.mass || 1800);
+        const mb = Math.max(400, b.mass || rb.mass || 1800);
+        const wa = mb / (ma + mb);
+        const wb = ma / (ma + mb);
+        this._shove(a, -nx, -ny, -nz, overlap * wa);
+        this._shove(b, nx, ny, nz, overlap * wb);
+        const rv = (b.vel.x - a.vel.x) * nx + (b.vel.y - a.vel.y) * ny + (b.vel.z - a.vel.z) * nz;
+        if (rv < 0) {
+          const inv = 1 / ma + 1 / mb;
+          let j = -(1 + 0.22) * rv / inv;
+          const capJ = 16 * Math.min(ma, mb);
+          if (j > capJ) j = capJ;
+          let ix = nx * j / ma, iy = ny * j / ma, iz = nz * j / ma;
+          const mag = Math.hypot(ix, iy, iz);
+          if (mag > 16) { const s = 16 / mag; ix *= s; iy *= s; iz *= s; }
+          a.vel.x -= ix; a.vel.y -= iy; a.vel.z -= iz;
+          let jx = nx * j / mb, jy = ny * j / mb, jz = nz * j / mb;
+          const magB = Math.hypot(jx, jy, jz);
+          if (magB > 16) { const s = 16 / magB; jx *= s; jy *= s; jz *= s; }
+          b.vel.x += jx; b.vel.y += jy; b.vel.z += jz;
+          a.vel.multiplyScalar(0.97);
+          b.vel.multiplyScalar(0.97);
+          const sideA = nx * Math.cos(a.heading) - nz * Math.sin(a.heading);
+          const sideB = nx * Math.cos(b.heading) - nz * Math.sin(b.heading);
+          const yaw = Math.min(0.28, Math.abs(rv) * 0.008);
+          a.heading += Math.max(-0.28, Math.min(0.28, sideA * yaw));
+          b.heading -= Math.max(-0.28, Math.min(0.28, sideB * yaw));
+          a.yawRate += sideA * yaw;
+          b.yawRate -= sideB * yaw;
+        }
+        const hit = Math.max(4, Math.abs(rv));
+        a.events.wall = Math.max(a.events.wall || 0, hit);
+        b.events.wall = Math.max(b.events.wall || 0, hit);
+        this._reel(a);
+        this._reel(b);
+        this.lastBump++;
       }
+    }
+  }
+
+  _shove(veh, nx, ny, nz, dist) {
+    if (!(dist > 0)) return;
+    if (veh.attached) {
+      const rx = (veh.q1 && veh.q1.rx) || Math.cos(veh.heading);
+      const rz = (veh.q1 && veh.q1.rz) || -Math.sin(veh.heading);
+      const along = nx * rx + nz * rz;
+      veh.lat = Math.max(-(ROAD_HALF - 1), Math.min(ROAD_HALF - 1, (veh.lat || 0) + along * dist));
+      return;
+    }
+    veh.pos.x += nx * dist;
+    veh.pos.y += ny * dist * 0.65;
+    veh.pos.z += nz * dist;
+  }
+
+  _reel(veh) {
+    if (veh.attached) {
+      veh.lat = Math.max(-(ROAD_HALF - 1.2), Math.min(ROAD_HALF - 1.2, veh.lat || 0));
+      return;
+    }
+    if (!veh.onRoad || !veh.tr) return;
+    const q = veh.tr.query(veh.pos.x, veh.pos.z, veh.tr._q2);
+    const lim = ROAD_HALF - 0.8;
+    if (q.near && !q.gap && q.al > lim && q.al < lim + 6) {
+      const side = Math.sign(q.l) || 1;
+      const back = q.al - lim;
+      veh.pos.x -= q.rx * side * back;
+      veh.pos.z -= q.rz * side * back;
     }
   }
 
