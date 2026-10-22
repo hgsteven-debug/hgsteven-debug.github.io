@@ -72,10 +72,11 @@ html[lang="fr"] .legend, html[lang="ja"] .legend, html[lang="ko"] .legend { font
   transform:translate(-50%, -50%); }
 .stick-lbl { position:absolute; left:0; right:0; bottom:-0.2rem; text-align:center; font-size:.85rem; font-weight:700; color:rgba(255,255,255,.8); pointer-events:none; text-shadow:0 1px 4px #000; }
 .gpad.face { width:52px; height:52px; border-radius:50%; font-size:.82rem; z-index:4; }
-.gpad.face.y { right:calc(78px + var(--safe-r)); bottom:calc(232px + var(--safe-b)); background:rgba(230,190,40,.45); }
-.gpad.face.x { right:calc(136px + var(--safe-r)); bottom:calc(176px + var(--safe-b)); background:rgba(40,120,210,.5); }
-.gpad.face.b { right:calc(18px + var(--safe-r)); bottom:calc(176px + var(--safe-b)); background:rgba(190,48,40,.55); }
-.gpad.face.a { right:calc(78px + var(--safe-r)); bottom:calc(136px + var(--safe-b)); background:rgba(36,150,70,.55); }
+/* Switch 菱形：上 X、左 Y、右 A、下 B。B 是起飛推進，要離加速踏板遠一點，拇指才不會按到油門。 */
+.gpad.face.x { right:calc(78px + var(--safe-r)); bottom:calc(256px + var(--safe-b)); background:rgba(40,120,210,.5); }
+.gpad.face.y { right:calc(136px + var(--safe-r)); bottom:calc(200px + var(--safe-b)); background:rgba(230,190,40,.45); }
+.gpad.face.a { right:calc(18px + var(--safe-r)); bottom:calc(200px + var(--safe-b)); background:rgba(36,150,70,.55); }
+.gpad.face.b { right:calc(78px + var(--safe-r)); bottom:calc(160px + var(--safe-b)); background:rgba(190,48,40,.55); }
 .gpad.menu { left:50%; top:calc(8px + var(--safe-t)); transform:translateX(-50%); width:72px; height:34px; border-radius:.8rem; font-size:.85rem; background:rgba(20,24,32,.72); }
 html.force-landscape body { position:fixed; width:100lvh; height:100lvw; top:0; left:0; transform-origin:top left;
   transform:rotate(90deg) translateY(-100%); overflow:hidden; }

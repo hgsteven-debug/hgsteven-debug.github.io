@@ -157,6 +157,13 @@ async function runMode(name, viewport, orient, expectCss) {
       assert(b.label === expect[key].label, name + ' label ' + key + ' ' + b.label);
       assert(b.inside && b.hit === key, name + ' hit ' + key + ' ' + JSON.stringify(b));
     }
+    const along = (btn, dir) => (btn.cx - box.right.cx) * dir.x + (btn.cy - box.right.cy) * dir.y;
+    const B = box.buttons.lift, A = box.buttons.nitro, Y = box.buttons.camera, X = box.buttons.reset;
+    assert(along(B, box.down) > along(A, box.down) + 20, name + ' B not bottom');
+    assert(along(B, box.down) > along(Y, box.down) + 20 && along(B, box.down) > along(X, box.down) + 20, name + ' B not lowest');
+    assert(along(A, box.right) > along(B, box.right) + 20, name + ' A not right of B');
+    assert(along(Y, box.left) > along(B, box.left) + 20, name + ' Y not left of B');
+    assert(along(X, box.up) > along(B, box.up) + 20, name + ' X not above B');
     const quiet = (h) => Math.abs(h.steer) < 0.05 && h.throttle === 0 && h.brake === 0 && !h.lift && !h.nitro && h.pitch === 0;
 
     const right = await drag(session, page, box.right, box.right);

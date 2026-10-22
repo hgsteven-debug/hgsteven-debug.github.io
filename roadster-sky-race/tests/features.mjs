@@ -499,6 +499,11 @@ async function testPhonePad() {
       if (f.y < 0 || f.x < 0 || f.x + f.w > w || f.y + f.h > h) throw new Error('face offscreen ' + JSON.stringify(f));
       if (overlap(f, box.gas)) throw new Error('face overlaps gas ' + JSON.stringify({ f, gas: box.gas }));
     }
+    const byText = Object.fromEntries(box.faces.map((f) => [f.t, f]));
+    const fb = byText['B推進'], fa = byText['A氮氣'], fy = byText['Y視角'], fx = byText['X回賽道'];
+    if (!fb || !fa || !fy || !fx) throw new Error('face labels ' + JSON.stringify(box.faces.map((f) => f.t)));
+    if (!(fb.y > fa.y && fb.y > fy.y && fb.y > fx.y)) throw new Error('B not bottom ' + JSON.stringify(box.faces));
+    if (!(fa.x > fb.x && fy.x < fb.x && fx.y < fb.y)) throw new Error('diamond ' + JSON.stringify(box.faces));
     if (overlap(box.stick, box.brake)) throw new Error('stick overlaps brake ' + JSON.stringify(box));
     if (!box.held || !(box.throttle > 0.5)) throw new Error('hold ' + JSON.stringify(box));
     if (box.respawn || box.why) throw new Error('local off-track respawn ' + JSON.stringify(box));
@@ -682,6 +687,118 @@ async function testMoon() {
   await page.close();
 }
 
+async function testBoost() {
+  const { page, errors } = await open('?track=city&q=low&ai=0&autostart=1&nocount=1&noadapt=1&nopauseblur=1&veh=semi');
+  const report = await page.evaluate(() => {
+    const sky = window.__sky;
+    sky.game.freeze = true;
+    const v = sky.veh;
+    const zero = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
+    const tap = () => {
+      v.placeOnTrack(80, 0, 0);
+      v.energy = 100;
+      v.vel.set(0, 0, 0);
+      const y0 = v.pos.y;
+      v.step(1 / 120, { ...zero, lift: true });
+      let max = v.pos.y;
+      for (let i = 0; i < 160; i++) {
+        v.step(1 / 120, zero);
+        if (v.pos.y > max) max = v.pos.y;
+      }
+      return { dy: +(max - y0).toFixed(2), e: +v.energy.toFixed(1), g: v.grounded };
+    };
+    const hold = () => {
+      v.setTune(sky.vehicleById('semi').tune);
+      v.placeOnTrack(80, 0, 0);
+      v.energy = 100;
+      v.vel.set(0, 0, 0);
+      const y0 = v.pos.y;
+      for (let i = 0; i < 90; i++) v.step(1 / 120, { ...zero, lift: true });
+      return { dy: +(v.pos.y - y0).toFixed(2), e: +v.energy.toFixed(1), g: v.grounded, thr: v.thrusting };
+    };
+    const nitroStill = () => {
+      v.setTune(sky.vehicleById('roadster').tune);
+      v.placeOnTrack(80, 0, 0);
+      v.energy = 100;
+      v.vel.set(0, 0, 0);
+      const y0 = v.pos.y;
+      for (let i = 0; i < 60; i++) v.step(1 / 120, { ...zero, nitro: true });
+      return { dy: +(v.pos.y - y0).toFixed(2), e: +v.energy.toFixed(1), sp: +v.speed.toFixed(2) };
+    };
+    const reverse = () => {
+      v.placeOnTrack(80, 0, 0);
+      v.vel.set(0, 0, 0);
+      const h = v.heading;
+      for (let i = 0; i < 90; i++) v.step(1 / 120, { ...zero, brake: 1 });
+      const fx = -Math.sin(h), fz = -Math.cos(h);
+      const back = -(v.vel.x * fx + v.vel.z * fz);
+      return { back: +back.toFixed(2), sp: +v.speed.toFixed(2) };
+    };
+    const wedged = () => {
+      v.setTune(sky.vehicleById('roadster').tune);
+      v.placeOnTrack(120, 0, 0);
+      v.energy = 100;
+      v.vel.set(0, 0, 0);
+      const y0 = v.pos.y;
+      const orig = v.tr.groundHeight.bind(v.tr);
+      v.tr.groundHeight = () => y0 + 2.4;
+      let max = y0;
+      for (let i = 0; i < 40; i++) {
+        v.step(1 / 120, { ...zero, lift: true, throttle: 1 });
+        if (v.pos.y > max) max = v.pos.y;
+      }
+      v.tr.groundHeight = orig;
+      return { dy: +(max - y0).toFixed(2), e: +v.energy.toFixed(1) };
+    };
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+    const axes = [0, 0, 0, 0, 0, 0];
+    const gp = { id: 'JOWUA Pro Controller (Vendor: 057e Product: 2009)', index: 0, connected: true, mapping: 'standard', buttons, axes, timestamp: 1 };
+    navigator.getGamepads = () => [gp];
+    sky.input.setPadMode('switch');
+    sky.input.padIndex = null;
+    sky.input.exclusive = false;
+    const press = (i, on) => { buttons[i].pressed = on; buttons[i].value = on ? 1 : 0; };
+    press(0, true);
+    for (let i = 0; i < 24; i++) sky.input.poll(1 / 60);
+    const switchB = { lift: !!sky.input.state.lift, nitro: !!sky.input.state.nitro, profile: sky.input.profile.id };
+    v.setTune(sky.vehicleById('roadster').tune);
+    v.placeOnTrack(80, 0, 0);
+    v.energy = 100;
+    v.vel.set(0, 0, 0);
+    const y0 = v.pos.y;
+    for (let i = 0; i < 30; i++) {
+      sky.input.poll(1 / 60);
+      v.step(1 / 120, sky.input.state);
+    }
+    const padHop = { dy: +(v.pos.y - y0).toFixed(2), e: +v.energy.toFixed(1) };
+    press(0, false);
+    press(1, true);
+    press(7, true);
+    v.placeOnTrack(80, 0, 22);
+    v.energy = 100;
+    for (let i = 0; i < 20; i++) sky.input.poll(1 / 60);
+    const switchA = { lift: !!sky.input.state.lift, nitro: !!sky.input.state.nitro, thr: +sky.input.state.throttle.toFixed(2) };
+    sky.input.setPadMode('xbox');
+    const xbox = { id: 'Xbox 360 Controller (Vendor: 045e Product: 028e)', index: 0, connected: true, mapping: 'standard', buttons, axes, timestamp: 2 };
+    navigator.getGamepads = () => [xbox];
+    sky.input.padIndex = null;
+    for (let i = 0; i < 8; i++) sky.input.poll(1 / 60);
+    const xboxB = { lift: !!sky.input.state.lift, nitro: !!sky.input.state.nitro, profile: sky.input.profile.id };
+    return { tap: tap(), hold: hold(), nitroStill: nitroStill(), reverse: reverse(), wedged: wedged(), switchB, padHop, switchA, xboxB };
+  });
+  if (errors.length) throw new Error(errors.join('\n'));
+  if (!(report.tap.dy >= 2 && report.tap.e <= 90)) throw new Error('tap ' + JSON.stringify(report.tap));
+  if (!(report.hold.dy >= 1.5 && report.hold.e <= 90 && report.hold.thr)) throw new Error('hold ' + JSON.stringify(report.hold));
+  if (!(report.nitroStill.e >= 99 && report.nitroStill.sp < 2)) throw new Error('nitro still ' + JSON.stringify(report.nitroStill));
+  if (!(report.reverse.back > 2)) throw new Error('reverse ' + JSON.stringify(report.reverse));
+  if (!(report.wedged.dy >= 1 && report.wedged.e <= 90)) throw new Error('wedged lift ' + JSON.stringify(report.wedged));
+  if (!(report.switchB.lift && !report.switchB.nitro && report.switchB.profile === 'switch')) throw new Error('switch B ' + JSON.stringify(report.switchB));
+  if (!(report.padHop.dy >= 1.2 && report.padHop.e <= 90)) throw new Error('pad hop ' + JSON.stringify(report.padHop));
+  if (!(report.switchA.nitro && !report.switchA.lift)) throw new Error('switch A ' + JSON.stringify(report.switchA));
+  if (!(report.xboxB.nitro && !report.xboxB.lift && report.xboxB.profile === 'xbox')) throw new Error('xbox B ' + JSON.stringify(report.xboxB));
+  await page.close();
+}
+
 async function testPadPage() {
   const page = await browser.newPage();
   const errors = [];
@@ -708,6 +825,7 @@ try {
     ['ai city lap', testAiCity],
     ['city checkpoints and respawn', testCityRules],
     ['unstick and energy cap', testUnstickAndEnergy],
+    ['boost button', testBoost],
     ['car collision', testCollide],
     ['moon gravity and ai lap', testMoon],
   ];
