@@ -151,6 +151,7 @@ export class Vehicle {
     this.n.set(0, 1, 0);
     this.probe();
     this.pos.y = this.groundY;
+    this.grounded = true;
     this.snapOrientation();
     // 出生點的索引以呼叫者指定的為準。探地用的是另一個查詢，舊的 q1 會把車指到別的路段。
     this.fi = i;
@@ -453,6 +454,7 @@ export class Vehicle {
     const wantLift = !!inp.lift && this.energy > 0.5;
     const wasThrusting = this.thrusting;
     this.thrusting = wantLift;
+    const liftKick = Math.sqrt(Math.max(0.4, 2 * g * 3.4));
     if (wantLift && !wasThrusting) {   // 起飛：懸停高度依車輛的最大高度而定（重車飛得低）
       const hLow = Math.max(3, 8 * Math.sqrt(t.hMax / 38));
       this.hover = clamp(this.alt + 5 * hLow / 8, hLow, Math.max(hLow + 1, t.hMax * 0.8));
@@ -514,10 +516,11 @@ export class Vehicle {
       else this.energy += 5 / t.eCap * dt;
     } else {
       // ---------- 空中 / 推進器 ----------
-      if (this.grounded && wantLift) { // 離地
+      if (this.grounded && wantLift) { // 離地。點一下也要跳得夠高，能量條立刻看得到下降。
         this.grounded = false;
-        this.vel.y = Math.max(this.vel.y, 3.5);
-        this.pos.y += 0.06;
+        this.vel.y = Math.max(this.vel.y, liftKick);
+        this.pos.y += 0.22;
+        if (!wasThrusting) this.energy -= 12;
       }
       const hs = Math.hypot(this.vel.x, this.vel.z);
       this.speedF = hs;
@@ -591,7 +594,7 @@ export class Vehicle {
     const vn = this.vel.dot(n);
     const rise = gy - this.pos.y;
     const overGap = tr.isGapIdx(tr._q.fi);
-    if (!overGap && this.airTime < 0.35 && rise > 1.15 && this.pos.y < gy - 0.5) {
+    if (!wantLift && !overGap && this.airTime < 0.35 && rise > 1.15 && this.pos.y < gy - 0.5) {
       // 低矮路緣：油門踩著就爬過去。高牆才退回，而且不要把速度反轉釘在原地。
       const climbing = rise < 2.6 && (inp.throttle || 0) > 0.35;
       if (climbing) {
@@ -609,23 +612,31 @@ export class Vehicle {
         this._lip = (this._lip || 0) + dt;
       }
     } else if (this.pos.y <= gy) {
-      this._lip = 0;
-      this.pos.y = gy;
-      if (this.flipAssist) {
-        _up.set(0, 1, 0).applyQuaternion(this.q);
-        if (_up.y < 0.2) {
-          ev.impact = Math.max(ev.impact, 12);
-          this.vel.multiplyScalar(0.4);
+      if (wantLift) {
+        this.pos.y = gy + 0.16;
+        if (this.vel.y < liftKick * 0.5) this.vel.y = liftKick * 0.5;
+        this._lip = 0;
+        this.grounded = false;
+        this.airTime += dt;
+      } else {
+        this._lip = 0;
+        this.pos.y = gy;
+        if (this.flipAssist) {
+          _up.set(0, 1, 0).applyQuaternion(this.q);
+          if (_up.y < 0.2) {
+            ev.impact = Math.max(ev.impact, 12);
+            this.vel.multiplyScalar(0.4);
+          }
+          this.flipAssist = false;
         }
-        this.flipAssist = false;
+        if (vn < 0) {
+          if (!wasGrounded || vn < -2.5) ev.impact = Math.max(ev.impact, -vn);
+          this.vel.addScaledVector(n, -vn * 1.0);
+          if (-vn > 16) this.vel.multiplyScalar(1 - 0.12 / t.tough);
+        }
+        this.grounded = true;
+        this.airTime = 0;
       }
-      if (vn < 0) {
-        if (!wasGrounded || vn < -2.5) ev.impact = Math.max(ev.impact, -vn);
-        this.vel.addScaledVector(n, -vn * 1.0);
-        if (-vn > 16) this.vel.multiplyScalar(1 - 0.12 / t.tough);
-      }
-      this.grounded = true;
-      this.airTime = 0;
     } else if (wasGrounded && !this.thrusting && this.pos.y - gy < 0.3 && vn < 3.0) {
       this.pos.y = gy;
       if (vn > 0) this.vel.addScaledVector(n, -vn);

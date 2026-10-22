@@ -23,6 +23,15 @@ try {
     }
     for (const key of keys) assert(base.includes(key), loc + ' extra ' + key);
   }
+  assert(DICTS['zh-TW']['touch.lift'] === '推進', DICTS['zh-TW']['touch.lift']);
+  assert(DICTS.en['touch.lift'] === 'LIFT');
+  assert(DICTS.fr['touch.lift'] === 'VOL');
+  assert(DICTS.ja['touch.lift'] === '浮上');
+  assert(DICTS.ko['touch.lift'] === '부상');
+  for (const loc of LOCALES) {
+    assert(DICTS[loc]['touch.liftAria'].startsWith('B '), loc + ' aria ' + DICTS[loc]['touch.liftAria']);
+    assert(!/倒車|reverse|recul|後退|후진/i.test(DICTS[loc]['touch.lift']), loc + ' lift is reverse');
+  }
   assert(DICTS['zh-TW']['touch.gas'] === '加速', DICTS['zh-TW']['touch.gas']);
   assert(DICTS['zh-TW']['touch.brake'] === '煞車');
   assert(DICTS['zh-TW']['hud.off'] === '離開路面');
