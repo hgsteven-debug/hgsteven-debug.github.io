@@ -3,7 +3,7 @@ import { t } from './i18n.js';
 // 手機加入用的純邏輯：房間代碼、輸入封包、快照內插、預測修正。
 // 不碰 DOM、不碰 WebRTC，方便在 node 裡單測。多人遠端時只要把 REMOTE_LIMIT 調高，清單結構不用改。
 
-export const REMOTE_LIMIT = 1;
+export const REMOTE_LIMIT = 4;
 export const INPUT_STALE_MS = 500;
 export const INTERP_DELAY_MS = 100;
 export const STATE_GAP_MS = 66;

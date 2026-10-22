@@ -288,12 +288,19 @@ async function testGraceSamePlayer() {
   first.conn.emit('data', { t: 'bye' });
   assert(first.supersede === true, 'bye did not free the slot');
   const other = host.debugJoin('other-phone');
-  assert(other && other !== first && host.remotes.length === 1 && other.nonce === 'other-phone', 'other phone was rejected');
+  assert(other && other !== first && host.remotes.length === 2 && other.nonce === 'other-phone', 'second phone should fit');
+  while (host.remotes.length < sync.REMOTE_LIMIT) {
+    const filled = host.debugJoin('fill-' + host.remotes.length);
+    assert(filled, 'room should take another phone');
+  }
   const extra = host.debugJoin('extra');
-  assert(extra == null && host.remotes.length === 1 && host.remotes[0] === other, 'live phone was kicked');
+  assert(extra && host.remotes.length === sync.REMOTE_LIMIT, 'stale phone should yield a slot');
+  const blocked = host.debugJoin('blocked');
+  assert(blocked == null && host.remotes.length === sync.REMOTE_LIMIT, 'full room accepted another phone');
   host.debugBlip();
+  const before = host.remotes.length;
   assert(host.debugExpire() === true);
-  assert(host.remotes.length === 0, 'grace did not expire');
+  assert(host.remotes.length === before - 1, 'grace did not expire');
   host.destroy();
 }
 

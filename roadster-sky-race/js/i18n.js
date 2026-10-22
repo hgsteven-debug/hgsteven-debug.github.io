@@ -147,7 +147,7 @@ const ROWS = [
   ['touch.show', '顯示', 'Show', 'Afficher', '表示', '표시'],
   ['touch.hide', '隱藏', 'Hide', 'Masquer', '隠す', '숨김'],
   ['set.back', '返回', 'Back', 'Retour', '戻る', '뒤로'],
-  ['set.qinfo', '低：不使用陰影、解析度 62%，適合效能較弱的車機；中：預設；高：2048 陰影、完整解析度。', 'Low: no shadows, 62% resolution, for a slower car browser. Medium: default. High: 2048 shadows, full resolution.', 'Basse : pas d’ombres, résolution 62 %. Moyenne : défaut. Haute : ombres 2048, pleine résolution.', '低：影なし、解像度 62%。中：標準。高：影 2048、フル解像度。', '낮음: 그림자 없음, 해상도 62%. 중간: 기본. 높음: 그림자 2048, 전체 해상도.'],
+  ['set.qinfo', '低：不使用陰影、解析度 62%，適合效能較弱的車機；中：預設；高：1024 陰影、完整解析度。', 'Low: no shadows, 62% resolution, for a slower car browser. Medium: default. High: 1024 shadows, full resolution.', 'Basse : pas d’ombres, résolution 62 %. Moyenne : défaut. Haute : ombres 1024, pleine résolution.', '低：影なし、解像度 62%。中：標準。高：影 1024、フル解像度。', '낮음: 그림자 없음, 해상도 62%. 중간: 기본. 높음: 그림자 1024, 전체 해상도.'],
 
   ['map.title', '按鍵設定', 'Controls', 'Commandes', '操作設定', '조작 설정'],
   ['map.cal', '校正搖桿', 'Calibrate', 'Calibrer', '補正', '보정'],
@@ -326,7 +326,7 @@ const ROWS = [
   ['guest.signal', '階段：已找到房間，正在建立 WebRTC（會試免費 TURN 中繼）…', 'Stage: room found, opening WebRTC (a free TURN relay will be tried)…', 'Étape : salle trouvée, ouverture WebRTC (relais TURN gratuit)…', '段階：部屋を発見、WebRTC 接続中（無料 TURN も試します）…', '단계: 방을 찾음, WebRTC 연결 중 (무료 TURN도 시도)…'],
   ['guest.find', '階段：掃碼伺服器已連上，正在尋找房間 {code}…', 'Stage: join server connected, looking for room {code}…', 'Étape : serveur connecté, recherche de la salle {code}…', '段階：参加サーバー接続済み、部屋 {code} を検索中…', '단계: 참가 서버 연결됨, 방 {code} 찾는 중…'],
   ['guest.boot', '階段：正在連上掃碼伺服器… {ws}', 'Stage: connecting to the join server… {ws}', 'Étape : connexion au serveur… {ws}', '段階：参加サーバーに接続中… {ws}', '단계: 참가 서버에 연결 중… {ws}'],
-  ['guest.full', '這個房間已經有一位手機玩家。請等對方離開再加入。', 'This room already has a phone player. Wait for them to leave.', 'Cette salle a déjà un joueur mobile. Attendez qu’il parte.', 'この部屋にはすでにスマホのプレイヤーがいます。退出を待ってください。', '이 방에는 이미 휴대폰 플레이어가 있습니다. 나갈 때까지 기다리세요.'],
+  ['guest.full', '這個房間的手機玩家已滿。請等有人離開再加入。', 'This room is full. Wait for a phone player to leave.', 'Cette salle est pleine. Attendez qu’un joueur mobile parte.', 'この部屋のスマホ枠は満員です。誰かが退出するまでお待ちください。', '이 방의 휴대폰 자리가 가득 찼습니다. 누군가 나갈 때까지 기다리세요.'],
   ['guest.replaced', '已改由另一台手機加入這個房間。', 'Another phone took this room.', 'Un autre téléphone a pris cette salle.', '別のスマホがこの部屋に入りました。', '다른 휴대폰이 이 방에 들어왔습니다.'],
   ['guest.replacedBanner', '已改由另一台手機加入。', 'Another phone joined.', 'Un autre téléphone a rejoint.', '別のスマホが参加しました。', '다른 휴대폰이 참가했습니다.'],
   ['guest.dropLive', '連線中斷。比賽在房主那邊會繼續。正在重新連線…', 'Connection lost. The host’s race continues. Reconnecting…', 'Connexion coupée. La course de l’hôte continue. Reconnexion…', '接続が切れました。ホスト側のレースは続きます。再接続中…', '연결이 끊겼습니다. 호스트의 경기는 계속됩니다. 다시 연결 중…'],

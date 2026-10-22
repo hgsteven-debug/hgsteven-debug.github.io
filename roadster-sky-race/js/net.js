@@ -4,13 +4,46 @@ import { RemoteDriver } from './race.js';
 import {
   REMOTE_LIMIT, makeRoomCode, peerIdFor, joinUrl, failText, packInput, zeroInput, formatCode, normalizeCode,
   STATE_GAP_MS, INPUT_GAP_MS, LINK_STALE_MS, REMOTE_GRACE_MS, hostStillThere,
-  INPUT_HISTORY, acceptInputs, stateGapMs, deltaPose, mergePose, linkQuality, linkKind, lanIsolationHint,
+  INPUT_HISTORY, acceptInputs, stateGapMs, mergePose, linkQuality, linkKind, lanIsolationHint,
 } from './sync.js';
 import { webrtcSupport, rtcConfig, nextJoinStage, JOIN_TOTAL_MS } from './ice.js';
 import { connectRelayFan } from './relay.js';
+import {
+  encodeState, encodeInput, decodeWire, unwrapRelay, inputParts, partsToCmd, inputChanged,
+  INPUT_KEEPALIVE_MS, dcBytes, relayWireBytes, holdCars, createDict, bytesToB64,
+} from './wire.js';
 import { t, getLocale } from './i18n.js';
 
 export { REMOTE_LIMIT };
+
+function noteOut(session, n) {
+  session._outB = (session._outB || 0) + (n || 0);
+  session._outN = (session._outN || 0) + 1;
+}
+function noteIn(session, n) {
+  session._inB = (session._inB || 0) + (n || 0);
+  session._inN = (session._inN || 0) + 1;
+}
+function rollMeter(session, now) {
+  if (!session._meterT) session._meterT = now;
+  const dt = now - session._meterT;
+  if (dt < 1000) return;
+  const s = dt / 1000;
+  session.upBps = Math.round((session._outB || 0) / s);
+  session.downBps = Math.round((session._inB || 0) / s);
+  session.upPps = +((session._outN || 0) / s).toFixed(1);
+  session.downPps = +((session._inN || 0) / s).toFixed(1);
+  session._outB = 0;
+  session._outN = 0;
+  session._inB = 0;
+  session._inN = 0;
+  session._meterT = now;
+}
+function freeSlot(session) {
+  const used = new Set(session.remotes.map((r) => r.slot | 0));
+  for (let i = 0; i < REMOTE_LIMIT; i++) if (!used.has(i)) return i;
+  return session.remotes.length;
+}
 
 function peerOptions() {
   return {
@@ -412,12 +445,13 @@ export function createHost(handlers) {
       drop(cur, 'replaced');
     }
     conn._skyJoined = true;
+    const slot = freeSlot(session);
     const remote = {
       id: conn.peer,
-      slot: 0,
+      slot,
       conn,
       nonce: nonce || '',
-      name: nameFor(0),
+      name: nameFor(slot),
       seq: 0,
       cmd: zeroInput(),
       lastAt: 0,
@@ -445,7 +479,10 @@ export function createHost(handlers) {
 
   function accept(conn) {
     conn.on('data', (data) => {
-      if (session._destroyed || !data || typeof data !== 'object') return;
+      if (session._destroyed || data == null) return;
+      noteIn(session, dcBytes(data));
+      data = decodeWire(data);
+      if (!data || typeof data !== 'object' || !data.t) return;
       if (!conn._skyJoined) {
         if (data.t === 'hello' || data.t === 'input') adopt(conn, data.nonce);
         if (!conn._skyJoined) return;
@@ -529,6 +566,8 @@ export function createHost(handlers) {
 
   function onRelayMessage(msg) {
     if (!msg || msg.from === 'host' || session._destroyed) return;
+    noteIn(session, relayWireBytes(msg));
+    if (msg.b) msg = unwrapRelay(msg);
     const nonce = msg.nonce || '';
     if (!nonce) return;
     if (msg.t === 'ping') {
@@ -755,25 +794,18 @@ export function createHost(handlers) {
       try {
         let msg = build(remote);
         if (!msg) continue;
-        if (msg.t === 'state' && msg.self) {
-          remote._stateN = (remote._stateN || 0) + 1;
-          const prev = remote._lastSelf;
-          remote._lastSelf = msg.self;
-          if (prev && !force && remote._stateN % 8 !== 0) {
-            const d = deltaPose(prev, msg.self);
-            if (d) {
-              msg = Object.assign({}, msg);
-              delete msg.self;
-              if (Object.keys(d).length) msg.dself = d;
-            }
-          }
-        }
-        if (session.sawLocalHost) msg.lan = 1;
+        const bytes = encodeState(msg, remote, now);
         const dc = remote.conn && remote.conn.open && remote.conn._skyVia !== 'ws' && remote.via !== 'ws';
+        let dcOk = false;
         if (dc && remote.rtcLive !== false) {
-          try { remote.conn.send(msg); } catch (e) { remote.rtcLive = false; }
+          try { remote.conn.send(bytes); dcOk = true; noteOut(session, dcBytes(bytes)); } catch (e) { remote.rtcLive = false; }
         }
-        if (remote.rtcLive !== true && relay) relay.send(Object.assign({ from: 'host', nonce: remote.nonce }, msg));
+        if (!(remote.rtcLive === true && dcOk) && relay) {
+          const env = { from: 'host', nonce: remote.nonce, b: bytesToB64(bytes) };
+          if (session.sawLocalHost) env.lan = 1;
+          noteOut(session, relayWireBytes(env));
+          relay.send(env);
+        }
         session.sent = (session.sent || 0) + 1;
       } catch (e) { session.lastErr = String(e && e.message || e); }
     }
@@ -813,6 +845,7 @@ export function createHost(handlers) {
   }
   session.poll = (now) => {
     if (session._destroyed) return;
+    rollMeter(session, now);
     runDue(deadlines, now);
     if (relay) relay.poll(now);
     tickHostJoin(now);
@@ -823,8 +856,12 @@ export function createHost(handlers) {
       const ping = { t: 'ping', n: (remote._pingN = (remote._pingN || 0) + 1), at: now, lan: session.sawLocalHost ? 1 : 0, nonce: remote.nonce };
       const rtcUp = remote.rtcLive !== false && remote.via !== 'ws' && remote.conn && remote.conn.open && remote.conn._skyVia !== 'ws';
       try {
-        if (rtcUp) remote.conn.send(ping);
-        else if (relay) relay.send(Object.assign({ from: 'host' }, ping));
+        if (rtcUp) { remote.conn.send(ping); noteOut(session, dcBytes(ping)); }
+        else if (relay) {
+          const env = Object.assign({ from: 'host' }, ping);
+          noteOut(session, relayWireBytes(env));
+          relay.send(env);
+        }
       } catch (e) {}
     }
     if (session.peerOpen || !session.rtc.ok) return;
@@ -869,6 +906,9 @@ export function createHost(handlers) {
       proven: remote && remote.rtcLive === true ? 1 : 0,
       via: remote ? remote.via : '',
       rtc: remote ? remote.rtcLive : null,
+      up: session.upBps || 0,
+      down: session.downBps || 0,
+      per: session.remotes.length > 1 ? Math.round((session.upBps || 0) / session.remotes.length) : 0,
     };
   };
   session.debugExpire = () => {
@@ -1032,20 +1072,38 @@ export function createGuest(code, handlers) {
   }
 
   function send(msg) {
-    if (!msg) return;
-    if (!msg.nonce) msg = Object.assign({ nonce }, msg);
-    if (session.sawLocalHost) msg.lan = 1;
+    if (msg == null) return;
+    const bin = msg instanceof Uint8Array;
+    if (!bin && !msg.nonce) msg = Object.assign({ nonce }, msg);
+    if (!bin && session.sawLocalHost) msg.lan = 1;
     let dcOk = false;
     if (conn && conn.open && session.rtcLive !== false) {
-      try { conn.send(msg); dcOk = true; } catch (e) { session.rtcLive = false; }
+      try { conn.send(msg); dcOk = true; noteOut(session, dcBytes(msg)); } catch (e) { session.rtcLive = false; }
     }
-    if (session.rtcLive === true && dcOk && msg.t !== 'bye' && msg.t !== 'reset') return;
-    try { if (relay) relay.send(Object.assign({ from: nonce }, msg)); } catch (e) {}
+    const event = !bin && (msg.t === 'bye' || msg.t === 'reset');
+    if (session.rtcLive === true && dcOk && !event) return;
+    try {
+      if (!relay) return;
+      if (bin) {
+        const env = { from: nonce, nonce, b: bytesToB64(msg) };
+        if (session.sawLocalHost) env.lan = 1;
+        noteOut(session, relayWireBytes(env));
+        relay.send(env);
+      } else {
+        const env = Object.assign({ from: nonce }, msg);
+        noteOut(session, relayWireBytes(env));
+        relay.send(env);
+      }
+    } catch (e) {}
   }
   session.send = send;
 
   function take(data, via) {
-    if (session._destroyed || !data || typeof data !== 'object') return;
+    if (session._destroyed || data == null) return;
+    if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+      data = decodeWire(data, session._dict || (session._dict = createDict()));
+    }
+    if (!data || typeof data !== 'object') return;
     if (via === 'ws' && session.rtcLive) return;
     if (data.lan) session.sawRemoteHost = true;
     if (data.t === 'ping' || data.t === 'pong' || data.t === 'welcome' || data.t === 'state' || data.t === 'input') {
@@ -1056,6 +1114,8 @@ export function createGuest(code, handlers) {
       return;
     }
     if (data.dself) data = Object.assign({}, data, { self: mergePose(session._self, data.dself) });
+    else if (data.t === 'state' && data.self && session._self) data.self = mergePose(session._self, data.self);
+    if (data.t === 'state') holdCars(session._carHold || (session._carHold = { map: new Map() }), data, performance.now());
     if (data.self) session._self = data.self;
     else if (session._self && data.t === 'state') data = Object.assign({}, data, { self: session._self });
     if (data.t === 'pong' || data.t === 'broker') {
@@ -1101,19 +1161,18 @@ export function createGuest(code, handlers) {
   }
 
   session.noteInput = (state, now) => {
-    const cmd = packInput(state);
+    const parts = inputParts(state);
+    const cmd = partsToCmd(parts);
     const last = session.log.length ? session.log[session.log.length - 1] : null;
-    const same = last && last.cmd.steer === cmd.steer && last.cmd.throttle === cmd.throttle && last.cmd.brake === cmd.brake
-      && last.cmd.lift === cmd.lift && last.cmd.nitro === cmd.nitro && last.cmd.pitch === cmd.pitch;
-    const edge = !last || last.cmd.throttle !== cmd.throttle || last.cmd.brake !== cmd.brake
-      || last.cmd.lift !== cmd.lift || last.cmd.nitro !== cmd.nitro;
-    if (!edge && now - session.lastSend < INPUT_GAP_MS) return session.seq;
-    if (edge && last && now - session.lastSend < 32 && same) return session.seq;
+    const ch = inputChanged(last && last.parts, parts);
+    if (ch.edge && last && now - session.lastSend < 32 && !ch.moved) return session.seq;
+    if (!ch.edge && !ch.moved && now - session.lastSend < INPUT_KEEPALIVE_MS) return session.seq;
+    if (!ch.edge && ch.moved && now - session.lastSend < INPUT_GAP_MS) return session.seq;
     session.seq += 1;
     session.lastSend = now;
     const hist = session.log.slice(-INPUT_HISTORY).map((row) => Object.assign({ seq: row.seq }, row.cmd));
-    send({ t: 'input', seq: session.seq, nonce, steer: cmd.steer, throttle: cmd.throttle, brake: cmd.brake, lift: cmd.lift, nitro: cmd.nitro, pitch: cmd.pitch, hist });
-    session.log.push({ seq: session.seq, cmd, steps: 0 });
+    send(encodeInput({ t: 'input', seq: session.seq, steer: cmd.steer, throttle: cmd.throttle, brake: cmd.brake, lift: cmd.lift, nitro: cmd.nitro, pitch: cmd.pitch, hist }));
+    session.log.push({ seq: session.seq, cmd, parts, steps: 0 });
     if (session.log.length > 90) session.log.shift();
     return session.seq;
   };
@@ -1168,7 +1227,7 @@ export function createGuest(code, handlers) {
         checkDone();
       });
     });
-    next.on('data', (data) => take(data, 'webrtc'));
+    next.on('data', (data) => { noteIn(session, dcBytes(data)); take(data, 'webrtc'); });
     next.on('close', () => {
       if (session._destroyed) return;
       session.rtcLive = false;
@@ -1199,7 +1258,9 @@ export function createGuest(code, handlers) {
     session._finding = false;
     session._signalled = true;
     emit('wait');
-    try { conn = peer.connect(peerIdFor(code), { reliable: true, serialization: 'json' }); }
+    // PeerJS 只有一條資料通道，可靠與否是整條通道的設定。事件（歡迎、重置、離開）必須可靠，
+    // 所以狀態和輸入也走這條可靠通道。二進位編碼把狀態縮小之後，可靠重傳的成本才降得下來。
+    try { conn = peer.connect(peerIdFor(code), { reliable: true, serialization: 'binary' }); }
     catch (e) {
       session.peerDetail = failText(e);
       session.rtcGaveUp = true;
@@ -1292,7 +1353,8 @@ export function createGuest(code, handlers) {
     },
     onMessage: (msg) => {
       if (!msg || msg.from !== 'host') return;
-      take(msg, 'ws');
+      noteIn(session, relayWireBytes(msg));
+      take(msg.b ? unwrapRelay(msg) : msg, 'ws');
     },
   }, relayOpts(h, 'guest', relayIndex, relayEpoch));
 
@@ -1339,6 +1401,7 @@ export function createGuest(code, handlers) {
   }
   session.poll = (now) => {
     if (session._destroyed) return;
+    rollMeter(session, now);
     runDue(deadlines, now);
     if (relay) relay.poll(now);
     tickGuestJoin(now);
@@ -1391,6 +1454,9 @@ export function createGuest(code, handlers) {
       proven: session.provenAt ? 1 : 0,
       via: session.via || '',
       rtc: session.rtcLive,
+      up: session.upBps || 0,
+      down: session.downBps || 0,
+      per: 0,
     };
   };
   session.linkSample = () => sampleLink(session);

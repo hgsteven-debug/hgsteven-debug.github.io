@@ -3,6 +3,7 @@
 // 主題是公開的，房間代碼當題目，不要傳帳號密碼。
 
 import { normalizeCode, makeMidWindow } from './sync.js';
+import { relayFanTarget } from './wire.js';
 import { t } from './i18n.js';
 
 export const RELAYS = [
@@ -443,9 +444,11 @@ export function connectRelayFan(code, handlers, opts) {
     if (!obj) return false;
     const body = Object.assign({}, obj);
     if (body.mid == null) body.mid = midPrefix + '-' + (seq++);
-    const a = primary && primary.send(body);
-    const b = mirror && mirror.send(body);
-    return !!(a || b);
+    // 主線正常時只發主線。主線斷了才改走鏡像，避免同一包打兩台 broker。
+    const which = relayFanTarget(!!(primary && primary.open), !!(mirror && mirror.open));
+    if (which === 'primary') return !!primary.send(body);
+    if (which === 'mirror') return !!mirror.send(body);
+    return false;
   };
   state.pin = (nextIndex, nextEpoch) => {
     if (primary) primary.pin(nextIndex, nextEpoch);

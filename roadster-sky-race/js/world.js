@@ -7,7 +7,7 @@ import * as TX from './textures.js';
 export const QUALITY = {
   low:  { label: '低', scale: 0.62, shadows: 0,    cell: 20, rocks: 90,  aa: false, physical: false, fx: false, ring: true, carLod: 'low' },
   med:  { label: '中', scale: 0.85, shadows: 1024, cell: 13, rocks: 240, aa: true,  physical: true,  fx: true,  ring: true, carLod: 'high' },
-  high: { label: '高', scale: 1.0,  shadows: 2048, cell: 9,  rocks: 320, aa: true,  physical: true,  fx: true,  ring: true, carLod: 'high' },
+  high: { label: '高', scale: 1.0,  shadows: 1024, cell: 9,  rocks: 320, aa: true,  physical: true,  fx: true,  ring: true, carLod: 'high' },
 };
 
 export const SUN_DIR = new THREE.Vector3(-0.5, 0.52, 0.7).normalize();
@@ -501,36 +501,73 @@ export class World {
     const wrap = tr.wrap;
     if (def.bridges) {
       const mat = new THREE.MeshStandardMaterial({ color: 0x6a7580, metalness: 0.7, roughness: 0.4 });
+      const decks = [];
+      const pillars = [];
       for (const f of def.bridges) {
         const i = wrap(Math.round(f * tr.N));
-        const len = 48, segs = 8;
+        const segs = 8;
         for (let k = -segs; k <= segs; k++) {
           const j = wrap(i + k * 2);
-          const deck = new THREE.Mesh(new THREE.BoxGeometry(ROAD_HALF_K * 2.2, 0.5, tr.ds * 2.2), mat);
-          deck.position.set(tr.px[j], tr.py[j] - 0.8, tr.pz[j]);
-          deck.lookAt(tr.px[wrap(j+1)], tr.py[wrap(j+1)] - 0.8, tr.pz[wrap(j+1)]);
-          group.add(deck);
+          decks.push([tr.px[j], tr.py[j] - 0.8, tr.pz[j], tr.px[wrap(j + 1)], tr.py[wrap(j + 1)] - 0.8, tr.pz[wrap(j + 1)]]);
           if (k % 2 === 0) {
             for (const side of [-1, 1]) {
-              const p = new THREE.Mesh(new THREE.BoxGeometry(0.35, Math.max(4, tr.py[j] * 0.15 + 6), 0.35), mat);
-              p.position.set(tr.px[j] + tr.rx[j] * side * ROAD_HALF_K * 1.05, tr.py[j] - Math.max(2, tr.py[j] * 0.08 + 3), tr.pz[j] + tr.rz[j] * side * ROAD_HALF_K * 1.05);
-              group.add(p);
+              pillars.push({
+                x: tr.px[j] + tr.rx[j] * side * ROAD_HALF_K * 1.05,
+                y: tr.py[j] - Math.max(2, tr.py[j] * 0.08 + 3),
+                z: tr.pz[j] + tr.rz[j] * side * ROAD_HALF_K * 1.05,
+                h: Math.max(4, tr.py[j] * 0.15 + 6),
+              });
             }
           }
         }
+      }
+      const dummy = new THREE.Object3D();
+      if (decks.length) {
+        const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(ROAD_HALF_K * 2.2, 0.5, tr.ds * 2.2), mat, decks.length);
+        decks.forEach((p, n) => {
+          dummy.position.set(p[0], p[1], p[2]);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.set(1, 1, 1);
+          dummy.lookAt(p[3], p[4], p[5]);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(n, dummy.matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        group.add(mesh);
+      }
+      if (pillars.length) {
+        const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.35, 1, 0.35), mat, pillars.length);
+        pillars.forEach((p, n) => {
+          dummy.position.set(p.x, p.y, p.z);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.set(1, p.h, 1);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(n, dummy.matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        group.add(mesh);
       }
     }
     if (def.tunnel != null) {
       const i = wrap(Math.round(def.tunnel * tr.N));
       const mat = new THREE.MeshStandardMaterial({ color: 0x2a3038, roughness: 0.9, side: THREE.DoubleSide });
+      const arches = [];
       for (let k = -18; k <= 18; k++) {
         const j = wrap(i + k);
-        const arch = new THREE.Mesh(new THREE.CylinderGeometry(ROAD_HALF_K + 2.5, ROAD_HALF_K + 2.5, tr.ds * 1.1, 12, 1, true, 0, Math.PI), mat);
-        arch.rotation.z = Math.PI / 2;
-        arch.position.set(tr.px[j], tr.py[j] + 1.2, tr.pz[j]);
-        arch.lookAt(tr.px[wrap(j+1)], tr.py[wrap(j+1)] + 1.2, tr.pz[wrap(j+1)]);
-        group.add(arch);
+        arches.push([tr.px[j], tr.py[j] + 1.2, tr.pz[j], tr.px[wrap(j + 1)], tr.py[wrap(j + 1)] + 1.2, tr.pz[wrap(j + 1)]]);
       }
+      const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(ROAD_HALF_K + 2.5, ROAD_HALF_K + 2.5, tr.ds * 1.1, 12, 1, true, 0, Math.PI), mat, arches.length);
+      const dummy = new THREE.Object3D();
+      arches.forEach((p, n) => {
+        dummy.position.set(p[0], p[1], p[2]);
+        dummy.scale.set(1, 1, 1);
+        dummy.rotation.set(0, 0, 0);
+        dummy.lookAt(p[3], p[4], p[5]);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(n, dummy.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      group.add(mesh);
     }
     if (tr.obstacles && tr.obstacles.length) {
       for (const o of tr.obstacles) {
@@ -569,14 +606,30 @@ export class World {
       }
     }
     if (th.skyKind === 'night') {
-      // 路邊微光燈
-      const lamp = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.4, 0.7), toneMapped: false });
+      const spots = [];
       for (let i = 0; i < tr.N; i += 28) {
         for (const side of [-1, 1]) {
-          const m = new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 4), lamp);
-          m.position.set(tr.px[i] + tr.rx[i] * side * (ROAD_HALF_K + 1.2), tr.py[i] + 3.2, tr.pz[i] + tr.rz[i] * side * (ROAD_HALF_K + 1.2));
-          group.add(m);
+          spots.push([
+            tr.px[i] + tr.rx[i] * side * (ROAD_HALF_K + 1.2),
+            tr.py[i] + 3.2,
+            tr.pz[i] + tr.rz[i] * side * (ROAD_HALF_K + 1.2),
+          ]);
         }
+      }
+      if (spots.length) {
+        const mesh = new THREE.InstancedMesh(
+          new THREE.SphereGeometry(0.25, 6, 4),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.4, 0.7), toneMapped: false }),
+          spots.length,
+        );
+        const dummy = new THREE.Object3D();
+        spots.forEach((p, n) => {
+          dummy.position.set(p[0], p[1], p[2]);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(n, dummy.matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        group.add(mesh);
       }
     }
     this.scene.add(group);
@@ -634,6 +687,8 @@ export class World {
       const x = Math.sin(i * 12.9898) * 43758.5453;
       return x - Math.floor(x);
     };
+    const bowls = [];
+    const stones = [];
     for (let i = 0; i < 14; i++) {
       const f = rng(i + 3);
       const ang = f * Math.PI * 2;
@@ -642,14 +697,36 @@ export class World {
       const z = cz + Math.sin(ang) * rad;
       tr.query(x, z, q);
       if (q.near && q.al < 24) continue;
-      const bowl = new THREE.Mesh(new THREE.TorusGeometry(4 + f * 6, 0.55, 4, 7), rockMat);
-      bowl.rotation.x = Math.PI / 2;
-      bowl.position.set(x, tr.terrainHeight(x, z) + 0.2, z);
-      this.extras.add(bowl);
-      const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(1.1 + f * 1.6, 0), rockMat);
-      stone.position.set(x + 6, tr.terrainHeight(x + 6, z + 4) + 0.8, z + 4);
-      stone.rotation.set(f, f * 2, 0.3);
-      this.extras.add(stone);
+      bowls.push({ x, y: tr.terrainHeight(x, z) + 0.2, z, s: (4 + f * 6) / 4 });
+      stones.push({
+        x: x + 6, y: tr.terrainHeight(x + 6, z + 4) + 0.8, z: z + 4,
+        s: (1.1 + f * 1.6) / 1.1, rx: f, ry: f * 2,
+      });
+    }
+    const dummy = new THREE.Object3D();
+    if (bowls.length) {
+      const mesh = new THREE.InstancedMesh(new THREE.TorusGeometry(4, 0.55, 4, 7), rockMat, bowls.length);
+      bowls.forEach((p, n) => {
+        dummy.position.set(p.x, p.y, p.z);
+        dummy.rotation.set(Math.PI / 2, 0, 0);
+        dummy.scale.set(p.s, p.s, p.s);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(n, dummy.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      this.extras.add(mesh);
+    }
+    if (stones.length) {
+      const mesh = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1.1, 0), rockMat, stones.length);
+      stones.forEach((p, n) => {
+        dummy.position.set(p.x, p.y, p.z);
+        dummy.rotation.set(p.rx, p.ry, 0.3);
+        dummy.scale.set(p.s, p.s, p.s);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(n, dummy.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      this.extras.add(mesh);
     }
   }
 
