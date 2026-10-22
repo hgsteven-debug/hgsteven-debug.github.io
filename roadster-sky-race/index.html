@@ -2,7 +2,7 @@
 <html lang="zh-Hant-TW">
 <head>
 <meta charset="utf-8">
-<title>天空飛馳 Sky Roadster</title>
+<title data-i18n="app.title">天空飛馳 Sky Roadster</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f14">
 <meta name="mobile-web-app-capable" content="yes">
@@ -19,20 +19,20 @@
 <div id="hud" class="hidden">
   <div id="standings" class="panel hidden"></div>
   <div id="lapbox" class="panel">
-    <div class="row"><span class="lbl">圈數</span><b id="lapN">1</b></div>
-    <div class="row big"><span class="lbl">本圈</span><b id="lapT">0:00.000</b></div>
-    <div class="row"><span class="lbl">上一圈</span><b id="lapLast">--:--.---</b></div>
-    <div class="row"><span class="lbl">最佳</span><b id="lapBest" class="gold">--:--.---</b></div>
+    <div class="row"><span class="lbl" data-i18n="hud.lap">圈數</span><b id="lapN">1</b></div>
+    <div class="row big"><span class="lbl" data-i18n="hud.this">本圈</span><b id="lapT">0:00.000</b></div>
+    <div class="row"><span class="lbl" data-i18n="hud.last">上一圈</span><b id="lapLast">--:--.---</b></div>
+    <div class="row"><span class="lbl" data-i18n="hud.best">最佳</span><b id="lapBest" class="gold">--:--.---</b></div>
   </div>
   <div id="toast"></div>
   <div id="rightcol">
-    <button id="btnFull" class="mini" title="全螢幕">⛶ 全螢幕</button>
+    <button id="btnFull" class="mini" data-i18n="hud.full" data-i18n-title="hud.fullTitle" title="全螢幕">⛶ 全螢幕</button>
     <canvas id="minimap" width="260" height="260"></canvas>
-    <div id="padstate" class="panel small">🎮 未偵測到搖桿</div>
+    <div id="padstate" class="panel small" data-i18n="hud.padNone">🎮 未偵測到搖桿</div>
     <div id="camlabel" class="panel small">視角：追尾</div>
   </div>
   <div id="speedbox">
-    <div id="state">地面行駛</div>
+    <div id="state" data-i18n="hud.ground">地面行駛</div>
     <div class="speedrow"><b id="speed">0</b><span>km/h</span></div>
     <div class="ebar"><div id="ebarFill"></div><span id="ebarTxt">推進能量 100%</span></div>
   </div>
@@ -43,25 +43,25 @@
 <div id="splitbar" class="hidden"></div>
 
 <div id="touch" class="hidden">
-  <button class="gpad pedal brake" data-t="brake" aria-label="煞車">煞車</button>
-  <button class="gpad pedal gas" data-t="gas" aria-label="加速">加速</button>
-  <div id="stick" class="stick" aria-label="左搖桿 轉向">
+  <button class="gpad pedal brake" data-t="brake" data-i18n="touch.brake" data-i18n-aria="touch.brakeAria" aria-label="煞車">煞車</button>
+  <button class="gpad pedal gas" data-t="gas" data-i18n="touch.gas" data-i18n-aria="touch.gasAria" aria-label="加速">加速</button>
+  <div id="stick" class="stick" data-i18n-aria="touch.steerAria" aria-label="左搖桿 轉向">
     <div class="stick-ring"></div>
     <div class="knob"></div>
-    <span class="stick-lbl">轉向</span>
+    <span class="stick-lbl" data-i18n="touch.steer">轉向</span>
   </div>
-  <button class="gpad face y" data-p="camera" aria-label="Y 視角">Y<br>視角</button>
-  <button class="gpad face x" data-p="reset" aria-label="X 回賽道">X<br>回賽道</button>
-  <button class="gpad face b" data-t="lift" aria-label="B 推進">B<br>推進</button>
-  <button class="gpad face a" data-t="nitro" aria-label="A 氮氣">A<br>氮氣</button>
-  <button class="gpad menu" data-p="pause" aria-label="暫停">暫停</button>
+  <button class="gpad face y" data-p="camera" data-i18n-aria="touch.camAria" aria-label="Y 視角">Y<br><span data-i18n="touch.cam">視角</span></button>
+  <button class="gpad face x" data-p="reset" data-i18n-aria="touch.resetAria" aria-label="X 回賽道">X<br><span data-i18n="touch.reset">回賽道</span></button>
+  <button class="gpad face b" data-t="lift" data-i18n-aria="touch.liftAria" aria-label="B 推進">B<br><span data-i18n="touch.lift">推進</span></button>
+  <button class="gpad face a" data-t="nitro" data-i18n-aria="touch.nitroAria" aria-label="A 氮氣">A<br><span data-i18n="touch.nitro">氮氣</span></button>
+  <button class="gpad menu" data-p="pause" data-i18n="touch.pause" data-i18n-aria="touch.pauseAria" aria-label="暫停">暫停</button>
 </div>
 
 <!-- 載入中 -->
 <div id="s-loading" class="screen show">
   <div class="card center">
-    <h1>天空飛馳 <small>Sky Roadster</small></h1>
-    <p id="loadTxt">載入中…</p>
+    <h1><span data-i18n="title.main">天空飛馳</span> <small data-i18n="title.sub">Sky Roadster</small></h1>
+    <p id="loadTxt" data-i18n="load.wait">載入中…</p>
     <div class="pbar"><div id="loadBar"></div></div>
   </div>
 </div>
@@ -69,26 +69,35 @@
 <!-- 開始畫面 -->
 <div id="s-start" class="screen">
   <div class="card">
-    <h1>天空飛馳 <small>Sky Roadster</small></h1>
-    <p class="sub">致敬未來跑車的粉絲作品・會飛的賽車</p>
-    <div class="notice">🅿️ <b>僅限停車（P 檔）時遊玩</b><br>Tesla 車機瀏覽器只允許在停妥時使用網頁遊戲。行駛中請勿操作，確保安全。</div>
-    <div id="startCar" class="carline">目前車輛：—</div>
-    <div id="startTrack" class="carline">目前賽道：—</div>
-    <div id="startPad" class="padline">🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵</div>
-    <div id="startPads" class="padlist">（尚未回報手把槽）</div>
-    <div id="startP1" class="padline">P1：鍵盤、觸控，或第一支手把</div>
-    <p id="startP2Hint" class="padhint">第二支搖桿：按任一鍵加入 P2</p>
-    <div id="startP2" class="padline">P2：用另一支手把按任意鍵加入，上下分屏</div>
+    <h1><span data-i18n="title.main">天空飛馳</span> <small data-i18n="title.sub">Sky Roadster</small></h1>
+    <p class="sub" data-i18n="tagline">致敬未來跑車的粉絲作品・會飛的賽車</p>
+    <div class="setrow stack"><span data-i18n="menu.lang">語言</span>
+      <div class="seg" data-group="lang">
+        <button class="btn" data-lang="zh-TW">繁中</button>
+        <button class="btn" data-lang="en">EN</button>
+        <button class="btn" data-lang="fr">FR</button>
+        <button class="btn" data-lang="ja">日本語</button>
+        <button class="btn" data-lang="ko">한국어</button>
+      </div>
+    </div>
+    <div class="notice">🅿️ <b data-i18n="notice.title">僅限停車（P 檔）時遊玩</b><br><span data-i18n="notice.body">Tesla 車機瀏覽器只允許在停妥時使用網頁遊戲。行駛中請勿操作，確保安全。</span></div>
+    <div id="startCar" class="carline" data-i18n="start.carEmpty">目前車輛：—</div>
+    <div id="startTrack" class="carline" data-i18n="start.trackEmpty">目前賽道：—</div>
+    <div id="startPad" class="padline" data-i18n="start.pad.wait">🎮 尚未偵測到搖桿：請接上 JOWUA 搖桿並按任一鍵</div>
+    <div id="startPads" class="padlist" data-i18n="lobby.empty">（尚未回報手把槽）</div>
+    <div id="startP1" class="padline" data-i18n="start.p1.short">P1：鍵盤、觸控，或第一支手把</div>
+    <p id="startP2Hint" class="padhint" data-i18n="start.p2.hint">第二支搖桿：按任一鍵加入 P2</p>
+    <div id="startP2" class="padline" data-i18n="start.p2.off">P2：用另一支手把按任意鍵加入，上下分屏。鍵盤與觸控在沒有第二支手把時都是 P1。</div>
     <div id="phoneJoin" class="phonejoin">
       <div class="grow">
-        <div id="phoneStatus" class="padline">P3：用手機掃碼加入，在自己的螢幕開車</div>
+        <div id="phoneStatus" class="padline" data-i18n="start.phone">P3：用手機掃碼加入，在自己的螢幕開車</div>
         <div id="phoneCode" class="roomcode">——</div>
         <p id="phoneUrl" class="small dim"></p>
-        <p id="phoneHint" class="small dim">車機畫面仍是一人或上下兩人。第三人用手機加入同一場。連不上時，這台比賽照常進行。</p>
+        <p id="phoneHint" class="small dim" data-i18n="start.phoneHint">車機畫面仍是一人或上下兩人。第三人用手機加入同一場。連不上時，這台比賽照常進行。</p>
       </div>
       <canvas id="phoneQr" class="hidden" width="168" height="168" aria-label="加入比賽的 QR code"></canvas>
     </div>
-    <div class="setrow"><span>電腦對手</span>
+    <div class="setrow"><span data-i18n="start.ai">電腦對手</span>
       <div class="seg" id="aiCount">
         <button class="btn" data-ai="0">0</button>
         <button class="btn" data-ai="1">1</button>
@@ -96,27 +105,27 @@
         <button class="btn" data-ai="3">3</button>
       </div>
     </div>
-    <div class="setrow"><span>對手難度</span>
+    <div class="setrow"><span data-i18n="start.diff">對手難度</span>
       <div class="seg" id="aiDiff">
-        <button class="btn" data-diff="easy">簡單</button>
-        <button class="btn" data-diff="normal">普通</button>
-        <button class="btn" data-diff="hard">困難</button>
+        <button class="btn" data-diff="easy" data-i18n="diff.easy">簡單</button>
+        <button class="btn" data-diff="normal" data-i18n="diff.normal">普通</button>
+        <button class="btn" data-diff="hard" data-i18n="diff.hard">困難</button>
       </div>
     </div>
-    <p class="small dim">車機上最多兩人、畫面上下各一半。第三人用手機掃碼，在自己的螢幕開同一場。沒有第二支手把時，鍵盤和觸控都是 P1。電腦對手可以一起跑。</p>
+    <p class="small dim" data-i18n="start.note">車機上最多兩人、畫面上下各一半。第三人用手機掃碼，在自己的螢幕開同一場。沒有第二支手把時，鍵盤和觸控都是 P1。電腦對手可以一起跑。</p>
     <div class="menu">
-      <button class="btn primary" data-act="start">開始遊戲</button>
-      <button class="btn" data-act="tracks" id="btnTracks">選擇賽道</button>
-      <button class="btn" data-act="garage" id="btnGarage">選擇車輛</button>
-      <button class="btn" data-act="mapping">按鍵設定</button>
-      <button class="btn" data-act="settings">畫質與設定</button>
-      <button class="btn" data-act="fullscreen">全螢幕</button>
-      <a class="btn" href="gamepad-test.html">搖桿測試頁</a>
+      <button class="btn primary" data-act="start" data-i18n="menu.start">開始遊戲</button>
+      <button class="btn" data-act="tracks" id="btnTracks" data-i18n="menu.tracks">選擇賽道</button>
+      <button class="btn" data-act="garage" id="btnGarage" data-i18n="menu.garage">選擇車輛</button>
+      <button class="btn" data-act="mapping" data-i18n="menu.mapping">按鍵設定</button>
+      <button class="btn" data-act="settings" data-i18n="menu.settings">畫質與設定</button>
+      <button class="btn" data-act="fullscreen" data-i18n="menu.full">全螢幕</button>
+      <a class="btn" href="gamepad-test.html" data-i18n="menu.padtest">搖桿測試頁</a>
     </div>
     <div class="legend" id="legend">
-      <div><b>左搖桿</b> 轉向</div><div><b data-k="thr">ZR</b> 加速</div><div><b data-k="brk">ZL</b> 煞車／倒車</div>
-      <div><b data-k="lift">B</b> 起飛推進器</div><div><b data-k="nitro">A</b> 氮氣</div><div><b data-k="cam">Y</b> 切換視角</div>
-      <div><b data-k="reset">X</b> 回到賽道</div><div><b data-k="pause">＋</b> 暫停</div><div><b>左搖桿上下</b> 空中升降</div>
+      <div><b data-i18n="legend.stick">左搖桿</b> <span data-i18n="legend.steer">轉向</span></div><div><b data-k="thr">ZR</b> <span data-i18n="legend.gas">加速</span></div><div><b data-k="brk">ZL</b> <span data-i18n="legend.brake">煞車／倒車</span></div>
+      <div><b data-k="lift">B</b> <span data-i18n="legend.lift">起飛推進器</span></div><div><b data-k="nitro">A</b> <span data-i18n="legend.nitro">氮氣</span></div><div><b data-k="cam">Y</b> <span data-i18n="legend.cam">切換視角</span></div>
+      <div><b data-k="reset">X</b> <span data-i18n="legend.reset">回到賽道</span></div><div><b data-k="pause">＋</b> <span data-i18n="legend.pause">暫停</span></div><div><b data-i18n="legend.pitch">左搖桿上下</b> <span data-i18n="legend.pitchDo">空中升降</span></div>
     </div>
     <p class="small dim" id="padProfile"></p>
   </div>
@@ -125,41 +134,41 @@
 <!-- 選擇車輛 -->
 <div id="s-tracks" class="screen">
   <div class="card wide">
-    <h2>選擇賽道</h2>
+    <h2 data-i18n="tracks.title">選擇賽道</h2>
     <div id="tlist" class="tgrid"></div>
     <div class="vinfo">
       <div class="vhead"><h3 id="tname"></h3><span id="ttag" class="dim"></span></div>
       <p id="tdesc" class="sub"></p>
-      <p id="tbest" class="sub dim">最佳單圈：—</p>
+      <p id="tbest" class="sub dim" data-i18n="tracks.bestNone">最佳單圈：—</p>
     </div>
-    <div class="menu"><button class="btn primary" data-act="back">完成</button></div>
-    <p class="small dim">搖桿／鍵盤可導覽。選擇會自動儲存；切換賽道會重新載入場景。</p>
+    <div class="menu"><button class="btn primary" data-act="back" data-i18n="tracks.done">完成</button></div>
+    <p class="small dim" data-i18n="tracks.hint">搖桿／鍵盤可導覽。選擇會自動儲存；切換賽道會重新載入場景。</p>
   </div>
 </div>
 
 <div id="s-garage" class="screen">
   <div class="card wide">
-    <h2>選擇車輛</h2>
+    <h2 data-i18n="garage.title">選擇車輛</h2>
     <div id="vlist" class="vgrid"></div>
     <div class="vinfo">
       <div class="vhead"><h3 id="vname"></h3><span id="vtag" class="dim"></span></div>
       <p id="vdesc" class="sub"></p>
       <div id="vstats" class="vstats"></div>
     </div>
-    <div class="setrow"><span>車色</span><div class="seg" id="vpaints"></div></div>
-    <div class="menu"><button class="btn primary" data-act="back">完成</button></div>
-    <p class="small dim">搖桿：十字鍵／左搖桿選擇，確認鍵選取，返回鍵離開。選擇會自動儲存。所有車型皆為原創造型，沒有任何商標或標誌。</p>
+    <div class="setrow"><span data-i18n="garage.paint">車色</span><div class="seg" id="vpaints"></div></div>
+    <div class="menu"><button class="btn primary" data-act="back" data-i18n="garage.back">完成</button></div>
+    <p class="small dim" data-i18n="garage.hint">搖桿：十字鍵／左搖桿選擇，確認鍵選取，返回鍵離開。選擇會自動儲存。所有車型皆為原創造型，沒有任何商標或標誌。</p>
   </div>
 </div>
 
 <div id="s-results" class="screen">
   <div class="card center narrow">
-    <h2>名次</h2>
-    <p class="sub">兩圈衝刺</p>
+    <h2 data-i18n="results.title">名次</h2>
+    <p class="sub" data-i18n="results.sub">兩圈衝刺</p>
     <div id="resultsList" class="results"></div>
     <div class="menu col">
-      <button class="btn primary" data-act="restart">再比一場</button>
-      <button class="btn" data-act="quit">回主選單</button>
+      <button class="btn primary" data-act="restart" data-i18n="results.again">再比一場</button>
+      <button class="btn" data-act="quit" data-i18n="results.quit">回主選單</button>
     </div>
   </div>
 </div>
@@ -167,17 +176,26 @@
 <!-- 手機加入 -->
 <div id="s-join" class="screen">
   <div class="card center narrow">
-    <h2>加入比賽</h2>
-    <p id="joinStatus" class="sub">正在連線…</p>
+    <h2 data-i18n="join.title">加入比賽</h2>
+    <p id="joinStatus" class="sub" data-i18n="join.wait">正在連線…</p>
     <div id="joinCode" class="roomcode"></div>
-    <p id="joinCar" class="carline">這台車：等待房主指定…</p>
-    <p class="small dim">你是 P3。畫面固定橫向，按鍵比照手把：左邊轉向，LT 煞車、RT 加速，右邊是 A／B／X／Y。車機上看到的也是這台車。</p>
-    <div class="menu col">
-      <button class="btn" data-act="garage">換一台車</button>
+    <p id="joinCar" class="carline" data-i18n="join.carWait">這台車：等待房主指定…</p>
+    <p class="small dim" data-i18n="join.help">你是 P3。畫面固定橫向，按鍵比照手把：左邊轉向，LT 煞車、RT 加速，右邊是 A／B／X／Y。車機上看到的也是這台車。</p>
+    <div class="setrow stack"><span data-i18n="menu.lang">語言</span>
+      <div class="seg" data-group="lang">
+        <button class="btn" data-lang="zh-TW">繁中</button>
+        <button class="btn" data-lang="en">EN</button>
+        <button class="btn" data-lang="fr">FR</button>
+        <button class="btn" data-lang="ja">日本語</button>
+        <button class="btn" data-lang="ko">한국어</button>
+      </div>
     </div>
     <div class="menu col">
-      <button class="btn primary" data-act="join-retry">重新連線</button>
-      <button class="btn" data-act="join-leave">離開，自己開一場</button>
+      <button class="btn" data-act="garage" data-i18n="join.garage">換一台車</button>
+    </div>
+    <div class="menu col">
+      <button class="btn primary" data-act="join-retry" data-i18n="join.retry">重新連線</button>
+      <button class="btn" data-act="join-leave" data-i18n="join.leave">離開，自己開一場</button>
     </div>
   </div>
 </div>
@@ -187,15 +205,24 @@
 <!-- 暫停 -->
 <div id="s-pause" class="screen">
   <div class="card center narrow">
-    <h2>暫停</h2>
+    <h2 data-i18n="pause.title">暫停</h2>
+    <div class="setrow stack"><span data-i18n="menu.lang">語言</span>
+      <div class="seg" data-group="lang">
+        <button class="btn" data-lang="zh-TW">繁中</button>
+        <button class="btn" data-lang="en">EN</button>
+        <button class="btn" data-lang="fr">FR</button>
+        <button class="btn" data-lang="ja">日本語</button>
+        <button class="btn" data-lang="ko">한국어</button>
+      </div>
+    </div>
     <div class="menu col">
-      <button class="btn primary" data-act="resume">繼續</button>
-      <button class="btn" data-act="restart">重新開始</button>
-      <button class="btn hidden" id="btnPauseGarage" data-act="garage">換一台車</button>
-      <button class="btn" data-act="mapping">按鍵設定</button>
-      <button class="btn" data-act="settings">畫質與設定</button>
-      <button class="btn" data-act="fullscreen">全螢幕</button>
-      <button class="btn" data-act="quit">回主選單</button>
+      <button class="btn primary" data-act="resume" data-i18n="pause.resume">繼續</button>
+      <button class="btn" data-act="restart" data-i18n="pause.restart">重新開始</button>
+      <button class="btn hidden" id="btnPauseGarage" data-act="garage" data-i18n="pause.garage">換一台車</button>
+      <button class="btn" data-act="mapping" data-i18n="menu.mapping">按鍵設定</button>
+      <button class="btn" data-act="settings" data-i18n="menu.settings">畫質與設定</button>
+      <button class="btn" data-act="fullscreen" data-i18n="menu.full">全螢幕</button>
+      <button class="btn" data-act="quit" data-i18n="pause.quit">回主選單</button>
     </div>
   </div>
 </div>
@@ -203,24 +230,33 @@
 <!-- 設定 -->
 <div id="s-settings" class="screen">
   <div class="card">
-    <h2>畫質與設定</h2>
-    <div class="setrow"><span>畫質（切換會重新載入）</span>
+    <h2 data-i18n="set.title">畫質與設定</h2>
+    <div class="setrow stack"><span data-i18n="menu.lang">語言</span>
+      <div class="seg" data-group="lang">
+        <button class="btn" data-lang="zh-TW">繁中</button>
+        <button class="btn" data-lang="en">EN</button>
+        <button class="btn" data-lang="fr">FR</button>
+        <button class="btn" data-lang="ja">日本語</button>
+        <button class="btn" data-lang="ko">한국어</button>
+      </div>
+    </div>
+    <div class="setrow"><span data-i18n="set.quality">畫質（切換會重新載入）</span>
       <div class="seg" data-group="quality">
-        <button class="btn" data-q="low">低</button><button class="btn" data-q="med">中</button><button class="btn" data-q="high">高</button>
+        <button class="btn" data-q="low" data-i18n="q.low">低</button><button class="btn" data-q="med" data-i18n="q.med">中</button><button class="btn" data-q="high" data-i18n="q.high">高</button>
       </div></div>
-    <div class="setrow"><span>音量</span>
+    <div class="setrow"><span data-i18n="set.vol">音量</span>
       <div class="seg" data-group="vol">
-        <button class="btn" data-v="0">靜音</button><button class="btn" data-v="0.35">小</button><button class="btn" data-v="0.7">中</button><button class="btn" data-v="1">大</button>
+        <button class="btn" data-v="0" data-i18n="vol.0">靜音</button><button class="btn" data-v="0.35" data-i18n="vol.low">小</button><button class="btn" data-v="0.7" data-i18n="vol.med">中</button><button class="btn" data-v="1" data-i18n="vol.high">大</button>
       </div></div>
-    <div class="setrow stack"><span>搖桿模式 <small class="dim">（JOWUA：S 模式選 Switch，X 模式選 X-input；自動偵測會依裝置名稱判斷）</small></span>
-      <div class="seg" data-group="padmode"><button class="btn" data-pm="auto">自動偵測</button><button class="btn" data-pm="switch">Switch 模式</button><button class="btn" data-pm="xbox">X-input（Xbox）模式</button></div></div>
-    <div class="setrow"><span>轉向左右反轉 <small class="dim">（所有輸入：搖桿、十字鍵、鍵盤、觸控）</small></span>
-      <div class="seg" data-group="invert"><button class="btn" data-inv="0">關</button><button class="btn" data-inv="1">開</button></div></div>
-    <div class="setrow"><span>搖桿震動</span>
-      <div class="seg" data-group="rumble"><button class="btn" data-r="1">開</button><button class="btn" data-r="0">關</button></div></div>
-    <div class="setrow"><span>觸控按鍵</span>
-      <div class="seg" data-group="touch"><button class="btn" data-tc="auto">自動</button><button class="btn" data-tc="on">顯示</button><button class="btn" data-tc="off">隱藏</button></div></div>
-    <div class="menu"><button class="btn primary" data-act="back">返回</button></div>
+    <div class="setrow stack"><span><span data-i18n="set.pad">搖桿模式</span> <small class="dim" data-i18n="set.padHint">（JOWUA：S 模式選 Switch，X 模式選 X-input；自動偵測會依裝置名稱判斷）</small></span>
+      <div class="seg" data-group="padmode"><button class="btn" data-pm="auto" data-i18n="set.pad.auto">自動偵測</button><button class="btn" data-pm="switch" data-i18n="set.pad.switch">Switch 模式</button><button class="btn" data-pm="xbox" data-i18n="set.pad.xbox">X-input（Xbox）模式</button></div></div>
+    <div class="setrow"><span><span data-i18n="set.invert">轉向左右反轉</span> <small class="dim" data-i18n="set.invertHint">（所有輸入：搖桿、十字鍵、鍵盤、觸控）</small></span>
+      <div class="seg" data-group="invert"><button class="btn" data-inv="0" data-i18n="set.off">關</button><button class="btn" data-inv="1" data-i18n="set.on">開</button></div></div>
+    <div class="setrow"><span data-i18n="set.rumble">搖桿震動</span>
+      <div class="seg" data-group="rumble"><button class="btn" data-r="1" data-i18n="set.on">開</button><button class="btn" data-r="0" data-i18n="set.off">關</button></div></div>
+    <div class="setrow"><span data-i18n="set.touch">觸控按鍵</span>
+      <div class="seg" data-group="touch"><button class="btn" data-tc="auto" data-i18n="touch.auto">自動</button><button class="btn" data-tc="on" data-i18n="touch.show">顯示</button><button class="btn" data-tc="off" data-i18n="touch.hide">隱藏</button></div></div>
+    <div class="menu"><button class="btn primary" data-act="back" data-i18n="set.back">返回</button></div>
     <p class="small dim" id="qinfo"></p>
   </div>
 </div>
@@ -229,21 +265,21 @@
 <div id="s-mapping" class="screen">
   <div class="card wide">
     <div class="maphead">
-      <h2>按鍵設定</h2>
+      <h2 data-i18n="map.title">按鍵設定</h2>
       <div class="menu">
-        <button class="btn" data-act="calibrate">校正搖桿</button>
-        <button class="btn" data-act="mapReset">重設為標準</button>
-        <button class="btn primary" data-act="back">返回</button>
+        <button class="btn" data-act="calibrate" data-i18n="map.cal">校正搖桿</button>
+        <button class="btn" data-act="mapReset" data-i18n="map.reset">重設為標準</button>
+        <button class="btn primary" data-act="back" data-i18n="set.back">返回</button>
       </div>
     </div>
-    <div class="setrow stack"><span>搖桿模式 <small class="dim">（強制覆寫自動偵測）</small></span>
-      <div class="seg" data-group="padmode"><button class="btn" data-pm="auto">自動偵測</button><button class="btn" data-pm="switch">Switch 模式</button><button class="btn" data-pm="xbox">X-input（Xbox）模式</button></div></div>
-    <p class="small dim" id="mapPad">未偵測到搖桿</p>
+    <div class="setrow stack"><span><span data-i18n="set.pad">搖桿模式</span> <small class="dim" data-i18n="map.modeHint">（強制覆寫自動偵測）</small></span>
+      <div class="seg" data-group="padmode"><button class="btn" data-pm="auto" data-i18n="set.pad.auto">自動偵測</button><button class="btn" data-pm="switch" data-i18n="set.pad.switch">Switch 模式</button><button class="btn" data-pm="xbox" data-i18n="set.pad.xbox">X-input（Xbox）模式</button></div></div>
+    <p class="small dim" id="mapPad" data-i18n="map.none">未偵測到搖桿</p>
     <p class="small" id="calState"></p>
     <div id="mapRows"></div>
-    <p class="small dim">點選一個動作後，依提示操作搖桿即可重新指定；有改動會自動儲存在這台車機的瀏覽器。右側橫條會即時顯示輸入，方便確認。</p>
+    <p class="small dim" data-i18n="map.help">點選一個動作後，依提示操作搖桿即可重新指定；有改動會自動儲存在這台車機的瀏覽器。右側橫條會即時顯示輸入，方便確認。</p>
   </div>
-  <div id="learn" class="hidden"><div class="card center narrow"><h3 id="learnTxt"></h3><p id="learnSub" class="dim"></p><button class="btn" data-act="learnCancel">取消</button></div></div>
+  <div id="learn" class="hidden"><div class="card center narrow"><h3 id="learnTxt"></h3><p id="learnSub" class="dim"></p><button class="btn" data-act="learnCancel" data-i18n="map.cancel">取消</button></div></div>
 </div>
 
 <script>
@@ -254,13 +290,35 @@
     var b = document.createElement('div');
     b.style.cssText = 'position:fixed;left:8px;bottom:8px;right:8px;z-index:99;background:rgba(120,0,0,.85);color:#fff;font:14px/1.4 monospace;padding:6px 10px;border-radius:6px;white-space:pre-wrap;max-height:30vh;overflow:auto';
     b.textContent = msg; document.body.appendChild(b);
-    if (t) { t.style.color = '#ff9a8a'; t.textContent = '載入失敗，請重新整理或改用較新的瀏覽器。'; }
+    if (t) { t.style.color = '#ff9a8a'; t.textContent = bootText('fail'); }
+  }
+  var BOOT = {
+    'zh-TW': { fail: '載入失敗，請重新整理或改用較新的瀏覽器。', old: '此瀏覽器版本過舊，不支援 ES 模組 importmap（需要 Chromium 89 以上）。', err: '錯誤：' },
+    en: { fail: 'Load failed. Refresh, or use a newer browser.', old: 'This browser is too old for ES module import maps (Chromium 89 or newer).', err: 'Error: ' },
+    fr: { fail: 'Échec du chargement. Actualisez, ou utilisez un navigateur plus récent.', old: 'Ce navigateur est trop ancien pour les import maps (Chromium 89 ou plus).', err: 'Erreur : ' },
+    ja: { fail: '読み込みに失敗しました。更新するか、新しいブラウザを使ってください。', old: 'このブラウザは古すぎて import map に対応していません（Chromium 89 以上）。', err: 'エラー：' },
+    ko: { fail: '불러오지 못했습니다. 새로고침하거나 더 새 브라우저를 쓰세요.', old: '이 브라우저는 너무 오래되어 import map을 지원하지 않습니다 (Chromium 89 이상).', err: '오류: ' }
+  };
+  function bootText(which) {
+    var lang = (document.documentElement.getAttribute('lang') || '').toLowerCase();
+    var id = lang.indexOf('fr') === 0 ? 'fr' : lang.indexOf('ja') === 0 ? 'ja' : lang.indexOf('ko') === 0 ? 'ko' : (lang.indexOf('en') === 0 ? 'en' : 'zh-TW');
+    var q = '';
+    try { q = new URLSearchParams(location.search).get('lang') || ''; } catch (e) {}
+    if (!document.documentElement.getAttribute('data-lang-ready')) {
+      var s = String(q).toLowerCase();
+      if (s.indexOf('fr') === 0) id = 'fr';
+      else if (s.indexOf('ja') === 0) id = 'ja';
+      else if (s.indexOf('ko') === 0) id = 'ko';
+      else if (s.indexOf('en') === 0) id = 'en';
+      else if (s.indexOf('zh') === 0) id = 'zh-TW';
+    }
+    return (BOOT[id] || BOOT['zh-TW'])[which];
   }
   if (!(window.HTMLScriptElement && HTMLScriptElement.supports && HTMLScriptElement.supports('importmap'))) {
-    document.addEventListener('DOMContentLoaded', function () { say('此瀏覽器版本過舊，不支援 ES 模組 importmap（需要 Chromium 89 以上）。'); });
+    document.addEventListener('DOMContentLoaded', function () { say(bootText('old')); });
   }
-  window.addEventListener('error', function (e) { say('錯誤：' + (e.message || e) + (e.filename ? '\n' + e.filename + ':' + e.lineno : '')); });
-  window.addEventListener('unhandledrejection', function (e) { say('錯誤：' + (e.reason && e.reason.message || e.reason)); });
+  window.addEventListener('error', function (e) { say(bootText('err') + (e.message || e) + (e.filename ? '\n' + e.filename + ':' + e.lineno : '')); });
+  window.addEventListener('unhandledrejection', function (e) { say(bootText('err') + (e.reason && e.reason.message || e.reason)); });
 })();
 </script>
 <script src="vendor/qrcode.js"></script>

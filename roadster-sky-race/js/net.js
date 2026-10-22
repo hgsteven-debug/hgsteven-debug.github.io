@@ -7,6 +7,7 @@ import {
 } from './sync.js';
 import { iceServers, webrtcSupport } from './ice.js';
 import { connectRelay } from './relay.js';
+import { t, getLocale } from './i18n.js';
 
 export { REMOTE_LIMIT };
 
@@ -110,11 +111,15 @@ function relayOpts(h, role, index, epoch) {
 }
 
 function how(via) {
-  if (via === 'ws') return '網頁中繼';
-  if (via === 'relay') return 'TURN 中繼';
-  if (via === 'direct') return '裝置直連';
-  if (via === 'webrtc') return 'WebRTC';
-  return '路徑確認中';
+  if (via === 'ws') return t('how.ws');
+  if (via === 'relay') return t('how.turn');
+  if (via === 'direct') return t('how.direct');
+  if (via === 'webrtc') return t('how.webrtc');
+  return t('how.checking');
+}
+
+function detailOf(value, fallbackKey, vars) {
+  return t(value || fallbackKey, vars);
 }
 
 export function createHost(handlers) {
@@ -157,27 +162,32 @@ export function createHost(handlers) {
     const q = relayQuery();
     session.relayIndex = q.index;
     session.relayEpoch = q.epoch;
-    session.url = joinUrl(session.code, globalThis.location, q);
+    session.url = joinUrl(session.code, globalThis.location, q, getLocale());
     const text = hostText();
     session.failMsg = session.failed ? text : '';
     try { if (h.onStatus) h.onStatus({ text, kind, code: session.code, url: session.url, ready: session.ready, failed: session.failed }); }
     catch (e) {}
   }
 
+  function wsReasonNow() {
+    if (session.wsReasonKey) return t(session.wsReasonKey, { label: session.wsReasonLabel || '' });
+    return session.wsReason || t('ws.connecting');
+  }
+
   function hostText() {
-    const rtcBit = session.rtc.ok ? 'WebRTC 可用' : ('WebRTC 不可用：' + session.rtc.reason);
-    const wsBit = session.wsOpen ? '網頁中繼：已連到伺服器，尚未跟手機確認' : ('網頁中繼：' + (session.wsReason || '連線中'));
+    const rtcBit = session.rtc.ok ? t('rtc.ok') : t('rtc.bad', { reason: session.rtc.reason });
+    const wsBit = session.wsOpen ? t('ws.openWait') : t('ws.line', { reason: wsReasonNow() });
     if (session.remotes.length) {
       const remote = session.remotes[0];
-      if (remote.holding) return '階段：P3 訊號中斷，車輛先留在場上。' + wsBit + '。';
-      return '階段：P3 已加入（' + how(remote.via) + '）。';
+      if (remote.holding) return t('host.hold', { ws: wsBit });
+      return t('host.joined', { how: how(remote.via) });
     }
-    if (session.linking) return '階段：手機正在接通 WebRTC。' + rtcBit + '。' + wsBit + '。';
-    if (session.failed) return '階段：失敗。掃碼：' + (session.peerDetail || '沒有連上') + '。' + wsBit + '。' + rtcBit + '。本機比賽不受影響。';
-    if (session.peerOpen && session.wsOpen) return '階段：房間已登記，等待手機。' + rtcBit + '。' + wsBit + '。';
-    if (session.peerOpen) return '階段：房間已登記在掃碼伺服器。' + wsBit + '。' + rtcBit + '。';
-    if (session.wsOpen) return '階段：掃碼伺服器尚未登記（' + (session.peerDetail || '連線中') + '）。網頁中繼已連到伺服器，手機仍可加入。' + rtcBit + '。';
-    return '階段：正在向掃碼伺服器登記房間。' + wsBit + '。' + rtcBit + '。';
+    if (session.linking) return t('host.linking', { rtc: rtcBit, ws: wsBit });
+    if (session.failed) return t('host.fail', { detail: detailOf(session.peerDetail, 'peer.detailNone'), ws: wsBit, rtc: rtcBit });
+    if (session.peerOpen && session.wsOpen) return t('host.ready', { rtc: rtcBit, ws: wsBit });
+    if (session.peerOpen) return t('host.peerOnly', { ws: wsBit, rtc: rtcBit });
+    if (session.wsOpen) return t('host.wsOnly', { detail: detailOf(session.peerDetail, 'ws.connecting'), rtc: rtcBit });
+    return t('host.wait', { ws: wsBit, rtc: rtcBit });
   }
 
   function mark() {
@@ -415,6 +425,8 @@ export function createHost(handlers) {
       onStatus: (s) => {
         session.wsOpen = !!s.open;
         session.wsReason = s.open ? '' : (s.reason || '');
+        session.wsReasonKey = s.open ? '' : (s.reasonKey || '');
+        session.wsReasonLabel = s.open ? '' : (s.reasonLabel || '');
         session.wsGaveUp = false;
         if (Number.isFinite(s.index)) session.relayIndex = s.index;
         if (Number.isFinite(s.epoch)) session.relayEpoch = s.epoch;
@@ -444,7 +456,7 @@ export function createHost(handlers) {
     if (!Peer) {
       session.peerOpen = false;
       session.peerGaveUp = true;
-      session.peerDetail = '沒有載入 PeerJS';
+      session.peerDetail = 'peer.missing';
       mark();
       return;
     }
@@ -461,7 +473,7 @@ export function createHost(handlers) {
     const giveUp = arm(deadlines, 10000, () => {
       if (gen !== session._gen || session.peerOpen) return;
       session.peerGaveUp = true;
-      session.peerDetail = session.peerDetail || '掃碼伺服器 10 秒沒有回應';
+      session.peerDetail = session.peerDetail || 'peer.slow';
       mark();
     });
     next.on('open', () => {
@@ -484,7 +496,7 @@ export function createHost(handlers) {
           if (st === 'checking') { session.linking = true; mark(); }
           if (st === 'failed') {
             session.linking = false;
-            session.peerDetail = 'WebRTC ICE 失敗';
+            session.peerDetail = 'peer.ice';
             mark();
           }
         });
@@ -494,7 +506,7 @@ export function createHost(handlers) {
     next.on('disconnected', () => {
       if (gen !== session._gen || session._destroyed) return;
       session.peerOpen = false;
-      session.peerDetail = '掃碼登記中斷，正在用同一組代碼重新登記';
+      session.peerDetail = 'peer.rejoin';
       mark();
       try { next.reconnect(); } catch (e) {}
       arm(deadlines, 6000, () => {
@@ -508,7 +520,7 @@ export function createHost(handlers) {
         session.attempt++;
         giveUp();
         try { next.destroy(); } catch (e) {}
-        session.peerDetail = '這組代碼暫時被占用，正在再用同一組登記';
+        session.peerDetail = 'peer.busy';
         mark();
         setTimeout(() => { if (gen === session._gen) openPeer(); }, 700);
         return;
@@ -516,7 +528,7 @@ export function createHost(handlers) {
       if (type === 'unavailable-id') {
         session.attempt = 0;
         session.code = makeRoomCode();
-        session.peerDetail = '代碼已更換，請重新掃描';
+        session.peerDetail = 'peer.newCode';
         try { next.destroy(); } catch (e) {}
         startRelay();
         openPeer();
@@ -524,7 +536,7 @@ export function createHost(handlers) {
       }
       if (type === 'network' || type === 'socket-error' || type === 'socket-closed' || type === 'disconnected' || type === 'server-error') {
         session.peerOpen = false;
-        session.peerDetail = '掃碼伺服器連線不穩';
+        session.peerDetail = 'peer.unstable';
         mark();
         try { next.reconnect(); } catch (e) {}
         return;
@@ -540,7 +552,7 @@ export function createHost(handlers) {
     if (session._destroyed || session._reopening) return;
     session._reopening = true;
     session.peerOpen = false;
-    session.peerDetail = '掃碼登記中斷，正在用同一組代碼重新登記';
+    session.peerDetail = 'peer.rejoin';
     mark();
     try { if (peer) peer.destroy(); } catch (e) {}
     peer = null;
@@ -623,7 +635,8 @@ export function createHost(handlers) {
     peer = null;
     relay = null;
   };
-  session.url = joinUrl(session.code, globalThis.location);
+  session.url = joinUrl(session.code, globalThis.location, null, getLocale());
+  session.relabel = () => { if (!session._destroyed) mark(); };
   if (!session.rtc.ok) session.peerDetail = session.rtc.reason;
   emit('wait');
   startRelay();
@@ -676,23 +689,27 @@ export function createGuest(code, handlers) {
     try { if (h.onStatus) h.onStatus({ text, kind, via: session.via }); } catch (e) {}
   }
 
+  function guestWsReason() {
+    if (session.wsReasonKey) return t(session.wsReasonKey, { label: session.wsReasonLabel || '' });
+    return session.wsReason || t('ws.connecting');
+  }
+
   function guestText() {
-    if (session.connected && hostStillThere(session.lastPeerAt, performance.now())) return '階段：已加入（' + how(session.via || session.pathKind || 'webrtc') + '）。';
-    if (session.failed) {
-      return '階段：失敗。掃碼：' + (session.peerDetail || '沒有接通') + '。網頁中繼：' + (session.wsReason || '沒有接通') + '。';
-    }
-    if (!session.rtc.ok) return '階段：這台手機沒有 WebRTC（' + session.rtc.reason + '）。' + wsLine();
-    if (session._opened && !session.connected && !session.rtcGaveUp) return '階段：WebRTC 已接通，等待房主歡迎訊息…';
-    if (session.rtcGaveUp && session.peerDetail) return '階段：' + session.peerDetail + '。' + wsLine();
-    if (session._signalled) return '階段：已找到房間，正在建立 WebRTC（會試免費 TURN 中繼）…';
-    if (session._finding) return '階段：掃碼伺服器已連上，正在尋找房間 ' + formatCode(code) + '…';
-    return '階段：正在連上掃碼伺服器… ' + wsLine();
+    const codeLabel = formatCode(code);
+    if (session.connected && hostStillThere(session.lastPeerAt, performance.now())) return t('guest.joined', { how: how(session.via || session.pathKind || 'webrtc') });
+    if (session.failed) return t('guest.fail', { detail: detailOf(session.peerDetail, 'peer.detailNone2', { code: codeLabel }), ws: session.wsReasonKey ? guestWsReason() : (session.wsReason || t('ws.down')) });
+    if (!session.rtc.ok) return t('guest.noRtc', { reason: session.rtc.reason, ws: wsLine() });
+    if (session._opened && !session.connected && !session.rtcGaveUp) return t('guest.opened');
+    if (session.rtcGaveUp && session.peerDetail) return t('guest.detail', { detail: detailOf(session.peerDetail, 'peer.detailNone2', { code: codeLabel }), ws: wsLine() });
+    if (session._signalled) return t('guest.signal');
+    if (session._finding) return t('guest.find', { code: codeLabel });
+    return t('guest.boot', { ws: wsLine() });
   }
 
   function wsLine() {
-    if (session.heardHost) return '網頁中繼：車機有回應，正在加入…';
-    if (session.wsOpen) return '網頁中繼：已連到伺服器，尚未跟車機確認';
-    return '網頁中繼：' + (session.wsReason || '連線中');
+    if (session.heardHost) return t('ws.heard');
+    if (session.wsOpen) return t('ws.noHost');
+    return t('ws.line', { reason: guestWsReason() });
   }
 
   function retireRelay() {
@@ -778,7 +795,7 @@ export function createGuest(code, handlers) {
       session.full = true;
       session.failed = true;
       session._failedOnce = true;
-      session.failMsg = '這個房間已經有一位手機玩家。請等對方離開再加入。';
+      session.failMsg = t('guest.full');
       try { if (h.onFail) h.onFail(session.failMsg); } catch (e) {}
     } else if (data.t === 'replaced') {
       session.replaced = true;
@@ -827,7 +844,7 @@ export function createGuest(code, handlers) {
       });
       arm(deadlines, 8000, () => {
         if (session.connected || session._destroyed) return;
-        session.peerDetail = 'WebRTC 已接通，但 8 秒內沒有收到房主的歡迎訊息';
+        session.peerDetail = 'peer.noWelcome';
         session.rtcGaveUp = true;
         checkDone();
       });
@@ -844,7 +861,7 @@ export function createGuest(code, handlers) {
     });
     next.on('error', () => {
       if (session._destroyed || session.connected) return;
-      session.peerDetail = 'WebRTC 資料通道錯誤';
+      session.peerDetail = 'peer.dc';
       session.rtcGaveUp = true;
       checkDone();
     });
@@ -865,7 +882,7 @@ export function createGuest(code, handlers) {
     wireConn(conn);
     arm(deadlines, 12000, () => {
       if (session._opened || session.connected || session._destroyed) return;
-      session.peerDetail = 'WebRTC 超過 12 秒沒接通（車機 LTE 的 NAT，或瀏覽器擋住資料通道）';
+      session.peerDetail = 'peer.timeout';
       session.rtcGaveUp = true;
       checkDone();
     });
@@ -881,7 +898,7 @@ export function createGuest(code, handlers) {
     const Peer = peerCtor();
     if (!Peer) {
       session.rtcGaveUp = true;
-      session.peerDetail = '沒有載入 PeerJS';
+      session.peerDetail = 'peer.missing';
       checkDone();
       return;
     }
@@ -894,7 +911,7 @@ export function createGuest(code, handlers) {
     }
     arm(deadlines, 10000, () => {
       if (session._finding || session._signalled || session._destroyed || session.connected) return;
-      session.peerDetail = '掃碼伺服器 10 秒沒有回應';
+      session.peerDetail = 'peer.slow';
       session.rtcGaveUp = true;
       checkDone();
     });
@@ -908,7 +925,7 @@ export function createGuest(code, handlers) {
       if (session._destroyed || (session.connected && session.via !== 'ws')) return;
       const type = err && err.type;
       if (type === 'peer-unavailable') {
-        session.peerDetail = '掃碼伺服器上找不到房間 ' + formatCode(code) + '（車機可能沒有登記成功）';
+        session.peerDetail = 'peer.noRoom';
         emit('warn');
         if (!session._retried) {
           session._retried = true;
@@ -920,7 +937,7 @@ export function createGuest(code, handlers) {
         return;
       }
       if (type === 'disconnected' || type === 'network' || type === 'socket-error' || type === 'server-error') {
-        session.peerDetail = '掃碼伺服器連線不穩';
+        session.peerDetail = 'peer.unstable';
         try { peer.reconnect(); } catch (e) {}
         return;
       }
@@ -934,6 +951,8 @@ export function createGuest(code, handlers) {
     onStatus: (s) => {
       session.wsOpen = !!s.open;
       session.wsReason = s.open ? '' : (s.reason || '');
+      session.wsReasonKey = s.open ? '' : (s.reasonKey || '');
+      session.wsReasonLabel = s.open ? '' : (s.reasonLabel || '');
       session.wsGaveUp = false;
       if (!session.connected) checkDone();
     },
@@ -987,6 +1006,7 @@ export function createGuest(code, handlers) {
       try { if (dying) dying.destroy(); } catch (e) {}
     }, 120);
   };
+  session.relabel = () => emit(session.connected ? 'joined' : (session.failed ? 'fail' : 'wait'));
   emit('wait');
   startPeer();
   return session;

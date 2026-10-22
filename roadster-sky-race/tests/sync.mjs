@@ -251,7 +251,9 @@ async function openPage(url) {
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(msg.text());
   });
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  const u = new URL(url, BASE);
+  if (!u.searchParams.has('lang')) u.searchParams.set('lang', 'zh-TW');
+  await page.goto(u.toString(), { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.waitForFunction(() => window.__sky && window.__sky.track && window.__sky.game.state !== 'loading', { timeout: 90000 });
   return { page, errors };
 }

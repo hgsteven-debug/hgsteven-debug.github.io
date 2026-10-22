@@ -3,6 +3,7 @@
 // 主題是公開的，房間代碼當題目，不要傳帳號密碼。
 
 import { normalizeCode } from './sync.js';
+import { t } from './i18n.js';
 
 export const RELAYS = [
   { url: 'wss://demo.tbmq.io/mqtt', username: 'demo', label: 'demo.tbmq.io:443' },
@@ -169,7 +170,8 @@ export function connectRelay(code, handlers, opts) {
     state.epoch = epoch;
     state.attempts = attempts;
     state.label = list[index] ? list[index].label : '';
-    try { if (h.onStatus) h.onStatus({ open: state.open, failed: false, reason: state.reason, label: state.label, index, epoch }); }
+    if (state.reasonKey) state.reason = t(state.reasonKey, { label: state.reasonLabel || '' });
+    try { if (h.onStatus) h.onStatus({ open: state.open, failed: false, reason: state.reason, reasonKey: state.reasonKey || '', reasonLabel: state.reasonLabel || '', label: state.label, index, epoch }); }
     catch (e) {}
   }
 
@@ -194,7 +196,9 @@ export function connectRelay(code, handlers, opts) {
       streak = 0;
       attempts = 0;
       index = relaySlot(start, epoch, n);
-      state.reason = '中繼改接 ' + (list[index] ? list[index].label : '');
+      state.reasonKey = 'relay.failover';
+      state.reasonLabel = list[index] ? list[index].label : '';
+      state.reason = t('relay.failover', { label: state.reasonLabel });
       try { if (h.onFailover) h.onFailover({ index, epoch, label: list[index] ? list[index].label : '' }); } catch (e) {}
     }
     tell();
@@ -249,12 +253,16 @@ export function connectRelay(code, handlers, opts) {
     state.label = spec.label;
     state.open = false;
     state.failed = false;
-    state.reason = '正在連上 ' + spec.label;
+    state.reasonKey = 'relay.connecting';
+    state.reasonLabel = spec.label;
+    state.reason = t('relay.connecting', { label: spec.label });
     tell();
     let sock;
     try { sock = openSocket(spec.url, ['mqtt']); }
     catch (e) {
-      failHandshake(gen, spec.label + ' 無法開啟');
+      state.reasonKey = 'relay.down';
+      state.reasonLabel = spec.label;
+      failHandshake(gen, t('relay.down', { label: spec.label }));
       return;
     }
     ws = sock;
@@ -263,7 +271,9 @@ export function connectRelay(code, handlers, opts) {
     clearHello();
     helloTimer = schedule(() => {
       if (gen !== generation || state._stop || state.open) return;
-      state.reason = spec.label + ' 超過 6 秒沒有回應';
+      state.reasonKey = 'relay.timeout';
+      state.reasonLabel = spec.label;
+      state.reason = t('relay.timeout', { label: spec.label });
       try { sock.close(); } catch (e) {}
     }, helloTimeout);
     sock.onopen = () => {
@@ -287,12 +297,14 @@ export function connectRelay(code, handlers, opts) {
         streak = 0;
         openedGen = -1;
         generation += 1;
-        state.reason = spec.label + ' 已中斷，重新連同一台';
+        state.reasonKey = 'relay.retry';
+        state.reasonLabel = spec.label;
+        state.reason = t('relay.retry', { label: spec.label });
         tell();
         retry(backoff(0), generation);
         return;
       }
-      failHandshake(gen, state.reason && state.reason.indexOf('正在連上') !== 0 ? state.reason : (spec.label + ' 已中斷'));
+      failHandshake(gen, state.reasonKey && state.reasonKey !== 'relay.connecting' ? t(state.reasonKey, { label: spec.label }) : t('relay.closed', { label: spec.label }));
     };
   }
 

@@ -17,6 +17,16 @@
 (function () {
   var a = document.getElementById("go");
   if (a) a.href = "/roadster-sky-race/" + location.search + location.hash;
+  var q = "";
+  try { q = new URLSearchParams(location.search).get("lang") || ""; } catch (e) {}
+  var nav = (navigator.language || "").toLowerCase();
+  var id = (q || nav).toLowerCase();
+  var label = "進入天空飛馳 Sky Roadster";
+  if (id.indexOf("fr") === 0) label = "Entrer dans Sky Roadster";
+  else if (id.indexOf("ja") === 0) label = "スカイロードスターへ";
+  else if (id.indexOf("ko") === 0) label = "스카이 로드스터로";
+  else if (id.indexOf("en") === 0) label = "Enter Sky Roadster";
+  if (a) a.textContent = label;
 })();
 </script>
 </body>

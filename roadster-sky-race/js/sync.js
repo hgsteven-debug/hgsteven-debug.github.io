@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 // 手機加入用的純邏輯：房間代碼、輸入封包、快照內插、預測修正。
 // 不碰 DOM、不碰 WebRTC，方便在 node 裡單測。多人遠端時只要把 REMOTE_LIMIT 調高，清單結構不用改。
 
@@ -44,7 +46,7 @@ export function peerIdFor(code) {
 
 // 正式站走網站根目錄，讓現有的轉址把 ?join= 帶進遊戲。
 // 本機或預覽網址則開目前這頁，測試才連得到。
-export function joinUrl(code, loc, relay) {
+export function joinUrl(code, loc, relay, lang) {
   const c = normalizeCode(code);
   const host = loc && loc.hostname ? String(loc.hostname) : '';
   let url;
@@ -58,6 +60,7 @@ export function joinUrl(code, loc, relay) {
   if (relay && Number.isFinite(+relay.index)) {
     url += '&relay=' + ((+relay.index) | 0) + '&epoch=' + ((+relay.epoch) | 0);
   }
+  if (lang) url += '&lang=' + encodeURIComponent(lang);
   return url;
 }
 
@@ -97,11 +100,11 @@ export function heldInput(remote, now, staleMs = INPUT_STALE_MS) {
 
 export function failText(err) {
   const type = err && err.type;
-  if (type === 'browser-incompatible') return '這台瀏覽器不支援點對點連線，手機暫時無法加入。這台比賽不受影響。';
-  if (type === 'peer-unavailable') return '找不到這個房間。請核對代碼，並請房主留在遊戲頁面。';
-  if (type === 'unavailable-id') return '這組房間代碼剛被使用，請再試一次。';
-  if (type === 'invalid-id') return '房間代碼無效。';
-  return '連線失敗。請確認兩台裝置都有網路。嚴格的防火牆或對稱 NAT 可能擋下點對點連線。這台比賽不受影響。';
+  if (type === 'browser-incompatible') return t('fail.browser');
+  if (type === 'peer-unavailable') return t('fail.noRoom');
+  if (type === 'unavailable-id') return t('fail.taken');
+  if (type === 'invalid-id') return t('fail.badCode');
+  return t('fail.generic');
 }
 
 export function roundNet(v, d = 0) {

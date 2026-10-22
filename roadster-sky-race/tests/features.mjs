@@ -14,6 +14,7 @@ const browser = await puppeteer.launch({
 
 async function open(query) {
   if (!query.includes('nonet=1') && !query.includes('net=1')) query += '&nonet=1';
+  if (!query.includes('lang=')) query += '&lang=zh-TW';
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -550,7 +551,7 @@ async function testPhonePad() {
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (msg) => { if (msg.type() === 'error') errors.push('console: ' + msg.text()); });
   await page.setViewport({ width: 800, height: 360, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
-  await page.goto(BASE + '?join=ABC234&q=low&noadapt=1&nopauseblur=1&nonet=1', { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.goto(BASE + '?join=ABC234&q=low&noadapt=1&nopauseblur=1&nonet=1&lang=zh-TW', { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.waitForFunction(() => window.__sky && window.__sky.track && window.__sky.game.state !== 'loading', { timeout: 90000 });
   await page.evaluate(() => {
     document.querySelectorAll('.screen').forEach((s) => s.classList.remove('show'));
@@ -602,7 +603,7 @@ async function testPadPage() {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
-  const res = await page.goto(BASE + 'gamepad-test.html', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const res = await page.goto(BASE + 'gamepad-test.html?lang=zh-TW', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForSelector('#status', { timeout: 10000 });
   const title = await page.title();
   if (!res.ok()) throw new Error('status ' + res.status());

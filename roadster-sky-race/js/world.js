@@ -60,20 +60,20 @@ export class World {
 
   async build(progress = () => {}) {
     const steps = [
-      ['天空與光線', () => this.buildSky()],
-      ['地形', () => this.buildTerrain()],
-      ['賽道路面', () => this.buildRoad()],
-      ['護欄與路標', () => this.buildRails()],
-      ['岩石與山脈', () => this.buildScenery()],
-      ['能量環', () => this.buildRings()],
-      ['特色結構', () => this.buildExtras()],
+      ['load.sky', () => this.buildSky()],
+      ['load.land', () => this.buildTerrain()],
+      ['load.road', () => this.buildRoad()],
+      ['load.rails', () => this.buildRails()],
+      ['load.rocks', () => this.buildScenery()],
+      ['load.rings', () => this.buildRings()],
+      ['load.extras', () => this.buildExtras()],
     ];
     for (let i = 0; i < steps.length; i++) {
       progress((i / steps.length), steps[i][0]);
       await nextFrame();
       steps[i][1]();
     }
-    progress(1, '完成');
+    progress(1, 'load.done');
     // 調整環境反射強度
     this.scene.traverse((o) => {
       if (o.material && o.material.isMeshStandardMaterial && o.material.envMapIntensity === 1) o.material.envMapIntensity = 0.55;

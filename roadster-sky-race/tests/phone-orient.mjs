@@ -42,7 +42,7 @@ async function openPhone(viewport, orient) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
-  await page.goto(BASE + '?join=ABC234&q=low&noadapt=1&nopauseblur=1&nonet=1', { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.goto(BASE + '?join=ABC234&q=low&noadapt=1&nopauseblur=1&nonet=1&lang=zh-TW', { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.waitForFunction(() => window.__sky && window.__sky.track && window.__sky.game.state !== 'loading', { timeout: 90000 });
   await page.evaluate(() => {
     const sky = window.__sky;

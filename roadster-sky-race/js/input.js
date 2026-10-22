@@ -1,5 +1,6 @@
 // 輸入：Gamepad API（主要）、鍵盤、觸控（備用），含按鍵重新對應
 import { clamp, damp, store } from './util.js';
+import { t } from './i18n.js';
 
 // ---- 搖桿設定檔（Profile）----
 // Switch Pro（JOWUA Switch 模式）：標準映射下按鈕「位置」與 Xbox 相同（索引 0=下、1=右、2=左、3=上），但標示名稱不同。
@@ -36,7 +37,16 @@ export function buttonNames(profile, mapping) {
 // 目前顯示用的提示文字（沒接搖桿時顯示 Switch 標示）
 export function hintsFor(profile) {
   const p = profile || PROFILES.switch;
-  return `${p.thr} 加速　${p.brk} 煞車　${p.lift} 起飛推進　${p.nitro} 氮氣　${p.cam} 視角　${p.reset} 回賽道　${p.pause} 暫停`;
+  return t('hint.bar', p);
+}
+const DPAD_KEY = { '十字上': 'pad.up', '十字下': 'pad.down', '十字左': 'pad.left', '十字右': 'pad.right', '截圖': 'pad.capture' };
+export function localButtonNames(profile, mapping) {
+  return buttonNames(profile, mapping).map((n) => (DPAD_KEY[n] ? t(DPAD_KEY[n]) : n));
+}
+export function profileLabel(prof) {
+  if (!prof) return '';
+  if (prof.id === 'generic') return t('pad.generic');
+  return prof.name;
 }
 
 // 標準映射的預設（索引為標準位置；Xbox 與 Switch Pro 相同位置）
@@ -53,24 +63,24 @@ export const DEFAULT_BINDINGS = {
 };
 
 const ACTION_DEFS = [
-  { id: 'steer',    label: () => '轉向（左搖桿左右）', kind: 'axis', hint: '請把搖桿「往右」推到底' },
-  { id: 'pitch',    label: () => '空中升降（左搖桿上下）', kind: 'axis', hint: '請把搖桿「往上」推到底' },
-  { id: 'throttle', label: (p) => `加速（${p.thr}）`, kind: 'any', hint: '請按住要用來加速的鍵或板機' },
-  { id: 'brake',    label: (p) => `煞車 / 倒車（${p.brk}）`, kind: 'any', hint: '請按住要用來煞車的鍵或板機' },
-  { id: 'lift',     label: (p) => `起飛推進器（${p.lift}）`, kind: 'any', hint: '請按下要用來起飛的按鈕' },
-  { id: 'nitro',    label: (p) => `氮氣加速（${p.nitro}）`, kind: 'any', hint: '請按下要用來氮氣的按鈕' },
-  { id: 'camera',   label: (p) => `切換視角（${p.cam}）`, kind: 'any', hint: '請按下要用來切換視角的按鈕' },
-  { id: 'reset',    label: (p) => `回到賽道（${p.reset}）`, kind: 'any', hint: '請按下要用來回到賽道的按鈕' },
-  { id: 'pause',    label: (p) => `暫停選單（${p.pause}）`, kind: 'any', hint: '請按下要用來暫停的按鈕' },
+  { id: 'steer',    label: () => t('act.steer'), kind: 'axis', hint: () => t('act.steerHint') },
+  { id: 'pitch',    label: () => t('act.pitch'), kind: 'axis', hint: () => t('act.pitchHint') },
+  { id: 'throttle', label: (p) => t('act.throttle', { key: p.thr }), kind: 'any', hint: () => t('act.throttleHint') },
+  { id: 'brake',    label: (p) => t('act.brake', { key: p.brk }), kind: 'any', hint: () => t('act.brakeHint') },
+  { id: 'lift',     label: (p) => t('act.lift', { key: p.lift }), kind: 'any', hint: () => t('act.liftHint') },
+  { id: 'nitro',    label: (p) => t('act.nitro', { key: p.nitro }), kind: 'any', hint: () => t('act.nitroHint') },
+  { id: 'camera',   label: (p) => t('act.camera', { key: p.cam }), kind: 'any', hint: () => t('act.cameraHint') },
+  { id: 'reset',    label: (p) => t('act.reset', { key: p.reset }), kind: 'any', hint: () => t('act.resetHint') },
+  { id: 'pause',    label: (p) => t('act.pause', { key: p.pause }), kind: 'any', hint: () => t('act.pauseHint') },
 ];
 // ACTIONS.label 隨目前 profile 變化（ui.js 重新整理畫面時會讀取）
 export const ACTIONS = ACTION_DEFS.map((d) => ({ id: d.id, kind: d.kind, hint: d.hint, labelFor: d.label, label: d.label(PROFILES.switch) }));
 
 export function bindingText(b, names = SWITCH_NAMES) {
-  if (!b) return '未設定';
-  if (b.t === 'b') return `按鈕 ${b.i}${names[b.i] ? `（${names[b.i]}）` : ''}`;
-  const mode = { full: '全幅', pos: '正向', neg: '負向', trig: '板機' }[b.m] || '';
-  return `軸 ${b.i}（${mode}${b.inv ? '・反向' : ''}）`;
+  if (!b) return t('bind.none');
+  if (b.t === 'b') return names[b.i] ? t('bind.btnNamed', { i: b.i, name: names[b.i] }) : t('bind.btn', { i: b.i });
+  const mode = t('bind.' + (b.m || 'full'));
+  return t('bind.axis', { i: b.i, mode, inv: b.inv ? t('bind.inv') : '' });
 }
 
 const btnValue = (gp, i) => {

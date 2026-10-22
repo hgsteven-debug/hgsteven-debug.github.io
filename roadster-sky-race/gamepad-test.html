@@ -2,14 +2,14 @@
 <html lang="zh-Hant-TW">
 <head>
 <meta charset="utf-8">
-<title>搖桿測試 — 天空飛馳</title>
+<title data-i18n="gp.title">搖桿測試 — 天空飛馳</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
 <style>
   :root { --acc:#27d7ff; --org:#ff9a3d; --bg:#0b0f14; --card:#141b24; --dim:#93a1b0; }
   * { box-sizing:border-box; }
   html { font-size:clamp(15px,1.2vw,26px); }
-  body { margin:0; background:var(--bg); color:#f2f6fa; font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; padding:1rem 1.4rem 3rem; }
+  body { margin:0; background:var(--bg); color:#f2f6fa; font-family:"PingFang TC","Microsoft JhengHei","Hiragino Sans","Yu Gothic","Meiryo","Apple SD Gothic Neo","Malgun Gothic","Noto Sans CJK TC","Noto Sans CJK JP","Noto Sans CJK KR","Noto Sans TC","Noto Sans JP","Noto Sans KR",system-ui,sans-serif; padding:1rem 1.4rem 3rem; }
   h1 { font-size:1.7rem; margin:.2rem 0 .6rem; display:flex; gap:1rem; align-items:center; flex-wrap:wrap; }
   h1 a { font-size:1rem; color:var(--acc); text-decoration:none; border:1px solid var(--acc); border-radius:.5rem; padding:.25rem .8rem; }
   h2 { font-size:1.1rem; margin:.8rem 0 .4rem; color:var(--acc); }
@@ -38,65 +38,75 @@
 </style>
 </head>
 <body>
-<h1>🎮 搖桿測試 <a href="index.html">← 回到遊戲</a></h1>
-<div id="status" class="wait">尚未偵測到搖桿：請接上搖桿（藍牙或 USB 接收器），並按下任意按鍵來喚醒。</div>
+<h1>🎮 <span data-i18n="gp.title">搖桿測試 — 天空飛馳</span> <a href="index.html" data-i18n="gp.back">← 回到遊戲</a></h1>
+<div class="seg" id="langPick" style="display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .8rem">
+  <button class="act gray" data-lang="zh-TW" type="button">繁中</button>
+  <button class="act gray" data-lang="en" type="button">EN</button>
+  <button class="act gray" data-lang="fr" type="button">FR</button>
+  <button class="act gray" data-lang="ja" type="button">日本語</button>
+  <button class="act gray" data-lang="ko" type="button">한국어</button>
+</div>
+<div id="status" class="wait" data-i18n="gp.wait">尚未偵測到搖桿：請接上搖桿（藍牙或 USB 接收器），並按下任意按鍵來喚醒。</div>
 
 <div class="top3">
 <div class="card">
   <div class="kv">
-    <b>裝置名稱 id</b><span id="id">—</span>
-    <b>映射 mapping</b><span id="mapping">—</span>
-    <b>索引 index</b><span id="index">—</span>
-    <b>偵測的設定檔</b><span id="profile">—</span>
-    <b>轉向左右反轉</b><span><select id="inv"><option value="0">關（預設）</option><option value="1">開</option></select> <span class="dim" style="font-weight:400;font-size:.8rem">與遊戲共用設定；左搖桿往右 = 遊戲向右轉</span></span>
-    <b>轉向預覽</b><span id="steerPrev">—</span>
-    <b>手動模式</b><span><select id="pmode"><option value="auto">自動偵測</option><option value="switch">Switch 模式</option><option value="xbox">X-input（Xbox）模式</option></select> <span class="dim" style="font-weight:400;font-size:.8rem">與遊戲共用設定</span></span>
-    <b>十字鍵 hat</b><span id="hat">—</span>
-    <b>按鈕 / 軸數量</b><span id="counts">—</span>
-    <b>震動支援</b><span id="rumble">—</span>
+    <b data-i18n="gp.id">裝置名稱 id</b><span id="id">—</span>
+    <b data-i18n="gp.mapping">映射 mapping</b><span id="mapping">—</span>
+    <b data-i18n="gp.index">索引 index</b><span id="index">—</span>
+    <b data-i18n="gp.profile">偵測的設定檔</b><span id="profile">—</span>
+    <b data-i18n="gp.invert">轉向左右反轉</b><span><select id="inv"><option value="0" data-i18n="gp.invertOff">關（預設）</option><option value="1" data-i18n="gp.invertOn">開</option></select> <span class="dim" data-i18n="gp.invertNote" style="font-weight:400;font-size:.8rem">與遊戲共用設定；左搖桿往右 = 遊戲向右轉</span></span>
+    <b data-i18n="gp.preview">轉向預覽</b><span id="steerPrev">—</span>
+    <b data-i18n="gp.mode">手動模式</b><span><select id="pmode"><option value="auto" data-i18n="gp.mode.auto">自動偵測</option><option value="switch" data-i18n="gp.mode.switch">Switch 模式</option><option value="xbox" data-i18n="gp.mode.xbox">X-input（Xbox）模式</option></select> <span class="dim" data-i18n="gp.modeNote" style="font-weight:400;font-size:.8rem">與遊戲共用設定</span></span>
+    <b data-i18n="gp.hat">十字鍵 hat</b><span id="hat">—</span>
+    <b data-i18n="gp.counts">按鈕 / 軸數量</b><span id="counts">—</span>
+    <b data-i18n="gp.rumble">震動支援</b><span id="rumble">—</span>
   </div>
-  <p class="dim" style="margin:.5rem 0 0">多支搖桿時可切換：<select id="padSel"></select></p>
+  <p class="dim" style="margin:.5rem 0 0"><span data-i18n="gp.switch">多支搖桿時可切換：</span><select id="padSel"></select></p>
   <p class="dim" style="margin:.3rem 0 0;font-size:.75rem" id="ua">—</p>
 </div>
 <div class="card">
-  <b>震動測試</b>
+  <b data-i18n="gp.vibTitle">震動測試</b>
   <div>
-  <button class="act" id="vStrong">強震</button><button class="act" id="vWeak">弱震</button><button class="act" id="vBoth">雙馬達</button><button class="act gray" id="vLong">連續 3 秒</button>
+  <button class="act" id="vStrong" data-i18n="gp.vibStrong">強震</button><button class="act" id="vWeak" data-i18n="gp.vibWeak">弱震</button><button class="act" id="vBoth" data-i18n="gp.vibBoth">雙馬達</button><button class="act gray" id="vLong" data-i18n="gp.vibLong">連續 3 秒</button>
   </div>
-  <div id="vInfo" class="dim">（不一定每種連接方式都支援）</div>
-  <h2 style="margin-top:.5rem">最近事件</h2>
+  <div id="vInfo" class="dim" data-i18n="gp.vibNote">（不一定每種連接方式都支援）</div>
+  <h2 style="margin-top:.5rem" data-i18n="gp.log">最近事件</h2>
   <div id="log"></div>
 </div>
 <div class="card">
-  <b>可複製的 JSON 摘要</b>（可截圖或貼給開發者）
+  <b data-i18n="gp.json">可複製的 JSON 摘要</b><span data-i18n="gp.jsonHint">（可截圖或貼給開發者）</span>
   <textarea id="json" readonly></textarea>
-  <button class="act" id="copy">複製 JSON</button><button class="act gray" id="clear">清除紀錄</button><span id="copyInfo" class="dim"></span>
+  <button class="act" id="copy" data-i18n="gp.copy">複製 JSON</button><button class="act gray" id="clear" data-i18n="gp.clear">清除紀錄</button><span id="copyInfo" class="dim"></span>
 </div>
 </div>
 
-<h2>按鈕（索引 0–N；亮橘＝目前按下，綠框＝曾按過）</h2>
+<h2 data-i18n="gp.buttons">按鈕（索引 0–N；亮橘＝目前按下，綠框＝曾按過）</h2>
 <div id="buttons" class="grid"></div>
 
-<h2>搖桿軸（數值 −1 ～ +1）</h2>
+<h2 data-i18n="gp.axes">搖桿軸（數值 −1 ～ +1）</h2>
 <div id="axes" class="axes"></div>
 
-<p class="dim">提醒：瀏覽器的 Gamepad API 只提供按鈕與搖桿軸，無法讀取陀螺儀或震動回饋以外的感測器。請依序按每一顆鍵、推每一根搖桿、壓兩個板機，再截圖整頁。</p>
+<p class="dim" data-i18n="gp.foot">提醒：瀏覽器的 Gamepad API 只提供按鈕與搖桿軸，無法讀取陀螺儀或震動回饋以外的感測器。請依序按每一顆鍵、推每一根搖桿、壓兩個板機，再截圖整頁。</p>
 
-<script>
-(function(){
+<script type="module">
+import { t, initLocale, applyDom, setLocale, getLocale, onLocale } from './js/i18n.js';
+initLocale();
+applyDom();
   var XBOX = ['A','B','X','Y','LB','RB','LT','RT','Back','Start','L3','R3','十字上','十字下','十字左','十字右','Home'];
   var SWITCH = ['B','A','Y','X','L','R','ZL','ZR','－','＋','L3','R3','十字上','十字下','十字左','十字右','Home','截圖'];
   var SWITCH_RAW = ['B','A','Y','X','L','R','ZL','ZR','－','＋','L3','R3','Home','截圖'];
+  function nm(n){ if (n === '十字上') return t('pad.up'); if (n === '十字下') return t('pad.down'); if (n === '十字左') return t('pad.left'); if (n === '十字右') return t('pad.right'); if (n === '截圖') return t('pad.capture'); return n || ''; }
   var STD = XBOX, profName = '—', AX_LIMIT = 1.05, restS = {}, restN = 0;
   // 與遊戲相同的偵測規則：Xbox / 045e 優先；Pro Controller / Switch / Nintendo / 057e → Switch Pro
   function detect(id){ var s = String(id||'').toLowerCase();
-    if (s.indexOf('xbox') >= 0 || s.indexOf('045e') >= 0) return 'Xbox';
-    if (s.indexOf('pro controller') >= 0 || s.indexOf('switch') >= 0 || s.indexOf('nintendo') >= 0 || s.indexOf('057e') >= 0) return 'Switch Pro';
-    return '一般搖桿（以 Xbox 標示）'; }
+    if (s.indexOf('xbox') >= 0 || s.indexOf('045e') >= 0) return t('gp.detect.xbox');
+    if (s.indexOf('pro controller') >= 0 || s.indexOf('switch') >= 0 || s.indexOf('nintendo') >= 0 || s.indexOf('057e') >= 0) return t('gp.detect.switch');
+    return t('gp.detect.generic'); }
   var PM_KEY = 'skyroadster.padmode', pmode = 'auto';
   try { var sv = JSON.parse(localStorage.getItem(PM_KEY)); if (sv === 'switch' || sv === 'xbox') pmode = sv; } catch (e) {}
-  function setProfile(gp){ profName = pmode === 'switch' ? 'Switch Pro' : pmode === 'xbox' ? 'Xbox' : detect(gp.id); STD = profName === 'Switch Pro' ? (gp.mapping === 'standard' ? SWITCH : SWITCH_RAW) : XBOX; }
-  function hatDir(v){ if (!isFinite(v) || Math.abs(v) > 1.0001) return '無'; return ['上','右上','右','右下','下','左下','左','左上'][Math.round((v + 1) * 3.5) % 8]; }
+  function setProfile(gp){ profName = pmode === 'switch' ? t('gp.detect.switch') : pmode === 'xbox' ? t('gp.detect.xbox') : detect(gp.id); STD = (pmode === 'switch' || (pmode === 'auto' && profName === t('gp.detect.switch'))) ? (gp.mapping === 'standard' ? SWITCH : SWITCH_RAW) : XBOX; }
+  function hatDir(v){ if (!isFinite(v) || Math.abs(v) > 1.0001) return t('gp.hatNone'); return t('gp.hatDirs').split('|')[Math.round((v + 1) * 3.5) % 8]; }
   var $ = function(id){ return document.getElementById(id); };
   var selIndex = null, lastId = '';
   var everBtn = {}, axRange = {}, events = [], prevBtn = {};
@@ -104,15 +114,15 @@
 
   function pads(){ var l = []; try { l = navigator.getGamepads ? navigator.getGamepads() : []; } catch(e){} return Array.prototype.filter.call(l || [], function(g){ return g && g.connected !== false; }); }
   function log(t){ var d = new Date(); var s = ('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2)+'.'+('00'+d.getMilliseconds()).slice(-3); events.unshift(s+'  '+t); events.length = Math.min(events.length, 40); $('log').innerHTML = events.join('<br>'); }
-  window.addEventListener('gamepadconnected', function(e){ log('連接：['+e.gamepad.index+'] '+e.gamepad.id); });
-  window.addEventListener('gamepaddisconnected', function(e){ log('中斷：['+e.gamepad.index+'] '+e.gamepad.id); });
+  window.addEventListener('gamepadconnected', function(e){ log(t('gp.logOn', { index: e.gamepad.index, id: e.gamepad.id })); });
+  window.addEventListener('gamepaddisconnected', function(e){ log(t('gp.logOff', { index: e.gamepad.index, id: e.gamepad.id })); });
 
   function build(gp){
     var bh = '', i;
-    for (i = 0; i < gp.buttons.length; i++) bh += '<div class="btn" id="b'+i+'"><i></i><div class="n">按鈕 '+i+'</div><div class="nm">'+(STD[i] ? (gp.mapping === 'standard' || profName === 'Switch Pro' ? STD[i] : '(標準名：'+STD[i]+')') : '')+'</div><div class="v">0.00</div></div>';
+    for (i = 0; i < gp.buttons.length; i++) bh += '<div class="btn" id="b'+i+'"><i></i><div class="n">'+t('gp.btn', { i: i })+'</div><div class="nm">'+(STD[i] ? (gp.mapping === 'standard' || profName === 'Switch Pro' ? nm(STD[i]) : t('gp.stdName', { name: nm(STD[i]) })) : '')+'</div><div class="v">0.00</div></div>';
     $('buttons').innerHTML = bh;
     var ah = '';
-    for (i = 0; i < gp.axes.length; i++) ah += '<div class="ax" id="a'+i+'"><div class="t"><span>軸 '+i+'</span><span class="val">0.000</span></div><div class="bar"><i></i></div><div class="rng">最小 — 最大 —</div><div class="flag"></div></div>';
+    for (i = 0; i < gp.axes.length; i++) ah += '<div class="ax" id="a'+i+'"><div class="t"><span>'+t('gp.axis', { i: i })+'</span><span class="val">0.000</span></div><div class="bar"><i></i></div><div class="rng">'+t('gp.rangeEmpty')+'</div><div class="flag"></div></div>';
     $('axes').innerHTML = ah;
     lastId = gp.id + '|' + gp.buttons.length + '|' + gp.axes.length + '|' + gp.mapping;
     restS = {}; restN = 0; setProfile(gp);
@@ -149,19 +159,20 @@
     var gp = list.filter(function(g){ return g.index === selIndex; })[0] || list[0];
     if (gp && selIndex === null) selIndex = gp.index;
     var st = $('status');
-    if (!gp) { st.className = 'wait'; st.textContent = '尚未偵測到搖桿：請接上搖桿（藍牙或 USB 接收器），並按下任意按鍵來喚醒。'; $('id').textContent = '—'; $('mapping').textContent = '—'; $('index').textContent = '—'; $('counts').textContent = '—'; $('rumble').textContent='—'; $('json').value = summary(null); return; }
-    st.className = 'ok'; st.textContent = '✅ 已連接：' + gp.id;
+    if (!gp) { st.className = 'wait'; st.textContent = t('gp.wait'); $('id').textContent = '—'; $('mapping').textContent = '—'; $('index').textContent = '—'; $('counts').textContent = '—'; $('rumble').textContent='—'; $('json').value = summary(null); return; }
+    st.className = 'ok'; st.textContent = t('gp.connected', { id: gp.id });
     var key = gp.id + '|' + gp.buttons.length + '|' + gp.axes.length + '|' + gp.mapping;
     if (key !== lastId) build(gp);
     $('id').textContent = gp.id;
-     $('profile').textContent = profName + (pmode === 'auto' ? '（自動偵測）' : '（手動指定）') + (profName === 'Switch Pro' ? '（按鈕標示為任天堂：下＝B、右＝A、左＝Y、上＝X）' : '');
+     $('profile').textContent = t('gp.profileLine', { name: profName, mode: pmode === 'auto' ? t('gp.autoTag') : t('gp.manualTag'), switchNote: profName === 'Switch Pro' ? t('gp.switchNote') : '' });
     var sx = gp.axes.length ? gp.axes[0] : 0; if (!isFinite(sx) || Math.abs(sx) > 1.01) sx = 0;
     var eff = inv ? -sx : sx;
-    $('steerPrev').textContent = '左搖桿 X=' + sx.toFixed(2) + ' → 遊戲轉向：' + (Math.abs(eff) < 0.15 ? '直行' : (eff > 0 ? '向右 ' : '向左 ') + Math.round(Math.abs(eff) * 100) + '%') + (inv ? '（已反轉）' : '');
-    $('mapping').textContent = gp.mapping ? gp.mapping : '（空白＝非標準映射，按鍵編號可能與 Xbox 不同）';
+    var dir = Math.abs(eff) < 0.15 ? t('gp.straight') : (eff > 0 ? t('gp.right', { n: Math.round(Math.abs(eff) * 100) }) : t('gp.left', { n: Math.round(Math.abs(eff) * 100) }));
+    $('steerPrev').textContent = t('gp.steerLine', { x: sx.toFixed(2), dir: dir, inv: inv ? t('gp.inverted') : '' });
+    $('mapping').textContent = gp.mapping ? gp.mapping : t('gp.mapBlank');
     $('index').textContent = gp.index;
-    $('counts').textContent = gp.buttons.length + ' 個按鈕 / ' + gp.axes.length + ' 個軸';
-    var rtype = gp.vibrationActuator ? ('vibrationActuator（' + (gp.vibrationActuator.type || '?') + '）') : (gp.hapticActuators && gp.hapticActuators.length ? 'hapticActuators（舊式）' : '不支援');
+    $('counts').textContent = t('gp.countLine', { buttons: gp.buttons.length, axes: gp.axes.length });
+    var rtype = gp.vibrationActuator ? t('gp.rumbleAct', { type: gp.vibrationActuator.type || '?' }) : (gp.hapticActuators && gp.hapticActuators.length ? t('gp.rumbleOld') : t('gp.rumbleNo'));
     $('rumble').textContent = rtype;
     for (var i = 0; i < gp.buttons.length; i++) {
       var b = gp.buttons[i], v = typeof b.value === 'number' ? b.value : (b.pressed ? 1 : 0), on = b.pressed || v > 0.5;
@@ -170,11 +181,11 @@
       el.firstChild.style.width = Math.round(v * 100) + '%';
       el.lastChild.textContent = v.toFixed(2) + (b.pressed ? '  ●' : '');
       if (v > 0.3) { if (everBtn[i] === undefined || v > everBtn[i]) everBtn[i] = v; }
-      if (on && !prevBtn[i]) log('按鈕 ' + i + (STD[i] ? '（'+STD[i]+'）' : '') + ' 按下 value=' + v.toFixed(2));
+      if (on && !prevBtn[i]) log(t('gp.logBtn', { i: i, name: STD[i] ? t('gp.logName', { name: nm(STD[i]) }) : '', value: v.toFixed(2) }));
       prevBtn[i] = on;
     }
     if (restN < 40) restN++;
-    var hs = hats(gp); $('hat').textContent = hs.length ? ('軸 ' + hs.join(', ') + '：' + hatDir(gp.axes[hs[0]])) : (gp.mapping === 'standard' ? '標準映射：十字鍵為按鈕 12–15' : '未偵測到 hat 軸');
+    var hs = hats(gp); $('hat').textContent = hs.length ? t('gp.hatFound', { axes: hs.join(', '), dir: hatDir(gp.axes[hs[0]]) }) : (gp.mapping === 'standard' ? t('gp.hatStd') : t('gp.hatMiss'));
     for (var j = 0; j < gp.axes.length; j++) {
       var raw = gp.axes[j], ae = $('a'+j); if (!ae) continue;
       var bad = !isFinite(raw) || Math.abs(raw) > AX_LIMIT, a = bad ? 0 : raw;
@@ -182,13 +193,13 @@
       var restV = restS[j] && restS[j].length > 5 ? med(restS[j]) : 0;
       var ignore = Math.abs(restV) > AX_LIMIT || (Math.abs(restV) > 0.4 && Math.abs(restV + 1) > 0.3);
       ae.className = 'ax' + (bad || ignore ? ' bad' : '');
-      ae.querySelector('.flag').textContent = bad || ignore ? ('遊戲會忽略此軸：靜止值 ' + (isFinite(restV) ? restV.toFixed(4) : 'NaN') + (Math.abs(restV) > AX_LIMIT ? '（十字鍵 hat：目前 ' + hatDir(raw) + '）' : '')) : (Math.abs(restV) > 0.02 ? '搖桿偏心 ' + restV.toFixed(3) + '（遊戲會自動校正）' : '');
+      ae.querySelector('.flag').textContent = bad || ignore ? t('gp.ignore', { rest: isFinite(restV) ? restV.toFixed(4) : 'NaN', hat: Math.abs(restV) > AX_LIMIT ? t('gp.hatNow', { dir: hatDir(raw) }) : '' }) : (Math.abs(restV) > 0.02 ? t('gp.bias', { n: restV.toFixed(3) }) : '');
       if (!axRange[j]) axRange[j] = { min: a, max: a };
       var r = axRange[j]; if (a < r.min) r.min = a; if (a > r.max) r.max = a;
       ae.querySelector('.val').textContent = (a >= 0 ? '+' : '') + a.toFixed(3);
       var bar = ae.querySelector('.bar i');
       var w = Math.abs(a) * 50; bar.style.width = w + '%'; bar.style.left = a >= 0 ? '50%' : (50 - w) + '%';
-      ae.querySelector('.rng').textContent = '最小 ' + r.min.toFixed(2) + ' ／ 最大 ' + r.max.toFixed(2);
+      ae.querySelector('.rng').textContent = t('gp.range', { min: r.min.toFixed(2), max: r.max.toFixed(2) });
     }
     if (frame % 6 === 0) $('json').value = summary(gp);
   }
@@ -197,37 +208,47 @@
   var INV_KEY = 'skyroadster.invertSteer', inv = false;
   try { inv = JSON.parse(localStorage.getItem(INV_KEY)) === true; } catch (e) {}
   $('inv').value = inv ? '1' : '0';
-  $('inv').addEventListener('change', function(){ inv = this.value === '1'; try { localStorage.setItem(INV_KEY, JSON.stringify(inv)); } catch (e) {} log('轉向左右反轉：' + (inv ? '開' : '關')); });
+  $('inv').addEventListener('change', function(){ inv = this.value === '1'; try { localStorage.setItem(INV_KEY, JSON.stringify(inv)); } catch (e) {} log(t('gp.logInv', { state: inv ? t('set.on') : t('set.off') })); });
   $('pmode').value = pmode;
-  $('pmode').addEventListener('change', function(){ pmode = this.value; try { localStorage.setItem(PM_KEY, JSON.stringify(pmode)); } catch (e) {} lastId = ''; log('搖桿模式：' + pmode); });
+  $('pmode').addEventListener('change', function(){ pmode = this.value; try { localStorage.setItem(PM_KEY, JSON.stringify(pmode)); } catch (e) {} lastId = ''; log(t('gp.logMode', { mode: pmode })); });
   $('padSel').addEventListener('change', function(){ selIndex = parseInt(this.value, 10); lastId = ''; });
   function vib(strong, weak, ms){
     var gp = pads().filter(function(g){ return g.index === selIndex; })[0] || pads()[0];
     var info = $('vInfo');
-    if (!gp) { info.textContent = '沒有搖桿'; return; }
+    if (!gp) { info.textContent = t('gp.noPad'); return; }
     try {
       if (gp.vibrationActuator && gp.vibrationActuator.playEffect) {
         gp.vibrationActuator.playEffect('dual-rumble', { startDelay: 0, duration: ms, weakMagnitude: weak, strongMagnitude: strong })
-          .then(function(r){ info.textContent = '已送出震動，結果：' + r; log('震動 ' + strong + '/' + weak + ' ' + ms + 'ms → ' + r); })
-          .catch(function(e){ info.textContent = '震動失敗：' + e; });
+          .then(function(r){ info.textContent = t('gp.vibSent', { result: r }); log(t('gp.vibLog', { strong: strong, weak: weak, ms: ms, result: r })); })
+          .catch(function(e){ info.textContent = t('gp.vibFail', { err: e }); });
       } else if (gp.hapticActuators && gp.hapticActuators[0] && gp.hapticActuators[0].pulse) {
-        gp.hapticActuators[0].pulse(Math.max(strong, weak), ms); info.textContent = '已用舊式 hapticActuators 震動';
-      } else { info.textContent = '此搖桿 / 瀏覽器不支援震動（遊戲內會自動略過）'; }
-    } catch (e) { info.textContent = '震動錯誤：' + e; }
+        gp.hapticActuators[0].pulse(Math.max(strong, weak), ms); info.textContent = t('gp.vibLegacy');
+      } else { info.textContent = t('gp.vibUnsupported'); }
+    } catch (e) { info.textContent = t('gp.vibErr', { err: e }); }
   }
   $('vStrong').onclick = function(){ vib(1, 0, 500); };
   $('vWeak').onclick = function(){ vib(0, 1, 500); };
   $('vBoth').onclick = function(){ vib(1, 1, 600); };
   $('vLong').onclick = function(){ vib(0.7, 0.7, 3000); };
-  $('clear').onclick = function(){ everBtn = {}; axRange = {}; events = []; $('log').innerHTML = ''; $('copyInfo').textContent = '已清除'; };
+  $('clear').onclick = function(){ everBtn = {}; axRange = {}; events = []; $('log').innerHTML = ''; $('copyInfo').textContent = t('gp.cleared'); };
   $('copy').onclick = function(){
-    var ta = $('json'), t = ta.value;
+    var ta = $('json'), text = ta.value;
     function done(m){ $('copyInfo').textContent = m; }
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function(){ done('已複製'); }, function(){ fallback(); });
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function(){ done(t('gp.copied')); }, function(){ fallback(); });
     else fallback();
-    function fallback(){ try { ta.removeAttribute('readonly'); ta.select(); document.execCommand('copy'); ta.setAttribute('readonly',''); done('已複製（或請長按文字框手動全選）'); } catch(e){ done('請長按文字框手動全選複製'); } }
+    function fallback(){ try { ta.removeAttribute('readonly'); ta.select(); document.execCommand('copy'); ta.setAttribute('readonly',''); done(t('gp.copyFallback')); } catch(e){ done(t('gp.copyManual')); } }
   };
-})();
+  document.querySelectorAll('[data-lang]').forEach(function(b){
+    b.addEventListener('click', function(){ setLocale(b.dataset.lang); applyDom(); lastId = ''; });
+  });
+  onLocale(function(){
+    applyDom();
+    var back = document.querySelector('a[href^="index.html"]');
+    if (back) back.href = 'index.html?lang=' + encodeURIComponent(getLocale());
+    lastId = '';
+  });
+  var back = document.querySelector('a[href^="index.html"]');
+  if (back) back.href = 'index.html?lang=' + encodeURIComponent(getLocale());
 </script>
 </body>
 </html>
