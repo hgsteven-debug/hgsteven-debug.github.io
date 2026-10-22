@@ -36,9 +36,15 @@ export function shortPadName(id) {
 export class UI {
   constructor(input, handlers) {
     this.input = input; this.h = handlers;
-    this.screens = { loading: $('s-loading'), start: $('s-start'), pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'), garage: $('s-garage'), tracks: $('s-tracks'), results: $('s-results'), join: $('s-join') };
+    this.screens = {
+      loading: $('s-loading'), start: $('s-start'), mode: $('s-mode'), lobby: $('s-lobby'),
+      pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'),
+      garage: $('s-garage'), tracks: $('s-tracks'), ready: $('s-ready'),
+      results: $('s-results'), join: $('s-join'),
+    };
     this.current = 'loading';
     this.stack = [];           // 返回用
+    this.wizard = false;       // 從標題一路選到開跑
     this.focusEl = null;
     this.learningRow = null;
     this.vehicleId = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
@@ -48,23 +54,71 @@ export class UI {
     this.buildMapping();
     this.buildGarage(); this.buildTracks(); this.refreshTracks();
     this.wire();
+    this.applyWizard();
     this.syncSettings();
   }
 
   show(name, push = false) {
-    if (push) this.stack.push(this.current);
+    if (name === 'start') { this.wizard = false; this.stack = []; push = false; }
+    if (push && this.current) this.stack.push(this.current);
+    this.applyWizard();
     for (const [k, el] of Object.entries(this.screens)) if (el) el.classList.toggle('show', k === name);
     this.current = name;
     if (name === 'mapping') this.refreshMapping();
     if (name === 'settings') this.syncSettings();
     if (name === 'garage') this.refreshGarage();
     if (name === 'tracks') this.refreshTracks();
+    if (name === 'mode') this.markMode();
+    if (name === 'ready') this.refreshReady();
     this.setFocus(this.firstFocus());
   }
   hideAll() {
     for (const el of Object.values(this.screens)) if (el) el.classList.remove('show');
     this.current = null; this.stack = [];
+    this.wizard = false;
+    this.applyWizard();
     this.setFocus(null);
+  }
+  applyWizard() {
+    document.body.classList.toggle('wizard', !!this.wizard);
+    for (const el of document.querySelectorAll('.when-wizard')) el.classList.toggle('hidden', !this.wizard);
+    for (const el of document.querySelectorAll('.when-browse')) el.classList.toggle('hidden', !!this.wizard);
+  }
+  // 換賽道會整頁重載。記下一站，回來仍停在選賽道。
+  enterFlow(stage) {
+    this.wizard = true;
+    const mode = store.get('playmode', 'solo') === 'multi' ? 'multi' : 'solo';
+    this.stack = ['start', 'mode'];
+    if (mode === 'multi') this.stack.push('lobby');
+    if (stage === 'tracks' || stage === 'ready') this.stack.push('garage');
+    if (stage === 'ready') this.stack.push('tracks');
+    this.show(stage);
+  }
+  markMode() {
+    const mode = store.get('playmode', 'solo') === 'multi' ? 'multi' : 'solo';
+    for (const b of document.querySelectorAll('#s-mode [data-mode]')) {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('sel', on);
+      b.classList.toggle('primary', on);
+    }
+  }
+  advance() {
+    const next = { lobby: 'garage', garage: 'tracks', tracks: 'ready' }[this.current];
+    if (next) this.show(next, true);
+  }
+  refreshReady() {
+    const mode = store.get('playmode', 'solo') === 'multi' ? 'multi' : 'solo';
+    const modeEl = $('readyMode');
+    if (modeEl) modeEl.textContent = t(mode === 'multi' ? 'ready.mode.multi' : 'ready.mode.solo');
+    const aiEl = $('readyAi');
+    if (aiEl) {
+      const n = String(store.get('aicount', '0'));
+      const diff = store.get('aidiff', 'normal');
+      const key = ['easy', 'normal', 'hard'].includes(diff) ? diff : 'normal';
+      aiEl.textContent = n === '0' ? t('ready.aiNone') : t('ready.ai', { n, diff: t('diff.' + key) });
+    }
+    this.refreshGarage();
+    this.refreshTracks();
   }
   back() {
     if (this.input.learning) { this.cancelLearn(); return; }
@@ -82,8 +136,14 @@ export class UI {
   firstFocus() {
     const f = this.focusables();
     if (this.current === 'mapping') return f[0] || null;
-    if (this.current === 'garage') return f.find((b) => b.dataset.veh === this.vehicleId) || f[0] || null;
-    if (this.current === 'tracks') return f.find((b) => b.dataset.track === this.trackId) || f[0] || null;
+    if (this.current === 'garage') {
+      if (this.wizard) return f.find((b) => b.dataset.act === 'flow-next') || f[0] || null;
+      return f.find((b) => b.dataset.veh === this.vehicleId) || f[0] || null;
+    }
+    if (this.current === 'tracks') {
+      if (this.wizard) return f.find((b) => b.dataset.act === 'flow-next') || f[0] || null;
+      return f.find((b) => b.dataset.track === this.trackId) || f[0] || null;
+    }
     return f.find((b) => b.classList.contains('primary')) || f[0] || null;
   }
   setFocus(el) {
@@ -140,6 +200,10 @@ export class UI {
       if (b.dataset.row) { this.startLearn(b.dataset.row); return; }
       switch (act) {
         case 'start': this.h.onStart(); break;
+        case 'flow-start': this.wizard = true; this.show('mode', true); break;
+        case 'mode-solo': store.set('playmode', 'solo'); this.wizard = true; this.show('garage', true); break;
+        case 'mode-multi': store.set('playmode', 'multi'); this.wizard = true; this.show('lobby', true); break;
+        case 'flow-next': this.advance(); break;
         case 'resume': this.h.onResume(); break;
         case 'restart': this.h.onRestart(); break;
         case 'quit': this.h.onQuit(); break;
@@ -333,8 +397,9 @@ export class UI {
     for (const b of document.querySelectorAll('[data-tc]')) b.classList.toggle('sel', b.dataset.tc === this.touchMode);
     const ac = String(store.get('aicount', '0'));
     for (const b of document.querySelectorAll('[data-ai]')) b.classList.toggle('sel', b.dataset.ai === ac);
-    const ad = store.get('aidiff', 'normal');
+    const ad = ['easy', 'normal', 'hard'].includes(store.get('aidiff', 'normal')) ? store.get('aidiff', 'normal') : 'normal';
     for (const b of document.querySelectorAll('[data-diff]')) b.classList.toggle('sel', b.dataset.diff === ad);
+    this.refreshReady();
     for (const b of document.querySelectorAll('[data-lang]')) b.classList.toggle('sel', b.dataset.lang === getLocale());
     this.refreshGarage();
     if ($('qinfo')) $('qinfo').textContent = t('set.qinfo');
