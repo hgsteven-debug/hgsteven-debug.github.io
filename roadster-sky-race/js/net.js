@@ -1272,7 +1272,7 @@ export function createGuest(code, handlers) {
     session.seq += 1;
     session.lastSend = now;
     const hist = session.log.slice(-INPUT_HISTORY).map((row) => Object.assign({ seq: row.seq }, row.cmd));
-    send(encodeInput({ t: 'input', seq: session.seq, steer: cmd.steer, throttle: cmd.throttle, brake: cmd.brake, lift: cmd.lift, nitro: cmd.nitro, pitch: cmd.pitch, hist }));
+    send(encodeInput({ t: 'input', seq: session.seq, steer: cmd.steer, throttle: cmd.throttle, brake: cmd.brake, lift: cmd.lift, nitro: cmd.nitro, item: cmd.item, pitch: cmd.pitch, hist }));
     session.log.push({ seq: session.seq, cmd, parts, steps: 0 });
     if (session.log.length > 90) session.log.shift();
     return session.seq;

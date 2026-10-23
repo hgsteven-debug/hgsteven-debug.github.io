@@ -34,7 +34,7 @@ async function open(browser, url, before) {
 
 async function joinOnce(browser, label, hostQuery) {
   const t0 = Date.now();
-  const host = await open(browser, BASE + '?track=city&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&debug=1' + hostQuery);
+  const host = await open(browser, BASE + '?track=city&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&debug=1&items=0' + hostQuery);
   let signal = 'timeout';
   try {
     await host.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 22000 });

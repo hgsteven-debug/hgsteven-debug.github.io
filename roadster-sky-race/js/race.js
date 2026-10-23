@@ -19,7 +19,7 @@ export class LocalDriver {
 export class RemoteDriver {
   constructor() {
     this.kind = 'remote';
-    this.state = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
+    this.state = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0, item: false };
   }
   push(s) {
     if (!s) return;
@@ -29,6 +29,7 @@ export class RemoteDriver {
     this.state.lift = !!s.lift;
     this.state.nitro = !!s.nitro;
     this.state.pitch = s.pitch || 0;
+    this.state.item = !!s.item;
   }
   sample() { return this.state; }
 }
@@ -55,7 +56,7 @@ export class Race {
 
   step(dt) {
     const all = this.racers;
-    const coast = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
+    const coast = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0, item: false };
     for (let i = 0; i < all.length; i++) {
       const r = all[i];
       if (r.parked) continue;

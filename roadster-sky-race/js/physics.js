@@ -4,6 +4,7 @@ import { clamp, lerp, damp, wrapAngle } from './util.js';
 import { ROAD_HALF, ROAD_HALF_K } from './track.js';
 import { VEHICLES, fullTune } from './vehicles.js';
 import { KIND, ribbonCompression } from './stunts.js';
+import { applyDriveFx } from './items.js';
 
 const G = 9.81;
 const ENERGY_MAX = 100;
@@ -65,6 +66,16 @@ export class Vehicle {
     this.mass = 1800;
     this._px = 0; this._py = 0; this._pz = 0;
     this._throttle = 0;
+    this.item = 0;
+    this.spinT = 0;
+    this.iFrame = 0;
+    this.shield = false;
+    this.shieldT = 0;
+    this.boostT = 0;
+    this.boostPower = 0;
+    this.slowT = 0;
+    this.aimed = false;
+    this.itemAge = 0;
   }
 
   _frameSlot(name) {
@@ -426,6 +437,7 @@ export class Vehicle {
   }
 
   step(dt, inp) {
+    inp = applyDriveFx(this, dt, inp || {});
     this._px = this.pos.x; this._py = this.pos.y; this._pz = this.pos.z;
     if (this.ghostT > 0) this.ghostT -= dt;
     this._throttle = (inp && inp.throttle) || 0;
@@ -757,6 +769,8 @@ export class Vehicle {
       flipAssist: !!this.flipAssist, detachCool: n(this.detachCool), vlat: n(this.vlat),
       sawCeiling: !!this.sawCeiling, sawInvert: !!this.sawInvert,
       prevL: n(this._prevL),
+      item: this.item | 0, shield: !!this.shield, spinT: n(this.spinT),
+      boostT: n(this.boostT), slowT: n(this.slowT), iFrame: n(this.iFrame), aimed: !!this.aimed,
     };
   }
   importState(s) {
@@ -795,6 +809,13 @@ export class Vehicle {
     this.sawCeiling = !!s.sawCeiling;
     this.sawInvert = !!s.sawInvert;
     this._prevL = n(s.prevL);
+    if (s.item != null) this.item = s.item | 0;
+    if (s.shield != null) this.shield = !!s.shield;
+    if (s.spinT != null) this.spinT = n(s.spinT);
+    if (s.boostT != null) this.boostT = n(s.boostT);
+    if (s.slowT != null) this.slowT = n(s.slowT);
+    if (s.iFrame != null) this.iFrame = n(s.iFrame);
+    if (s.aimed != null) this.aimed = !!s.aimed;
     this.events.impact = 0; this.events.wall = 0; this.events.respawn = false; this.events.offroad = false;
     if (this.attached) this._syncQuery();
   }

@@ -4,6 +4,7 @@
 
 import { VEHICLES, PAINT_DEFS } from './vehicles.js';
 import { TRACKS } from './tracks.js';
+import { packItemBits, unpackItemBits } from './items.js';
 
 export const INPUT_KEEPALIVE_MS = 200;
 export const NEAR_CAR_M = 110;
@@ -211,7 +212,7 @@ function readIdentity(r) {
   return { kind, vehicle, paint, id, name, finish: fin === 0xffffff ? null : fin / 1000 };
 }
 
-function writePose(w, p, slot, ident) {
+function writePose(w, p, slot, ident, hasItems) {
   u8(w, slot & 255);
   i16(w, qPos(p.x)); i16(w, qPos(p.y)); i16(w, qPos(p.z));
   i16(w, qVel(p.vx)); i16(w, qVel(p.vy)); i16(w, qVel(p.vz));
@@ -230,8 +231,9 @@ function writePose(w, p, slot, ident) {
   u8(w, clamp(Math.round((+p.lift || 0) * 100), 0, 255));
   i8(w, qCent(p.steer));
   if (ident) writeIdentity(w, p);
+  if (hasItems) u8(w, packItemBits(p));
 }
-function readPose(r, dict) {
+function readPose(r, dict, hasItems) {
   const slot = ru8(r);
   const x = dqPos(ri16(r)), y = dqPos(ri16(r)), z = dqPos(ri16(r));
   const vx = dqVel(ri16(r)), vy = dqVel(ri16(r)), vz = dqVel(ri16(r));
@@ -249,7 +251,7 @@ function readPose(r, dict) {
     if (dict) dict.slots.set(slot, ident);
   }
   const speed = Math.hypot(vx, vy, vz);
-  return {
+  const pose = {
     id: ident ? ident.id : ('#' + slot),
     name: ident ? ident.name : ('#' + slot),
     kind: ident ? ident.kind : 'remote',
@@ -263,9 +265,11 @@ function readPose(r, dict) {
     grounded: !!(flags & 1), nitro: !!(flags & 2), braking: !!(flags & 4),
     onRoad: !!(flags & 8), thrusting: !!(flags & 16),
   };
+  if (hasItems) Object.assign(pose, unpackItemBits(ru8(r)));
+  return pose;
 }
 
-function writeSelf(w, s, keyframe) {
+function writeSelf(w, s, keyframe, hasItems) {
   i16(w, qPos(s.x)); i16(w, qPos(s.y)); i16(w, qPos(s.z));
   i16(w, qVel(s.vx)); i16(w, qVel(s.vy)); i16(w, qVel(s.vz));
   writeOrient(w, s.heading, s.qx, s.qy, s.qz, s.qw);
@@ -289,6 +293,7 @@ function writeSelf(w, s, keyframe) {
   u16(w, clamp(Math.round(Math.max(0, +s.speed || 0) * 100), 0, 65535));
   i16(w, clamp(Math.round((+s.fi || 0) * 10), -32768, 32767));
   i16(w, clamp(Math.round((+s.lat || 0) * 100), -32768, 32767));
+  if (hasItems) u8(w, packItemBits(s));
   if (!keyframe) return;
   i16(w, clamp(Math.round((+s.yawRate || 0) * 1000), -32768, 32767));
   i16(w, clamp(Math.round((+s.hover || 0) * 100), -32768, 32767));
@@ -302,7 +307,7 @@ function writeSelf(w, s, keyframe) {
   i16(w, clamp(Math.round((+s.prevL || 0) * 100), -32768, 32767));
   u8(w, s.sawInvert ? 1 : 0);
 }
-function readSelf(r, keyframe) {
+function readSelf(r, keyframe, hasItems) {
   const x = dqPos(ri16(r)), y = dqPos(ri16(r)), z = dqPos(ri16(r));
   const vx = dqVel(ri16(r)), vy = dqVel(ri16(r)), vz = dqVel(ri16(r));
   const o = readOrient(r);
@@ -326,6 +331,7 @@ function readSelf(r, keyframe) {
     thrusting: !!(flags & 8), braking: !!(flags & 16), attached: !!(flags & 32),
     flipAssist: !!(flags & 64), sawCeiling: !!(flags & 128),
   };
+  if (hasItems) Object.assign(self, unpackItemBits(ru8(r)));
   if (!keyframe) return self;
   self.yawRate = ri16(r) / 1000;
   self.hover = ri16(r) / 100;
@@ -373,6 +379,54 @@ function pickCars(msg, remote) {
   return { list: sendFar ? near.concat(far) : near, keyframe: false, far: !sendFar && far.length > 0 };
 }
 
+function writeBattle(w, battle, ctx) {
+  const boxes = (battle && battle.boxes) || [];
+  const n = Math.min(24, boxes.length);
+  u8(w, n);
+  const nbytes = Math.ceil(n / 8);
+  for (let i = 0; i < nbytes; i++) {
+    let bits = 0;
+    for (let k = 0; k < 8; k++) {
+      const b = boxes[i * 8 + k];
+      if (b && b.alive !== false) bits |= 1 << k;
+    }
+    u8(w, bits);
+  }
+  const shots = ((battle && battle.shots) || []).slice(0, 8);
+  u8(w, shots.length);
+  for (const s of shots) {
+    u8(w, (s.kind | 0) & 7);
+    u8(w, s.owner ? slotFor(ctx, s.owner) : 255);
+    i16(w, qPos(s.x)); i16(w, qPos(s.y)); i16(w, qPos(s.z));
+    u8(w, s.target ? slotFor(ctx, s.target) : 255);
+  }
+}
+function readBattle(r, book) {
+  const n = Math.min(24, ru8(r));
+  const boxes = [];
+  const nbytes = Math.ceil(n / 8);
+  for (let i = 0; i < nbytes; i++) {
+    const bits = ru8(r);
+    for (let k = 0; k < 8 && i * 8 + k < n; k++) boxes.push({ alive: !!(bits & (1 << k)) });
+  }
+  const ns = Math.min(8, ru8(r));
+  const shots = [];
+  for (let i = 0; i < ns; i++) {
+    const kind = ru8(r) & 7;
+    const ownerSlot = ru8(r);
+    const x = dqPos(ri16(r)), y = dqPos(ri16(r)), z = dqPos(ri16(r));
+    const targetSlot = ru8(r);
+    const ownerIdent = book && book.slots.get(ownerSlot);
+    const targetIdent = book && book.slots.get(targetSlot);
+    shots.push({
+      kind, x, y, z,
+      owner: ownerSlot === 255 ? '' : (ownerIdent ? ownerIdent.id : ('#' + ownerSlot)),
+      target: targetSlot === 255 ? '' : (targetIdent ? targetIdent.id : ('#' + targetSlot)),
+    });
+  }
+  return { on: true, boxes, shots };
+}
+
 export function encodeState(msg, remote, now) {
   const ctx = remote || {};
   ctx._stateN = (ctx._stateN || 0) + 1;
@@ -385,9 +439,11 @@ export function encodeState(msg, remote, now) {
   const w = makeW(384);
   u8(w, STATE_MAGIC);
   let flags = 0;
+  const battleOn = !!(msg && msg.battle && msg.battle.on);
   if (picked.keyframe) flags |= 1;
   if (msg && msg.self) flags |= 2;
   if (hasHud) flags |= 4;
+  if (battleOn) flags |= 16;
   u8(w, flags);
   u16(w, ctx._stateN & 65535);
   u16(w, (msg && msg.ack) | 0);
@@ -403,11 +459,12 @@ export function encodeState(msg, remote, now) {
   u8(w, selfId == null ? 255 : slotFor(ctx, selfId));
   const list = picked.list;
   u8(w, Math.min(255, list.length));
-  if (msg && msg.self) writeSelf(w, msg.self, picked.keyframe);
+  if (msg && msg.self) writeSelf(w, msg.self, picked.keyframe, battleOn);
   for (const car of list) {
     const id = car.id || car.name || '';
-    writePose(w, car, slotFor(ctx, id), picked.keyframe);
+    writePose(w, car, slotFor(ctx, id), picked.keyframe, battleOn);
   }
+  if (battleOn) writeBattle(w, msg.battle, ctx);
   if (hasHud) {
     const vi = indexOf(VEH_IDS, msg && msg.selfVehicle);
     u8(w, vi);
@@ -442,6 +499,7 @@ export function decodeState(buf, dict) {
   const keyframe = !!(flags & 1);
   const hasSelf = !!(flags & 2);
   const hasHud = !!(flags & 4);
+  const hasItems = !!(flags & 16);
   const seq = ru16(r);
   const ack = ru16(r);
   const race = PHASES[ru8(r)] || 'race';
@@ -452,9 +510,10 @@ export function decodeState(buf, dict) {
   const selfSlot = ru8(r);
   const nCars = ru8(r);
   const book = dict || createDict();
-  const self = hasSelf ? readSelf(r, keyframe) : null;
+  const self = hasSelf ? readSelf(r, keyframe, hasItems) : null;
   const cars = [];
-  for (let i = 0; i < nCars; i++) cars.push(readPose(r, book));
+  for (let i = 0; i < nCars; i++) cars.push(readPose(r, book, hasItems));
+  const battle = hasItems ? readBattle(r, book) : null;
   let selfVehicle, selfPaint, standings;
   const selfLap = { n: lapN, t: lapT };
   if (hasHud) {
@@ -482,7 +541,7 @@ export function decodeState(buf, dict) {
   }
   return {
     t: 'state', seq, ack, race, cd, track, selfId, self, selfLap, cars,
-    selfVehicle, selfPaint, standings, keyframe, partial: !keyframe,
+    selfVehicle, selfPaint, standings, keyframe, partial: !keyframe, battle,
   };
 }
 
@@ -525,6 +584,7 @@ export function inputParts(s) {
     pitch: clamp(Math.round((+src.pitch || 0) * 127), -127, 127),
     lift: !!src.lift,
     nitro: !!src.nitro,
+    item: !!src.item,
   };
 }
 export function partsToCmd(p) {
@@ -534,12 +594,13 @@ export function partsToCmd(p) {
     brake: (p.brake || 0) / 255,
     lift: !!p.lift,
     nitro: !!p.nitro,
+    item: !!p.item,
     pitch: (p.pitch || 0) / 127,
   };
 }
 export function inputChanged(prev, next) {
   if (!prev || !next) return { edge: true, moved: true };
-  const edge = prev.lift !== next.lift || prev.nitro !== next.nitro
+  const edge = prev.lift !== next.lift || prev.nitro !== next.nitro || prev.item !== next.item
     || ((prev.throttle === 0) !== (next.throttle === 0))
     || ((prev.brake === 0) !== (next.brake === 0));
   const moved = edge
@@ -555,13 +616,13 @@ function writeCmd(w, p) {
   u8(w, p.throttle | 0);
   u8(w, p.brake | 0);
   i8(w, p.pitch | 0);
-  u8(w, (p.lift ? 1 : 0) | (p.nitro ? 2 : 0));
+  u8(w, (p.lift ? 1 : 0) | (p.nitro ? 2 : 0) | (p.item ? 4 : 0));
 }
 function readCmd(r) {
   const steer = ri8(r), throttle = ru8(r), brake = ru8(r), pitch = ri8(r), buttons = ru8(r);
   return partsToCmd({
     steer, throttle, brake, pitch,
-    lift: !!(buttons & 1), nitro: !!(buttons & 2),
+    lift: !!(buttons & 1), nitro: !!(buttons & 2), item: !!(buttons & 4),
   });
 }
 

@@ -291,7 +291,7 @@ function ownErrors(errors) {
 }
 
 try {
-  const { page, errors } = await openPage(BASE + '?track=canyon&q=low&ai=0&nonet=1&noadapt=1&nopauseblur=1&autostart=1&nocount=1');
+  const { page, errors } = await openPage(BASE + '?track=canyon&q=low&ai=0&nonet=1&noadapt=1&nopauseblur=1&autostart=1&nocount=1&items=0');
   const report = await page.evaluate(() => {
     const sky = window.__sky;
     sky.game.freeze = true;
@@ -339,7 +339,7 @@ try {
 
 let webrtc = 'skip';
 try {
-  const hostUrl = BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1';
+  const hostUrl = BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&items=0';
   const host = await openPage(hostUrl);
   let signal = 'timeout';
   try {
@@ -543,7 +543,7 @@ try {
 }
 
 try {
-  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1');
+  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&items=0');
   await host.page.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 22000 });
   const ready = await host.page.evaluate(() => window.__sky.net.ready);
   if (!ready) {
@@ -642,7 +642,7 @@ try {
 }
 
 try {
-  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1');
+  const host = await openPage(BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&items=0');
   await host.page.waitForFunction(() => window.__sky && window.__sky.net && window.__sky.net.role === 'host', { timeout: 20000 });
   await host.page.evaluate(() => window.__sky.startGame());
   const kept = await host.page.evaluate(() => {

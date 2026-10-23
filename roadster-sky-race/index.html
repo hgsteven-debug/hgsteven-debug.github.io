@@ -31,12 +31,14 @@
     <div id="padstate" class="panel small" data-i18n="hud.padNone">🎮 未偵測到搖桿</div>
     <div id="camlabel" class="panel small">視角：追尾</div>
   </div>
+  <div id="itemslot" class="hidden"><b id="itemglyph">–</b><span id="itemname"></span></div>
+  <div id="itemwarn" class="hidden"></div>
   <div id="speedbox">
     <div id="state" data-i18n="hud.ground">地面行駛</div>
     <div class="speedrow"><b id="speed">0</b><span>km/h</span></div>
     <div class="ebar"><div id="ebarFill"></div><span id="ebarTxt">推進能量 100%</span></div>
   </div>
-  <div id="hint" class="small">ZR 加速　ZL 煞車　B 起飛推進　A 氮氣　Y 視角　X 回賽道　＋ 暫停</div>
+  <div id="hint" class="small">ZR 加速　ZL 煞車　B 起飛推進　A 氮氣　R 道具　Y 視角　X 回賽道　＋ 暫停</div>
 </div>
 
 <div id="count"></div>
@@ -54,6 +56,7 @@
   <button class="gpad face x" data-p="reset" data-i18n-aria="touch.resetAria" aria-label="X 回賽道">X<br><span data-i18n="touch.reset">回賽道</span></button>
   <button class="gpad face b" data-t="lift" data-i18n-aria="touch.liftAria" aria-label="B 推進">B<br><span data-i18n="touch.lift">推進</span></button>
   <button class="gpad face a" data-t="nitro" data-i18n-aria="touch.nitroAria" aria-label="A 氮氣">A<br><span data-i18n="touch.nitro">氮氣</span></button>
+  <button class="gpad item" data-t="item" data-i18n-aria="touch.itemAria" aria-label="R 道具"><span class="ico" id="touchItemIco"></span><span data-i18n="touch.item">道具</span></button>
   <button class="gpad menu" data-p="pause" data-i18n="touch.pause" data-i18n-aria="touch.pauseAria" aria-label="暫停">暫停</button>
 </div>
 
@@ -179,6 +182,21 @@
   </div>
 </div>
 
+<div id="s-items" class="screen flow">
+  <div class="card">
+    <h2 data-i18n="items.title">道具戰</h2>
+    <p class="sub" data-i18n="items.hint">賽道上的箱子會給一項道具。落後的車比較容易拿到強的。打中只會打轉一下，不會出局。</p>
+    <div class="menu col">
+      <button class="btn xl" data-items="1" data-i18n="items.on">開啟道具</button>
+      <button class="btn xl" data-items="0" data-i18n="items.off">關閉道具</button>
+    </div>
+    <div class="flowbar">
+      <button class="btn" data-act="back" data-i18n="flow.back">返回</button>
+      <button class="btn primary xl" data-act="flow-next" data-i18n="flow.next">下一步</button>
+    </div>
+  </div>
+</div>
+
 <div id="s-ready" class="screen flow">
   <div class="card">
     <h2 data-i18n="ready.title">準備出發</h2>
@@ -187,6 +205,7 @@
     <div id="startTrack" class="carline" data-i18n="start.trackEmpty">目前賽道：—</div>
     <div class="carline" data-i18n="results.sub">兩圈衝刺</div>
     <div id="readyAi" class="carline"></div>
+    <div id="readyItems" class="carline" data-i18n="ready.items">道具：開啟</div>
     <div class="flowbar">
       <button class="btn" data-act="back" data-i18n="flow.back">返回</button>
       <button class="btn primary xl" data-act="start" data-i18n="ready.go">開跑</button>
@@ -301,7 +320,7 @@
     </div>
     <div class="legend" id="legend">
       <div><b data-i18n="legend.stick">左搖桿</b> <span data-i18n="legend.steer">轉向</span></div><div><b data-k="thr">ZR</b> <span data-i18n="legend.gas">加速</span></div><div><b data-k="brk">ZL</b> <span data-i18n="legend.brake">煞車／倒車</span></div>
-      <div><b data-k="lift">B</b> <span data-i18n="legend.lift">起飛推進器</span></div><div><b data-k="nitro">A</b> <span data-i18n="legend.nitro">氮氣</span></div><div><b data-k="cam">Y</b> <span data-i18n="legend.cam">切換視角</span></div>
+      <div><b data-k="lift">B</b> <span data-i18n="legend.lift">起飛推進器</span></div><div><b data-k="nitro">A</b> <span data-i18n="legend.nitro">氮氣</span></div><div><b data-k="item">R</b> <span data-i18n="legend.item">道具</span></div><div><b data-k="cam">Y</b> <span data-i18n="legend.cam">切換視角</span></div>
       <div><b data-k="reset">X</b> <span data-i18n="legend.reset">回到賽道</span></div><div><b data-k="pause">＋</b> <span data-i18n="legend.pause">暫停</span></div><div><b data-i18n="legend.pitch">左搖桿上下</b> <span data-i18n="legend.pitchDo">空中升降</span></div>
     </div>
     <p class="small dim" id="padProfile"></p>

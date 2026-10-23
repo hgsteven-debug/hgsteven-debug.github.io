@@ -29,7 +29,7 @@ async function run() {
   try {
     const host = await hostBrowser.newPage({ viewport: { width: 1920, height: 1200 } });
     host.on('pageerror', (e) => console.log('HOSTERR', e.message));
-    await boot(host, BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&debug=1');
+    await boot(host, BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&debug=1&items=0');
     await host.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 25000 });
     const ready = await host.evaluate(() => ({ ready: window.__sky.net.ready, fail: window.__sky.net.failMsg }));
     if (!ready.ready) throw new Error('host not ready ' + ready.fail);

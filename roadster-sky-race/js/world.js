@@ -886,4 +886,94 @@ export class World {
       this.sun.position.set(tx + SUN_DIR.x * 150, carPos.y + SUN_DIR.y * 150, tz + SUN_DIR.z * 150);
     }
   }
+
+  // 道具箱與飛行物各一組 InstancedMesh，不投影。
+  mountItems(boxes) {
+    this.disposeItems();
+    this._boxLayout = boxes || [];
+    const n = Math.max(1, this._boxLayout.length);
+    const box = new THREE.InstancedMesh(
+      new THREE.OctahedronGeometry(1.05, 0),
+      new THREE.MeshBasicMaterial({ color: 0xffd15a, toneMapped: false }),
+      n,
+    );
+    box.castShadow = false;
+    box.receiveShadow = false;
+    box.frustumCulled = false;
+    box.count = this._boxLayout.length;
+    this.scene.add(box);
+    this.itemBoxes = box;
+    this._itemDummy = new THREE.Object3D();
+    const colors = { spark: 0xfff0a0, drone: 0x5ce1ff, slick: 0x14161c };
+    this.itemShots = {};
+    for (const key of Object.keys(colors)) {
+      const mesh = new THREE.InstancedMesh(
+        new THREE.SphereGeometry(key === 'slick' ? 1.15 : 0.42, 6, 5),
+        new THREE.MeshBasicMaterial({ color: colors[key], toneMapped: false }),
+        8,
+      );
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      this.scene.add(mesh);
+      this.itemShots[key] = mesh;
+    }
+  }
+
+  disposeItems() {
+    const drop = (mesh) => {
+      if (!mesh) return;
+      this.scene.remove(mesh);
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material) mesh.material.dispose();
+    };
+    drop(this.itemBoxes);
+    this.itemBoxes = null;
+    if (this.itemShots) for (const mesh of Object.values(this.itemShots)) drop(mesh);
+    this.itemShots = null;
+  }
+
+  syncItems(view, time) {
+    const layout = this._boxLayout || [];
+    const mesh = this.itemBoxes;
+    if (!mesh || !this._itemDummy) return;
+    const on = !!(view && view.on);
+    const flags = view && view.boxes;
+    const d = this._itemDummy;
+    const t = time || 0;
+    mesh.count = layout.length;
+    for (let i = 0; i < layout.length; i++) {
+      const b = layout[i];
+      const alive = on && (!flags || !flags.length || (flags[i] && flags[i].alive !== false));
+      d.position.set(b.x, b.y + Math.sin(t * 2.1 + i) * 0.16, b.z);
+      d.rotation.set(t * 0.7, t * 1.2 + i, 0);
+      d.scale.setScalar(alive ? 1 : 0.0001);
+      d.updateMatrix();
+      mesh.setMatrixAt(i, d.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    const names = { 1: 'spark', 2: 'drone', 3: 'slick' };
+    const groups = { spark: [], drone: [], slick: [] };
+    if (on && view.shots) {
+      for (const s of view.shots) {
+        const key = names[s.kind | 0];
+        if (key && groups[key].length < 8) groups[key].push(s);
+      }
+    }
+    for (const key of Object.keys(groups)) {
+      const im = this.itemShots[key];
+      const list = groups[key];
+      im.count = list.length;
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        d.position.set(s.x, s.y, s.z);
+        d.rotation.set(0, 0, 0);
+        d.scale.setScalar(key === 'slick' ? 1 : 1.85);
+        d.updateMatrix();
+        im.setMatrixAt(i, d.matrix);
+      }
+      im.instanceMatrix.needsUpdate = true;
+    }
+  }
 }

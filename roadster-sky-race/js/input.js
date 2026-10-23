@@ -10,8 +10,8 @@ export const SWITCH_RAW_NAMES = ['B', 'A', 'Y', 'X', 'L', 'R', 'ZL', 'ZR', '－'
 export const STD_NAMES = XBOX_NAMES; // 相容舊名稱
 
 export const PROFILES = {
-  switch: { id: 'switch', name: 'Switch Pro', digitalTriggers: true, names: SWITCH_NAMES, thr: 'ZR', brk: 'ZL', lift: 'B', nitro: 'A', cam: 'Y', reset: 'X', pause: '＋', ok: 'A', back: 'B', confirmIdx: 1, backIdx: 0 },
-  xbox: { id: 'xbox', name: 'Xbox', digitalTriggers: false, names: XBOX_NAMES, thr: 'RT', brk: 'LT', lift: 'A', nitro: 'B', cam: 'X', reset: 'Y', pause: 'Start', ok: 'A', back: 'B', confirmIdx: 0, backIdx: 1 },
+  switch: { id: 'switch', name: 'Switch Pro', digitalTriggers: true, names: SWITCH_NAMES, thr: 'ZR', brk: 'ZL', lift: 'B', nitro: 'A', item: 'R', cam: 'Y', reset: 'X', pause: '＋', ok: 'A', back: 'B', confirmIdx: 1, backIdx: 0 },
+  xbox: { id: 'xbox', name: 'Xbox', digitalTriggers: false, names: XBOX_NAMES, thr: 'RT', brk: 'LT', lift: 'A', nitro: 'B', item: 'RB', cam: 'X', reset: 'Y', pause: 'Start', ok: 'A', back: 'B', confirmIdx: 0, backIdx: 1 },
 };
 PROFILES.generic = { ...PROFILES.xbox, id: 'generic', name: '一般搖桿' };
 
@@ -57,6 +57,7 @@ export const DEFAULT_BINDINGS = {
   brake:    { t: 'b', i: 6 },
   lift:     { t: 'b', i: 0 },
   nitro:    { t: 'b', i: 1 },
+  item:     { t: 'b', i: 5 },
   camera:   { t: 'b', i: 2 },
   reset:    { t: 'b', i: 3 },
   pause:    { t: 'b', i: 9 },
@@ -69,6 +70,7 @@ const ACTION_DEFS = [
   { id: 'brake',    label: (p) => t('act.brake', { key: p.brk }), kind: 'any', hint: () => t('act.brakeHint') },
   { id: 'lift',     label: (p) => t('act.lift', { key: p.lift }), kind: 'any', hint: () => t('act.liftHint') },
   { id: 'nitro',    label: (p) => t('act.nitro', { key: p.nitro }), kind: 'any', hint: () => t('act.nitroHint') },
+  { id: 'item',     label: (p) => t('act.item', { key: p.item }), kind: 'any', hint: () => t('act.itemHint') },
   { id: 'camera',   label: (p) => t('act.camera', { key: p.cam }), kind: 'any', hint: () => t('act.cameraHint') },
   { id: 'reset',    label: (p) => t('act.reset', { key: p.reset }), kind: 'any', hint: () => t('act.resetHint') },
   { id: 'pause',    label: (p) => t('act.pause', { key: p.pause }), kind: 'any', hint: () => t('act.pauseHint') },
@@ -135,7 +137,7 @@ export class InputManager {
     this.keys = new Set();
     this.useKeyboard = keys !== false;
     this.exclusive = !!exclusive;
-    this.touch = { left: false, right: false, gas: false, brake: false, lift: false, nitro: false, stick: false, steer: 0, pitch: 0 };
+    this.touch = { left: false, right: false, gas: false, brake: false, lift: false, nitro: false, item: false, stick: false, steer: 0, pitch: 0 };
     this.padIndex = padIndex;       // null = 自動選擇
     this.pad = null;                // 目前使用的 Gamepad 物件
     this.padInfo = { connected: false, id: '', mapping: '', index: -1, profile: 'switch' };
@@ -144,7 +146,7 @@ export class InputManager {
     this.cal = this._newCal();
     this._thr = 0; this._brk = 0;
     this.onProfileChange = () => {};
-    this.state = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
+    this.state = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0, item: false };
     this.pressed = { camera: false, reset: false, pause: false };
     this._touchEdge = { camera: false, reset: false, pause: false };
     this.nav = { up: false, down: false, left: false, right: false, confirm: false, back: false };
@@ -438,6 +440,7 @@ export class InputManager {
       st.padThrottle = this._thr; st.padBrake = this._brk;
       st.padLift = this.bindingValue(gp, b.lift) > 0.5;
       st.padNitro = this.bindingValue(gp, b.nitro) > 0.5;
+      st.padItem = b.item ? this.bindingValue(gp, b.item) > 0.5 : false;
       st.padPitch = this.calibrating ? 0 : dz(this.bindingValue(gp, b.pitch), 0.1);
       for (const k of ['camera', 'reset', 'pause']) {
         const down2 = this.bindingValue(gp, b[k]) > 0.5;
@@ -454,7 +457,7 @@ export class InputManager {
       this._navFrom(nav, dt);
       this.anyPadInput = nav.up || nav.down || nav.left || nav.right || nav.confirm || nav.back || st.padThrottle > 0.1;
     } else {
-      this._padSteer = 0; this._thr = this._brk = 0; st.padThrottle = st.padBrake = 0; st.padLift = st.padNitro = false; st.padPitch = 0;
+      this._padSteer = 0; this._thr = this._brk = 0; st.padThrottle = st.padBrake = 0; st.padLift = st.padNitro = st.padItem = false; st.padPitch = 0;
       this._navFrom({}, dt);
     }
     // 鍵盤
@@ -470,6 +473,7 @@ export class InputManager {
     st.brake = Math.max(st.padBrake || 0, kBrk);
     st.lift = !!st.padLift || this.isKey('Space') || this.touch.lift;
     st.nitro = !!st.padNitro || this.isKey('ShiftLeft', 'ShiftRight') || this.touch.nitro;
+    st.item = !!st.padItem || this.isKey('KeyF') || this.touch.item;
     const touchPitch = this.touch.stick ? clamp(this.touch.pitch || 0, -1, 1) : 0;
     st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)) + touchPitch, -1, 1);
     pr.camera = pr.camera || this.consumeKey('KeyC') || !!this._touchEdge.camera;

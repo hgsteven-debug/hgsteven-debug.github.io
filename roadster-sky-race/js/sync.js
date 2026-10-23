@@ -26,7 +26,7 @@ export function hostStillThere(lastAt, now, stale = LINK_STALE_MS) {
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const PUBLIC_ORIGIN = 'https://hgsteven-debug.github.io';
 
-const ZERO = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
+const ZERO = { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0, item: false };
 
 export function zeroInput() {
   return { steer: 0, throttle: 0, brake: 0, lift: false, nitro: false, pitch: 0 };
@@ -86,6 +86,7 @@ export function packInput(s) {
     brake: round3(src.brake),
     lift: !!src.lift,
     nitro: !!src.nitro,
+    item: !!src.item,
     pitch: round3(src.pitch),
   };
 }
@@ -97,7 +98,7 @@ export function unpackInput(msg) {
 export function sameInput(a, b) {
   if (!a || !b) return false;
   return a.steer === b.steer && a.throttle === b.throttle && a.brake === b.brake
-    && a.lift === b.lift && a.nitro === b.nitro && a.pitch === b.pitch;
+    && a.lift === b.lift && a.nitro === b.nitro && a.item === b.item && a.pitch === b.pitch;
 }
 
 // 太久沒收到手機輸入就滑行，不能卡死主機的比賽。
@@ -313,6 +314,7 @@ export function acceptInputs(remote, msg, now) {
   let applied = null;
   let lift = false;
   let nitro = false;
+  let item = false;
   let seq = remote && remote.seq ? remote.seq | 0 : 0;
   for (const row of rows) {
     const n = row.seq | 0;
@@ -320,6 +322,7 @@ export function acceptInputs(remote, msg, now) {
       const cmd = packInput(row);
       if (cmd.lift) lift = true;
       if (cmd.nitro) nitro = true;
+      if (cmd.item) item = true;
       applied = cmd;
       seq = n;
     }
@@ -327,6 +330,7 @@ export function acceptInputs(remote, msg, now) {
   if (!applied || !remote) return 0;
   if (lift) applied.lift = true;
   if (nitro) applied.nitro = true;
+  if (item) applied.item = true;
   remote.cmd = applied;
   remote.seq = seq;
   if (now != null) remote.lastAt = now;
@@ -356,6 +360,12 @@ export function packSelf(s) {
     fi: n(s.fi), lat: n(s.lat),
     attached: !!s.attached,
     alt: n(s.alt),
+    item: s.item | 0,
+    shield: !!s.shield,
+    spin: !!(s.spin || s.spinT > 0),
+    aimed: !!s.aimed,
+    boost: !!(s.boost || s.boostT > 0),
+    slow: !!(s.slow || s.slowT > 0),
   };
 }
 
@@ -371,6 +381,12 @@ export function packPose(p) {
     steer: n(p.steer), thrust: n(p.thrust), lift: n(p.lift), fi: n(p.fi),
     grounded: !!p.grounded, nitro: !!p.nitro, braking: !!p.braking,
     onRoad: p.onRoad !== false,
+    item: p.item | 0,
+    shield: !!p.shield,
+    spin: !!(p.spin || p.spinT > 0),
+    aimed: !!p.aimed,
+    boost: !!(p.boost || p.boostT > 0),
+    slow: !!(p.slow || p.slowT > 0),
   };
   if (p.id != null) o.id = p.id;
   if (p.name != null) o.name = p.name;

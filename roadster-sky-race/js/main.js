@@ -14,6 +14,7 @@ import { clamp, lerp, damp, wrapAngle, smoothstep, store, fmtTime } from './util
 import { ROAD_HALF } from './track.js';
 import { ribbonCompression, KIND } from './stunts.js';
 import { Race, LocalDriver, RemoteDriver, LOCAL_LIMIT, RACE_LAPS } from './race.js';
+import { ItemBattle, layoutBoxes, clearItemState } from './items.js';
 import { AiDriver } from './ai.js';
 import { createHost, createGuest, drawRoomQr } from './net.js';
 import {
@@ -36,6 +37,8 @@ const PHYS_DT = 1 / 120;
 
 let renderer, scene, camera, camera2, world, track, car, veh, hud, ui, audio, input, race;
 let hostNet = null, guestNet = null;
+let battle = null;
+let guestBattle = null;
 const ghosts = new Map();
 const guestBuf = new StateBuffer(100);
 const guestSelfBuf = new StateBuffer(90);
@@ -150,6 +153,8 @@ async function boot() {
     world = new World(renderer, scene, qname, tid);
     track = world.track;
     await world.build((p, label) => { $('loadBar').style.width = Math.round(p * 80) + '%'; $('loadTxt').textContent = t('load.step', { label: t(label) }); });
+    world.mountItems(layoutBoxes(track));
+    if (!game.guest) battle = new ItemBattle(track, world._boxLayout);
     $('loadTxt').textContent = t('load.step', { label: t('load.car') });
     await new Promise((r) => setTimeout(r, 0));
 
@@ -235,6 +240,8 @@ async function boot() {
       lobby, ribbonCompression, KIND, joinPad, pollLobby, leaveP2, LocalDriver, RemoteDriver, LOCAL_LIMIT, RACE_LAPS, AiDriver,
       sync: syncApi, retryGuest,
       get race() { return race; },
+      get battle() { return battle; },
+      itemsOn() { return itemsEnabled(); },
       net: {
         get role() { return game.guest ? 'guest' : (hostNet ? 'host' : 'off'); },
         get code() { return hostNet ? hostNet.code : joinCode; },
@@ -347,6 +354,7 @@ function sim(sec, cb) {
     }
     if (race) race.step(PHYS_DT);
     else veh.step(PHYS_DT, input.state);
+    if (battle && battle.enabled && race && game.state === 'race') battle.step(PHYS_DT, race.racers);
     if (i % 2 === 1) { handleEvents(1 / 60); if (!race) updateLap(1 / 60); updateRings(1 / 60); game.time += 1 / 60; }
     if (cb && cb(i)) break;
   }
@@ -587,6 +595,11 @@ function startGame() {
   ais.forEach((r, i) => { r.netId = 'ai' + i; });
   if (hostNet) for (const remote of hostNet.remotes) attachRemoteRacer(remote);
   race.raceMode = race.racers.length > 1;
+  if (battle) {
+    battle.enabled = itemsEnabled();
+    battle.reset();
+    for (const r of race.racers) clearItemState(r.veh);
+  }
   veh = humans[0].veh;
   car = humans[0].car;
   game.camYaw = veh.heading; game.camSnap = true;
@@ -691,6 +704,8 @@ function poseOf(r) {
     heading: v.heading, speed: v.speed, gy: v.groundY,
     grounded: !!v.grounded, nitro: !!v.nitroOn, thrust: v.thrust, lift: v.lift,
     braking: !!v.braking, steer: v.steerAngle,
+    item: v.item | 0, shield: !!v.shield, spin: v.spinT > 0, aimed: !!v.aimed,
+    boost: v.boostT > 0, slow: v.slowT > 0,
     fi: v.attached ? v.fi : (v.q1.fi || 0),
     onRoad: !!v.onRoad,
     lap: r.lap ? r.lap.n : 1,
@@ -721,7 +736,38 @@ function netStateFor(remote) {
     t: 'state', now: performance.now(), race: game.state, cd: game.countdown, track: track.id,
     ack: remote.seq | 0, selfId, self, selfLap, standings, cars,
     selfVehicle: remote.vehicle, selfPaint: remote.paint,
+    battle: battle && battle.enabled ? battle.view() : null,
   };
+}
+function itemsEnabled() {
+  if (params.get('items') === '0') return false;
+  if (params.get('items') === '1') return true;
+  return store.get('items', '1') !== '0';
+}
+function battleFrameView() {
+  if (game.guest) return guestBattle || { on: false, boxes: [], shots: [] };
+  if (!battle || !itemsEnabled()) return { on: false, boxes: [], shots: [] };
+  if (game.state !== 'race' && game.state !== 'countdown' && game.state !== 'paused') {
+    return { on: true, boxes: battle.boxes.map((b) => ({ alive: true })), shots: [] };
+  }
+  return battle.view();
+}
+let _spinShown = false;
+function battleHud() {
+  if (game.guest) {
+    const msg = guestNet && guestNet.latest;
+    const self = msg && msg.self;
+    return {
+      on: !!(msg && msg.battle && msg.battle.on),
+      item: self ? (self.item | 0) : 0,
+      aimed: !!(self && self.aimed),
+    };
+  }
+  if (!battle || !battle.enabled) return { on: false };
+  const spinning = !!(veh && veh.spinT > 0.15);
+  if (spinning && !_spinShown && hud) hud.flash();
+  _spinShown = spinning;
+  return { on: true, item: veh ? (veh.item | 0) : 0, aimed: !!(veh && veh.aimed) };
 }
 function flushNet(force) {
   if (!hostNet || game.guest) return;
@@ -928,6 +974,8 @@ function onGuestState(msg) {
   }
   if (msg.self) noteHostSelf(msg);
   else pendingSnap = null;
+  if (msg.battle) guestBattle = msg.battle;
+  else if (msg.keyframe) guestBattle = { on: false, boxes: [], shots: [] };
   guestTrackReady = true;
   const phase = msg.race;
   if (!guestLive && (phase === 'countdown' || phase === 'race' || phase === 'paused')) enterGuestRace(msg);
@@ -1513,6 +1561,7 @@ function frame(now) {
             while (game.acc >= PHYS_DT && steps < 6) {
               if (race) race.step(PHYS_DT);
               else veh.step(PHYS_DT, input.state);
+              if (battle && battle.enabled && race && game.state === 'race') battle.step(PHYS_DT, race.racers);
               game.acc -= PHYS_DT; steps++;
             }
             if (steps === 6) game.acc = 0;
@@ -1553,6 +1602,7 @@ function frame(now) {
     syncCar(dt);
     if (game.guest && guestLive) { try { syncGhosts(dt); } catch (e) {} }
     world.updateRings(dt, game.time);
+    if (world.syncItems) world.syncItems(battleFrameView(), game.time);
     if (game.split && race && race.locals().length > 1 && game.state !== 'menu') renderSplit(dt);
     else {
       const view = game.guest && guestVis.on ? guestVis : null;
@@ -1570,6 +1620,7 @@ function frame(now) {
     const stLabel = shown.nitroOn ? t('hud.nitro') : !shown.grounded ? (shown.thrusting ? t('hud.flying') : t('hud.air')) : (!onRoad ? t('hud.off') : t('hud.ground'));
     const lapView = game.guest && guestLive ? guestLap : game.lap;
     hud.update(dt, shown, lapView, camName(game.camMode), game.guest ? t('hud.touchDrive') : padText(), stLabel);
+    hud.setBattle(battleHud());
     if (game.guest && guestPoses.length) {
       hud.drawMinimap(shown, guestPoses.map((p) => ({ veh: { pos: { x: p.x, z: p.z }, heading: p.heading || 0 }, driver: { kind: p.kind || 'remote' } })));
     } else hud.drawMinimap(shown, race ? race.racers : null);
