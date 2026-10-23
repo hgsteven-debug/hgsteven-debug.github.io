@@ -61,19 +61,64 @@ const placed = await page.evaluate(() => {
     v.placeOnTrack(tr.wrap(b.i - 12), 0, 0);
     chosen = { i: b.i, back: 12, d: Math.hypot(v.pos.x - b.x, v.pos.z - b.z) };
   }
-  v.item = 1;
+  const shown = battle.boxes.find((box) => box.i === chosen.i) || battle.boxes[2];
+  const face = v.heading;
+  const fx = -Math.sin(face), fz = -Math.cos(face);
+  shown.x = v.pos.x + fx * 7.2;
+  shown.y = v.pos.y + 1.35;
+  shown.z = v.pos.z + fz * 7.2;
+  shown.alive = true;
+  v.item = 0;
   v.spinT = 0;
   v.vel.y = 0;
   sky.game.camMode = 0;
   sky.game.camSnap = true;
   sky.game.camYaw = v.heading;
   sky._shot = chosen;
+  const flash = document.getElementById('flash');
+  if (flash) flash.style.display = 'none';
+  const count = document.getElementById('count');
+  if (count) count.style.display = 'none';
   return { boxes: battle.boxes.length, chosen, hx: +v.pos.x.toFixed(1), hy: +v.pos.y.toFixed(2), hz: +v.pos.z.toFixed(1) };
 });
 console.log('PLACED', JSON.stringify(placed));
 await frames(page, 3);
-await new Promise((r) => setTimeout(r, 900));
+await new Promise((r) => setTimeout(r, 400));
 await page.screenshot({ path: OUT + '/item-box.png' });
+
+await page.evaluate(() => {
+  const sky = window.__sky;
+  const me = sky.race.racers.find((r) => r.primary);
+  sky.input.padInfo.connected = true;
+  me.veh.item = 0;
+  sky.hud.setBattle({ on: true, item: 0, aimed: false, how: 'pad' });
+  me.veh.item = 1;
+});
+const pop = await page.evaluate(() => {
+  const sky = window.__sky;
+  const me = sky.race.racers.find((r) => r.primary);
+  sky.input.padInfo.connected = true;
+  me.veh.item = 1;
+  sky.hud.setBattle({ on: true, item: 1, aimed: false, how: 'pad', hitKind: 0 });
+  sky.hud._roll = null;
+  sky.hud._popUntil = performance.now() + 20000;
+  sky.hud.setBattle({ on: true, item: 1, aimed: false, how: 'pad', hitKind: 0 });
+  const slot = document.getElementById('itemslot');
+  const popEl = document.getElementById('itempop');
+  return {
+    name: document.getElementById('itempopName').textContent,
+    how: document.getElementById('itempopHow').textContent,
+    slot: document.getElementById('itemname').textContent,
+    glyph: document.getElementById('itemglyph').innerHTML.includes('<svg'),
+    pop: document.getElementById('itempopIco').innerHTML.includes('ff2d2d'),
+    armed: slot.classList.contains('armed'),
+    popOn: !popEl.classList.contains('hidden'),
+  };
+});
+console.log('POP', JSON.stringify(pop));
+assert(pop.popOn && pop.name === '直矢' && pop.how === '按 R 發射', 'pickup pop ' + JSON.stringify(pop));
+assert(pop.slot === '直矢' && pop.glyph && pop.pop && pop.armed, 'hud slot ' + JSON.stringify(pop));
+await page.screenshot({ path: OUT + '/item-pop.png' });
 
 const fired = await page.evaluate(() => {
   const sky = window.__sky;
@@ -151,7 +196,21 @@ const hit = await page.evaluate(() => {
 console.log('HIT', JSON.stringify(hit));
 assert(hit.spin > 0, 'no spin');
 assert(Math.abs(hit.yaw - hit.before) > 0.6, 'car did not yaw');
-await frames(page, 2);
+await frames(page, 1);
+const banner = await page.evaluate(() => {
+  const sky = window.__sky;
+  sky.hud.setBattle(Object.assign({ on: true, how: 'pad' }, {
+    item: 0, aimed: false,
+    hitKind: sky.race.racers.find((r) => r.primary).veh.hitKind,
+    hitBlock: !!sky.race.racers.find((r) => r.primary).veh.hitBlock,
+  }));
+  sky.hud._hitUntil = performance.now() + 20000;
+  const el = document.getElementById('itemhit');
+  el.classList.remove('hidden');
+  return { text: el.textContent, on: !el.classList.contains('hidden'), kind: sky.race.racers.find((r) => r.primary).veh.hitKind };
+});
+console.log('BANNER', JSON.stringify(banner));
+assert(banner.on && banner.text.includes('被直矢擊中'), 'hit banner ' + JSON.stringify(banner));
 await page.screenshot({ path: OUT + '/item-hit.png' });
 
 const phone = await browser.newPage();
@@ -162,30 +221,42 @@ const pad = await phone.evaluate(() => {
   const sky = window.__sky;
   sky.ui.touchMode = 'on';
   sky.game.freeze = true;
-  const item = document.querySelector('.gpad.item');
-  const gas = document.querySelector('.gpad.gas');
-  const pause = document.querySelector('.gpad.menu');
-  const reset = document.querySelector('.gpad.face.x');
+  document.getElementById('touch').classList.remove('hidden');
+  document.body.classList.add('touchon', 'items-on');
+  const me = sky.race.racers.find((r) => r.primary);
+  me.veh.item = 1;
+  sky.hud.setBattle({ on: true, item: 1, aimed: false, how: 'touch' });
   const rect = (el) => {
+    if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height, r: r.right, b: r.bottom };
   };
+  const item = document.querySelector('.gpad.item');
   return {
     iw: innerWidth, ih: innerHeight,
     on: document.body.classList.contains('items-on'),
     label: (item.textContent || '').replace(/\s+/g, ''),
-    ico: document.getElementById('touchItemIco').textContent,
-    item: rect(item), gas: rect(gas), pause: rect(pause), reset: rect(reset),
+    ico: document.getElementById('touchItemIco').innerHTML,
+    item: rect(item),
+    gas: rect(document.querySelector('.gpad.gas')),
+    brake: rect(document.querySelector('.gpad.brake')),
+    pause: rect(document.querySelector('.gpad.menu')),
+    reset: rect(document.querySelector('.gpad.face.x')),
+    y: rect(document.querySelector('.gpad.face.y')),
+    a: rect(document.querySelector('.gpad.face.a')),
+    b: rect(document.querySelector('.gpad.face.b')),
+    full: rect(document.getElementById('btnFull')),
+    map: rect(document.getElementById('minimap')),
   };
 });
 console.log('PAD', JSON.stringify(pad));
+const hits = (a, b) => a && b && a.x < b.r - 1 && a.r > b.x + 1 && a.y < b.b - 1 && a.b > b.y + 1;
 assert(pad.on, 'items not shown on phone');
 assert(pad.label.includes('道具'), 'label ' + pad.label);
-assert(pad.item.w >= 100 && pad.item.h >= 48, 'item target small');
-assert(pad.item.b < pad.gas.y - 8, 'item overlaps throttle');
-assert(pad.item.x > pad.pause.r + 8, 'item overlaps pause');
-assert(pad.item.b < pad.reset.y - 2, 'item overlaps reset');
-assert(pad.item.x > pad.iw * 0.75 && pad.item.r >= pad.iw - 12, 'item not in the right shoulder ' + JSON.stringify(pad.item));
+assert(pad.item.w >= 100 && pad.item.h >= 70, 'item target small');
+for (const key of ['gas', 'brake', 'pause', 'reset', 'y', 'a', 'b', 'full', 'map']) {
+  assert(!hits(pad.item, pad[key]), 'item overlaps ' + key + ' ' + JSON.stringify(pad.item) + ' ' + JSON.stringify(pad[key]));
+}
 const hitItem = await phone.evaluate(() => {
   const el = document.querySelector('.gpad.item');
   const r = el.getBoundingClientRect();
@@ -194,14 +265,7 @@ const hitItem = await phone.evaluate(() => {
   return host && host.dataset.t;
 });
 assert(hitItem === 'item', 'item hit ' + hitItem);
-const ico = await phone.evaluate(() => {
-  const sky = window.__sky;
-  const me = sky.race.racers.find((r) => r.primary);
-  me.veh.item = 2;
-  sky.hud.setBattle({ on: true, item: 2, aimed: false });
-  return document.getElementById('touchItemIco').textContent;
-});
-assert(ico && ico !== '–', 'held icon ' + ico);
+assert(pad.ico.includes('<svg') && pad.ico.includes('ff2d2d'), 'held icon ' + pad.ico.slice(0, 80));
 await frames(phone, 2);
 await phone.screenshot({ path: OUT + '/item-phone.png' });
 

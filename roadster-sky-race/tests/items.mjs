@@ -140,7 +140,7 @@ function testWire() {
   };
   const off = encodeState(plain, ctx, 0);
   const on = encodeState(Object.assign({}, plain, {
-    self: Object.assign({ item: ITEM.DRONE, aimed: true }, plain.self),
+    self: Object.assign({ item: ITEM.DRONE, aimed: true, hitKind: ITEM.SPARK, hitBlock: true }, plain.self),
     cars: [Object.assign({ item: ITEM.AEGIS, shield: true }, plain.cars[0])],
     battle: {
       on: true,
@@ -154,6 +154,7 @@ function testWire() {
   assert(dec.battle && dec.battle.on && dec.battle.boxes.length === 3, 'boxes');
   assert(dec.battle.boxes[1].alive === false && dec.battle.boxes[0].alive === true, 'mask');
   assert(dec.self.item === ITEM.DRONE && dec.self.aimed, 'self item');
+  assert(dec.self.hitKind === ITEM.SPARK && dec.self.hitBlock === true, 'hit text ' + dec.self.hitKind);
   assert(dec.cars[0].shield && dec.cars[0].item === ITEM.AEGIS, 'shield bit');
   assert(dec.battle.shots.length === 1 && Math.abs(dec.battle.shots[0].x - 12.4) < 0.08, 'shot pos');
   const env = { from: 'host', nonce: 'n', b: bytesToB64(on) };

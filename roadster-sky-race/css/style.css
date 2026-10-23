@@ -78,21 +78,36 @@ html[lang="fr"] .legend, html[lang="ja"] .legend, html[lang="ko"] .legend { font
 .gpad.face.a { right:calc(18px + var(--safe-r)); bottom:calc(200px + var(--safe-b)); background:rgba(36,150,70,.55); }
 .gpad.face.b { right:calc(78px + var(--safe-r)); bottom:calc(160px + var(--safe-b)); background:rgba(190,48,40,.55); }
 .gpad.menu { left:50%; top:calc(8px + var(--safe-t)); transform:translateX(-50%); width:72px; height:34px; border-radius:.8rem; font-size:.85rem; background:rgba(20,24,32,.72); }
-.gpad.item { right:calc(8px + var(--safe-r)); top:calc(4px + var(--safe-t)); width:116px; height:56px; border-radius:1.05rem;
-  font-size:.82rem; z-index:5; display:flex; flex-direction:row; align-items:center; justify-content:center; gap:6px;
-  background:rgba(90,48,160,.55); }
-.gpad.item .ico { font-size:1.35rem; line-height:1; min-width:1.1rem; min-height:1.1rem; }
+.gpad.item { right:calc(210px + var(--safe-r)); bottom:calc(150px + var(--safe-b)); width:132px; height:92px; border-radius:1.15rem;
+  font-size:.95rem; z-index:8; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  background:rgba(18,16,28,.78); border-color:rgba(255,220,120,.85); touch-action:manipulation; }
+.gpad.item .ico { width:52px; height:52px; display:flex; align-items:center; justify-content:center; }
+.gpad.item .ico svg { width:52px; height:52px; display:block; }
 body:not(.items-on) .gpad.item { display:none !important; }
-#itemslot { position:absolute; left:1.2rem; bottom:6.4rem; width:4.8rem; height:4.8rem; border-radius:1rem;
-  background:rgba(8,12,18,.78); border:2px solid rgba(255,209,90,.7); display:flex; flex-direction:column;
-  align-items:center; justify-content:center; z-index:4; pointer-events:none; }
-#itemslot b { font-size:1.8rem; line-height:1; }
-#itemslot span { font-size:.72rem; font-weight:800; }
-#itemslot.roll { animation:itemroll .12s linear infinite; }
-@keyframes itemroll { 50% { filter:brightness(1.6); transform:scale(1.04); } }
-#itemwarn { position:absolute; left:50%; top:18%; transform:translateX(-50%); z-index:6; pointer-events:none;
-  background:rgba(176,32,24,.9); color:#fff; font-weight:800; padding:.35rem .9rem; border-radius:999px;
-  box-shadow:0 0 16px rgba(255,80,40,.45); }
+#itemslot { position:absolute; left:16.5rem; top:1.1rem; width:8.6rem; height:8.6rem; border-radius:1.2rem;
+  background:rgba(8,12,18,.82); border:3px solid rgba(255,209,90,.85); display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:.2rem; z-index:4; pointer-events:none; box-shadow:0 0 18px rgba(255,200,60,.28); }
+#itemslot #itemglyph { width:4.6rem; height:4.6rem; display:flex; align-items:center; justify-content:center; }
+#itemslot #itemglyph svg { width:4.6rem; height:4.6rem; }
+#itemslot span { font-size:1.15rem; font-weight:900; letter-spacing:.04em; }
+#itemslot.roll { animation:itemroll .1s linear infinite; }
+#itemslot.armed { animation:itempulse .7s ease-in-out infinite; }
+@keyframes itemroll { 50% { filter:brightness(1.7); transform:scale(1.05); } }
+@keyframes itempulse { 50% { box-shadow:0 0 26px rgba(255,220,80,.85); transform:scale(1.04); } }
+#itempop { position:absolute; left:50%; top:28%; transform:translate(-50%,-50%); z-index:7; pointer-events:none;
+  display:flex; flex-direction:column; align-items:center; gap:.25rem; min-width:16rem; padding:1rem 1.4rem 1.1rem;
+  background:rgba(6,10,16,.88); border:3px solid rgba(255,214,90,.9); border-radius:1.4rem;
+  box-shadow:0 10px 40px rgba(0,0,0,.45), 0 0 28px rgba(255,200,60,.35); }
+#itempop #itempopIco { width:7.5rem; height:7.5rem; }
+#itempop #itempopIco svg { width:7.5rem; height:7.5rem; }
+#itempop b { font-size:2.4rem; line-height:1.1; }
+#itempop span { font-size:1.25rem; font-weight:800; color:#ffe9a8; }
+#itemhit { position:absolute; left:50%; top:42%; transform:translate(-50%,-50%); z-index:7; pointer-events:none;
+  font-size:2.6rem; font-weight:900; color:#fff; text-shadow:0 3px 0 #7a140c, 0 0 18px rgba(255,60,40,.8);
+  background:rgba(120,16,12,.88); padding:.45rem 1.2rem; border-radius:999px; }
+#itemwarn { position:absolute; left:50%; top:16%; transform:translateX(-50%); z-index:6; pointer-events:none;
+  background:rgba(176,32,24,.92); color:#fff; font-weight:900; font-size:1.35rem; padding:.45rem 1.1rem; border-radius:999px;
+  box-shadow:0 0 18px rgba(255,80,40,.5); }
 html.force-landscape body { position:fixed; width:100lvh; height:100lvw; top:0; left:0; transform-origin:top left;
   transform:rotate(90deg) translateY(-100%); overflow:hidden; }
 

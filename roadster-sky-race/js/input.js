@@ -63,6 +63,29 @@ export const DEFAULT_BINDINGS = {
   pause:    { t: 'b', i: 9 },
 };
 
+function bindingRowOk(row) {
+  if (!row || (row.t !== 'b' && row.t !== 'a')) return false;
+  if (!Number.isFinite(+row.i) || row.i < 0 || row.i > 20) return false;
+  return true;
+}
+
+// 舊存檔沒有「使用道具」時補上 R（索引 5）。ZR／ZL 維持原樣。
+export function migrateBindings(saved) {
+  const src = saved && typeof saved === 'object' ? saved : null;
+  const bindings = {};
+  let changed = !src;
+  for (const k of Object.keys(DEFAULT_BINDINGS)) {
+    const row = src && src[k];
+    if (!bindingRowOk(row)) {
+      bindings[k] = { ...DEFAULT_BINDINGS[k] };
+      changed = true;
+    } else {
+      bindings[k] = Object.assign({}, DEFAULT_BINDINGS[k], row, { t: row.t, i: row.i | 0 });
+    }
+  }
+  return { bindings, changed };
+}
+
 const ACTION_DEFS = [
   { id: 'steer',    label: () => t('act.steer'), kind: 'axis', hint: () => t('act.steerHint') },
   { id: 'pitch',    label: () => t('act.pitch'), kind: 'axis', hint: () => t('act.pitchHint') },
@@ -162,11 +185,13 @@ export class InputManager {
     this.onPadChange = () => {};
     this.anyPadInput = false;
     this.keyPressedQueue = new Set();
+    this._itemTap = false;
     this._onGpOn = (e) => { this.refreshPads(); this.onPadChange(true, e.gamepad); };
     this._onGpOff = (e) => { this.refreshPads(); this.onPadChange(false, e.gamepad); };
     this._onKeyDown = (e) => {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
       if (!e.repeat) this.keyPressedQueue.add(e.code);
+      if (!e.repeat && e.code === 'KeyF') this._itemTap = true;
       this.keys.add(e.code);
     };
     this._onKeyUp = (e) => this.keys.delete(e.code);
@@ -201,6 +226,8 @@ export class InputManager {
   noteTouchPress(name) {
     if (name === 'camera' || name === 'reset' || name === 'pause') this._touchEdge[name] = true;
   }
+  // 點一下就要算，不能等下一幀手指已經放開。
+  noteItemTap() { this._itemTap = true; }
   // 手動指定搖桿模式（auto / switch / xbox）；會覆寫自動偵測，存在 localStorage
   setPadMode(m) {
     if (!['auto', 'switch', 'xbox'].includes(m)) return;
@@ -317,9 +344,9 @@ export class InputManager {
 
   loadBindings() {
     const saved = store.get('bindings', null);
-    const b = {};
-    for (const k of Object.keys(DEFAULT_BINDINGS)) b[k] = { ...(saved && saved[k] ? saved[k] : DEFAULT_BINDINGS[k]) };
-    return b;
+    const migrated = migrateBindings(saved);
+    if (saved && migrated.changed) store.set('bindings', migrated.bindings);
+    return migrated.bindings;
   }
   saveBindings() { store.set('bindings', this.bindings); }
   resetBindings() {
@@ -473,7 +500,8 @@ export class InputManager {
     st.brake = Math.max(st.padBrake || 0, kBrk);
     st.lift = !!st.padLift || this.isKey('Space') || this.touch.lift;
     st.nitro = !!st.padNitro || this.isKey('ShiftLeft', 'ShiftRight') || this.touch.nitro;
-    st.item = !!st.padItem || this.isKey('KeyF') || this.touch.item;
+    st.item = !!st.padItem || (this.useKeyboard && this.isKey('KeyF')) || !!this.touch.item || !!this._itemTap;
+    this._itemTap = false;
     const touchPitch = this.touch.stick ? clamp(this.touch.pitch || 0, -1, 1) : 0;
     st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)) + touchPitch, -1, 1);
     pr.camera = pr.camera || this.consumeKey('KeyC') || !!this._touchEdge.camera;

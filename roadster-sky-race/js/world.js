@@ -887,38 +887,94 @@ export class World {
     }
   }
 
-  // 道具箱與飛行物各一組 InstancedMesh，不投影。
+  _itemMesh(geo, color, count, opts) {
+    const mat = new THREE.MeshBasicMaterial(Object.assign({ color, toneMapped: false }, opts || {}));
+    const mesh = new THREE.InstancedMesh(geo, mat, count);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    this.scene.add(mesh);
+    return mesh;
+  }
+
+  _questionTexture() {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = '#ffc83a';
+    g.fillRect(0, 0, 128, 128);
+    g.strokeStyle = '#fff6c2';
+    g.lineWidth = 10;
+    g.strokeRect(7, 7, 114, 114);
+    g.lineWidth = 14;
+    g.strokeStyle = '#1a1204';
+    g.fillStyle = '#1a1204';
+    g.font = '900 86px sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.strokeText('?', 64, 72);
+    g.fillText('?', 64, 72);
+    const tex = new THREE.CanvasTexture(c);
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  _aimItem(dummy, dx, dy, dz) {
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 0.08) { dummy.quaternion.identity(); return; }
+    this._itemDir.set(dx / len, dy / len, dz / len);
+    dummy.quaternion.setFromUnitVectors(this._itemUp, this._itemDir);
+  }
+
+  _writeInstances(mesh, list, place) {
+    if (!mesh) return;
+    const n = Math.min(mesh.instanceMatrix.count, list.length);
+    mesh.count = n;
+    const d = this._itemDummy;
+    for (let i = 0; i < n; i++) {
+      place(d, list[i], i);
+      d.updateMatrix();
+      mesh.setMatrixAt(i, d.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // 道具箱、飛行物、護罩各一組 InstancedMesh，不投影。
   mountItems(boxes) {
     this.disposeItems();
     this._boxLayout = boxes || [];
     const n = Math.max(1, this._boxLayout.length);
-    const box = new THREE.InstancedMesh(
-      new THREE.OctahedronGeometry(1.05, 0),
-      new THREE.MeshBasicMaterial({ color: 0xffd15a, toneMapped: false }),
-      n,
-    );
+    this._itemDummy = new THREE.Object3D();
+    this._itemUp = new THREE.Vector3(0, 1, 0);
+    this._itemDir = new THREE.Vector3();
+    this._itemColor = new THREE.Color();
+    this._boxWas = [];
+    this._pickFx = [];
+    this._shotTrail = [];
+    this._itemT = 0;
+    this._questionTex = this._questionTexture();
+    const boxMat = new THREE.MeshBasicMaterial({ map: this._questionTex, toneMapped: false });
+    const box = new THREE.InstancedMesh(new THREE.BoxGeometry(1.9, 1.9, 1.9), boxMat, n);
     box.castShadow = false;
     box.receiveShadow = false;
     box.frustumCulled = false;
     box.count = this._boxLayout.length;
     this.scene.add(box);
     this.itemBoxes = box;
-    this._itemDummy = new THREE.Object3D();
-    const colors = { spark: 0xfff0a0, drone: 0x5ce1ff, slick: 0x14161c };
-    this.itemShots = {};
-    for (const key of Object.keys(colors)) {
-      const mesh = new THREE.InstancedMesh(
-        new THREE.SphereGeometry(key === 'slick' ? 1.15 : 0.42, 6, 5),
-        new THREE.MeshBasicMaterial({ color: colors[key], toneMapped: false }),
-        8,
-      );
-      mesh.castShadow = false;
-      mesh.receiveShadow = false;
-      mesh.frustumCulled = false;
-      mesh.count = 0;
-      this.scene.add(mesh);
-      this.itemShots[key] = mesh;
-    }
+    this.itemGlow = this._itemMesh(new THREE.BoxGeometry(2.35, 2.35, 2.35), 0xffe08a, n, { transparent: true, opacity: 0.28, depthWrite: false });
+    this.itemPops = this._itemMesh(new THREE.TorusGeometry(1.1, 0.16, 6, 14), 0xfff0a0, 8, { transparent: true, opacity: 0.9, depthWrite: false });
+    this.itemDart = this._itemMesh(new THREE.ConeGeometry(0.48, 2.35, 7), 0xff2d2d, 8);
+    this.itemDartTrail = this._itemMesh(new THREE.BoxGeometry(0.28, 1, 0.28), 0xff5a3a, 40);
+    this.itemDrone = this._itemMesh(new THREE.SphereGeometry(0.62, 8, 6), 0xffd000, 8);
+    this.itemReticle = this._itemMesh(new THREE.TorusGeometry(1.15, 0.09, 6, 16), 0xffe14a, 8);
+    this.itemSlick = this._itemMesh(new THREE.CylinderGeometry(2.15, 2.15, 0.2, 10), 0x140814, 8);
+    this.itemSlickRim = this._itemMesh(new THREE.CylinderGeometry(2.55, 2.55, 0.08, 10), 0x6a3cff, 8, { transparent: true, opacity: 0.9, depthWrite: false });
+    this.itemShield = this._itemMesh(new THREE.SphereGeometry(2.15, 12, 8), 0x3ec2ff, 8, { transparent: true, opacity: 0.38, depthWrite: false });
+    this.itemBurst = this._itemMesh(new THREE.OctahedronGeometry(0.7, 0), 0xffffff, 16, { transparent: true, opacity: 0.92, depthWrite: false });
+    const burstColors = [0xffffff, 0xff2d2d, 0xffd000, 0x6a3cff, 0x3ec2ff, 0xff7a18, 0x5ce1ff];
+    this._burstHex = burstColors;
   }
 
   disposeItems() {
@@ -926,11 +982,26 @@ export class World {
       if (!mesh) return;
       this.scene.remove(mesh);
       if (mesh.geometry) mesh.geometry.dispose();
-      if (mesh.material) mesh.material.dispose();
+      if (mesh.material) {
+        if (mesh.material.map && mesh.material.map !== this._questionTex) mesh.material.map.dispose();
+        mesh.material.dispose();
+      }
     };
     drop(this.itemBoxes);
-    this.itemBoxes = null;
-    if (this.itemShots) for (const mesh of Object.values(this.itemShots)) drop(mesh);
+    drop(this.itemGlow);
+    drop(this.itemPops);
+    drop(this.itemDart);
+    drop(this.itemDartTrail);
+    drop(this.itemDrone);
+    drop(this.itemReticle);
+    drop(this.itemSlick);
+    drop(this.itemSlickRim);
+    drop(this.itemShield);
+    drop(this.itemBurst);
+    if (this._questionTex) { this._questionTex.dispose(); this._questionTex = null; }
+    this.itemBoxes = this.itemGlow = this.itemPops = null;
+    this.itemDart = this.itemDartTrail = this.itemDrone = this.itemReticle = null;
+    this.itemSlick = this.itemSlickRim = this.itemShield = this.itemBurst = null;
     this.itemShots = null;
   }
 
@@ -942,38 +1013,133 @@ export class World {
     const flags = view && view.boxes;
     const d = this._itemDummy;
     const t = time || 0;
+    const dt = Math.min(0.05, Math.max(0, t - (this._itemT || t)));
+    this._itemT = t;
     mesh.count = layout.length;
+    if (this.itemGlow) this.itemGlow.count = layout.length;
     for (let i = 0; i < layout.length; i++) {
       const b = layout[i];
       const alive = on && (!flags || !flags.length || (flags[i] && flags[i].alive !== false));
-      d.position.set(b.x, b.y + Math.sin(t * 2.1 + i) * 0.16, b.z);
-      d.rotation.set(t * 0.7, t * 1.2 + i, 0);
-      d.scale.setScalar(alive ? 1 : 0.0001);
+      if (on && this._boxWas[i] && !alive) this._pickFx.push({ x: b.x, y: b.y, z: b.z, age: 0 });
+      this._boxWas[i] = !!(on && alive);
+      const bob = Math.sin(t * 2.2 + i) * 0.55;
+      d.position.set(b.x, b.y + bob, b.z);
+      d.rotation.set(0.15, t * 0.85 + i, 0.08);
+      d.quaternion.setFromEuler(d.rotation);
+      d.scale.setScalar(alive ? 1.15 : 0.0001);
       d.updateMatrix();
       mesh.setMatrixAt(i, d.matrix);
+      if (this.itemGlow) {
+        d.scale.setScalar(alive ? 1.22 + Math.sin(t * 3 + i) * 0.06 : 0.0001);
+        d.updateMatrix();
+        this.itemGlow.setMatrixAt(i, d.matrix);
+      }
     }
     mesh.instanceMatrix.needsUpdate = true;
-    const names = { 1: 'spark', 2: 'drone', 3: 'slick' };
-    const groups = { spark: [], drone: [], slick: [] };
-    if (on && view.shots) {
-      for (const s of view.shots) {
-        const key = names[s.kind | 0];
-        if (key && groups[key].length < 8) groups[key].push(s);
-      }
+    if (this.itemGlow) this.itemGlow.instanceMatrix.needsUpdate = true;
+
+    const pops = [];
+    for (const p of this._pickFx) {
+      p.age += dt;
+      if (p.age < 0.5) pops.push(p);
     }
-    for (const key of Object.keys(groups)) {
-      const im = this.itemShots[key];
-      const list = groups[key];
-      im.count = list.length;
-      for (let i = 0; i < list.length; i++) {
-        const s = list[i];
-        d.position.set(s.x, s.y, s.z);
-        d.rotation.set(0, 0, 0);
-        d.scale.setScalar(key === 'slick' ? 1 : 1.85);
-        d.updateMatrix();
-        im.setMatrixAt(i, d.matrix);
+    this._pickFx = pops.slice(-8);
+    this._writeInstances(this.itemPops, this._pickFx, (o, p) => {
+      const k = p.age / 0.5;
+      o.position.set(p.x, p.y, p.z);
+      o.rotation.set(Math.PI / 2, 0, t * 2);
+      o.quaternion.setFromEuler(o.rotation);
+      o.scale.setScalar(0.4 + k * 3.4);
+    });
+
+    const shots = on && view.shots ? view.shots : [];
+    const prev = this._shotTrail || [];
+    const nextTrail = [];
+    const darts = [];
+    const drones = [];
+    const slicks = [];
+    const dartTrail = [];
+    for (const s of shots) {
+      let best = null;
+      let bestD = 36;
+      for (const p of prev) {
+        if (p.used || p.kind !== (s.kind | 0)) continue;
+        const dd = (p.x - s.x) ** 2 + (p.y - s.y) ** 2 + (p.z - s.z) ** 2;
+        if (dd < bestD) { bestD = dd; best = p; }
       }
-      im.instanceMatrix.needsUpdate = true;
+      const hist = best ? best.hist.slice(-5) : [];
+      if (best) best.used = true;
+      hist.push({ x: s.x, y: s.y, z: s.z });
+      const row = { kind: s.kind | 0, x: s.x, y: s.y, z: s.z, hist };
+      nextTrail.push(row);
+      if (row.kind === 1 && darts.length < 8) darts.push(row);
+      else if (row.kind === 2 && drones.length < 8) drones.push(row);
+      else if (row.kind === 3 && slicks.length < 8) slicks.push(row);
     }
+    this._shotTrail = nextTrail;
+    const tailOf = (row) => {
+      const h = row.hist;
+      if (h.length < 2) return { x: 0, y: 0.2, z: -1 };
+      const a = h[h.length - 2], b = h[h.length - 1];
+      return { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+    };
+    this._writeInstances(this.itemDart, darts, (o, s) => {
+      const dir = tailOf(s);
+      o.position.set(s.x, s.y, s.z);
+      this._aimItem(o, dir.x, dir.y, dir.z);
+      o.scale.setScalar(1.35);
+    });
+    for (const s of darts) {
+      const h = s.hist;
+      for (let i = 1; i < h.length; i++) dartTrail.push({ a: h[i - 1], b: h[i], fade: i / h.length });
+    }
+    this._writeInstances(this.itemDartTrail, dartTrail.slice(-40), (o, seg) => {
+      o.position.set((seg.a.x + seg.b.x) / 2, (seg.a.y + seg.b.y) / 2, (seg.a.z + seg.b.z) / 2);
+      this._aimItem(o, seg.b.x - seg.a.x, seg.b.y - seg.a.y, seg.b.z - seg.a.z);
+      const len = Math.max(0.4, Math.hypot(seg.b.x - seg.a.x, seg.b.y - seg.a.y, seg.b.z - seg.a.z));
+      o.scale.set(1, len, 1);
+    });
+    this._writeInstances(this.itemDrone, drones, (o, s) => {
+      const dir = tailOf(s);
+      o.position.set(s.x, s.y, s.z);
+      this._aimItem(o, dir.x, dir.y, dir.z);
+      o.scale.setScalar(1.45);
+    });
+    this._writeInstances(this.itemReticle, drones, (o, s) => {
+      o.position.set(s.x, s.y, s.z);
+      o.rotation.set(Math.PI / 2, t * 3, 0);
+      o.quaternion.setFromEuler(o.rotation);
+      o.scale.setScalar(1.7);
+    });
+    const layDisc = (o, s, sc) => {
+      o.position.set(s.x, s.y, s.z);
+      o.rotation.set(Math.PI / 2, 0, 0);
+      o.quaternion.setFromEuler(o.rotation);
+      o.scale.setScalar(sc);
+    };
+    this._writeInstances(this.itemSlick, slicks, (o, s) => layDisc(o, s, 1));
+    this._writeInstances(this.itemSlickRim, slicks, (o, s) => layDisc(o, s, 1));
+    const shields = on && view.shields ? view.shields.slice(0, 8) : [];
+    this._writeInstances(this.itemShield, shields, (o, s) => {
+      o.position.set(s.x, s.y, s.z);
+      o.quaternion.identity();
+      o.scale.setScalar(1 + Math.sin(t * 4) * 0.04);
+    });
+    const bursts = [];
+    if (on && view.bursts) {
+      for (const b of view.bursts) if (bursts.length < 16) bursts.push(b);
+    }
+    this._writeInstances(this.itemBurst, bursts, (o, b, i) => {
+      const k = Math.min(1, (b.age || 0) / 0.7);
+      o.position.set(b.x, b.y, b.z);
+      o.rotation.set(t * 2, t * 3, 0);
+      o.quaternion.setFromEuler(o.rotation);
+      o.scale.setScalar((b.hit ? 1.4 : 0.7) + k * (b.hit ? 3.2 : 1.6));
+      if (this.itemBurst.setColorAt && this._burstHex) {
+        this._itemColor.setHex(this._burstHex[(b.kind | 0)] || 0xffffff);
+        this.itemBurst.setColorAt(i, this._itemColor);
+      }
+    });
+    if (this.itemBurst && this.itemBurst.instanceColor) this.itemBurst.instanceColor.needsUpdate = true;
   }
 }

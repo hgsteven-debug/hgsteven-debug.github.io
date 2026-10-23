@@ -2,7 +2,8 @@
 import { clamp, smoothstep, fmtTime } from './util.js';
 import { t } from './i18n.js';
 import { ROAD_HALF } from './track.js';
-import { ITEM_GLYPH, ITEM_KEY } from './items.js';
+import { ITEM_KEY } from './items.js';
+import { itemSvg, ITEM_ROLL_MS, ITEM_POP_MS, ITEM_HIT_MS } from './itemart.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -16,7 +17,8 @@ export class Hud {
       vig: $('vignette'), fx: $('fx'), mm: $('minimap'), flash: $('flash'),
       pill: $('linkpill'), linkKind: $('linkKind'), linkMs: $('linkMs'), linkHint: $('linkhint'),
       slot: $('itemslot'), glyph: $('itemglyph'), iname: $('itemname'), warn: $('itemwarn'),
-      touchIco: $('touchItemIco'),
+      pop: $('itempop'), popIco: $('itempopIco'), popName: $('itempopName'), popHow: $('itempopHow'),
+      hit: $('itemhit'), touchIco: $('touchItemIco'),
     };
     this._last = {};
     this.toastT = 0;
@@ -142,6 +144,15 @@ export class Hud {
     this.setText('pad', e.pad, padText);
   }
 
+  _paintIcon(el, id) {
+    if (!el) return;
+    const key = 'ico' + (el.id || '') ;
+    const next = id | 0;
+    if (this._last[key] === next) return;
+    this._last[key] = next;
+    el.innerHTML = next ? itemSvg(next) : '';
+  }
+
   setBattle(info) {
     const e = this.el;
     const on = !!(info && info.on);
@@ -151,33 +162,56 @@ export class Hud {
     if (!on) {
       this._roll = null;
       this._itemShown = 0;
-      if (e.touchIco) e.touchIco.textContent = '';
+      this._popUntil = 0;
+      this._hitUntil = 0;
+      if (e.pop) e.pop.classList.add('hidden');
+      if (e.hit) e.hit.classList.add('hidden');
+      this._paintIcon(e.touchIco, 0);
       return;
     }
     const id = info.item | 0;
-    if (id && this._itemShown === 0 && !(this._roll && this._roll.final === id)) {
-      this._roll = { until: performance.now() + 680, final: id };
+    const now = performance.now();
+    if (id && this._itemShown !== id) {
+      this._itemShown = id;
+      this._roll = { until: now + ITEM_ROLL_MS, final: id };
+      this._popUntil = now + ITEM_POP_MS;
+      this._popFinal = id;
+      const howKey = info.how === 'touch' ? 'item.howTouch' : info.how === 'key' ? 'item.howKey' : 'item.howPad';
+      if (e.popName) e.popName.textContent = t('item.' + ITEM_KEY[id]);
+      if (e.popHow) e.popHow.textContent = t(howKey);
+      this._paintIcon(e.popIco, id);
     }
-    if (!id) { this._roll = null; this._itemShown = 0; }
+    if (!id) { this._roll = null; this._itemShown = 0; this._popUntil = 0; }
     let show = id;
     let rolling = false;
-    if (this._roll) {
-      if (performance.now() < this._roll.until) {
+    if (this._roll && id) {
+      if (now < this._roll.until) {
         rolling = true;
-        show = 1 + (Math.floor(performance.now() / 70) % 6);
+        show = 1 + (Math.floor(now / 70) % 6);
       } else {
         show = this._roll.final;
-        this._itemShown = show;
         this._roll = null;
       }
-    } else this._itemShown = id;
-    const glyph = ITEM_GLYPH[show] || '';
-    const name = show ? t('item.' + ITEM_KEY[show]) : t('item.empty');
-    if (e.slot) e.slot.classList.toggle('roll', rolling);
-    if (e.glyph) this.setText('itemglyph', e.glyph, glyph || '–');
-    if (e.iname) this.setText('itemname', e.iname, rolling ? t('item.roll') : name);
-    if (e.touchIco) this.setText('touchIco', e.touchIco, id ? (ITEM_GLYPH[id] || '') : '');
+    } else if (id) this._itemShown = id;
+    const name = id ? t('item.' + ITEM_KEY[id]) : t('item.empty');
+    if (e.slot) {
+      e.slot.classList.toggle('roll', rolling);
+      e.slot.classList.toggle('armed', !!id && !rolling);
+    }
+    this._paintIcon(e.glyph, rolling ? show : id);
+    if (e.iname) this.setText('itemname', e.iname, rolling ? t('item.roll') : (id ? name : t('item.empty')));
+    this._paintIcon(e.touchIco, id);
+    if (e.pop) e.pop.classList.toggle('hidden', !(id && this._popUntil && now < this._popUntil));
     if (e.warn && info.aimed) this.setText('itemwarn', e.warn, t('item.warn'));
+    const hit = info.hitKind | 0;
+    const blocked = !!info.hitBlock;
+    if (hit && hit !== this._hitShown) {
+      this._hitShown = hit;
+      this._hitUntil = now + ITEM_HIT_MS;
+      if (e.hit) e.hit.textContent = t(blocked ? 'item.block' : 'item.hit', { name: t('item.' + ITEM_KEY[hit]) });
+    }
+    if (!hit) { this._hitShown = 0; this._hitUntil = 0; }
+    if (e.hit) e.hit.classList.toggle('hidden', !(hit && this._hitUntil && now < this._hitUntil));
   }
 
   // 速度線與暈邊

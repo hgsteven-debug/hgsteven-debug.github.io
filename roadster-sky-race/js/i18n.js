@@ -109,6 +109,11 @@ const ROWS = [
   ['item.burst', '瞬衝', 'Burst', 'Élan', '瞬衝', '순간가속'],
   ['item.storm', '逆風', 'Gale', 'Rafale', '逆風', '역풍'],
   ['item.warn', '追蜂鎖定你', 'Seeker locked on', 'Pisteur verrouillé', '追蜂がロック', '추적벌이 조준 중'],
+  ['item.howPad', '按 R 發射', 'Press R', 'Appuyez sur R', 'Rで発射', 'R로 발사'],
+  ['item.howTouch', '按道具鍵', 'Press ITEM', 'Touche OBJET', '道具ボタン', '아이템 버튼'],
+  ['item.howKey', '按 F 發射', 'Press F', 'Touche F', 'Fで発射', 'F로 발사'],
+  ['item.hit', '被{name}擊中！', 'Hit by {name}!', 'Touché par {name} !', '{name}が命中！', '{name}에 맞았다!'],
+  ['item.block', '護罩擋住了{name}', 'Aegis blocked {name}', 'Égide a bloqué {name}', '護罩が{name}を防いだ', '보호막이 {name}을 막음'],
 
   ['tracks.title', '選擇賽道', 'Tracks', 'Circuits', 'コース', '트랙'],
   ['tracks.best', '最佳單圈：{time}', 'Best lap: {time}', 'Meilleur tour : {time}', 'ベストラップ：{time}', '베스트 랩: {time}'],

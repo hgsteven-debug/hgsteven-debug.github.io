@@ -341,7 +341,7 @@ export function packSelf(s) {
   if (!s) return null;
   const n = roundNet;
   const speed = s.speed != null ? s.speed : Math.hypot(s.vx || 0, s.vy || 0, s.vz || 0);
-  return {
+  const out = {
     x: n(s.x), y: n(s.y), z: n(s.z),
     qx: n(s.qx), qy: n(s.qy), qz: n(s.qz), qw: n(s.qw, 1),
     vx: n(s.vx), vy: n(s.vy), vz: n(s.vz),
@@ -367,6 +367,10 @@ export function packSelf(s) {
     boost: !!(s.boost || s.boostT > 0),
     slow: !!(s.slow || s.slowT > 0),
   };
+  const hitKind = (s.hitKind | 0) & 7;
+  if (hitKind) out.hitKind = hitKind;
+  if (s.hitBlock) out.hitBlock = true;
+  return out;
 }
 
 export function packPose(p) {

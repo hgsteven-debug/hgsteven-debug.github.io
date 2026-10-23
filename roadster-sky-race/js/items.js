@@ -4,8 +4,10 @@
 export const ITEM = { NONE: 0, SPARK: 1, DRONE: 2, SLICK: 3, AEGIS: 4, BURST: 5, STORM: 6 };
 export const ITEM_KEY = ['', 'spark', 'drone', 'slick', 'aegis', 'burst', 'storm'];
 export const ITEM_GLYPH = ['', '✦', '◉', '●', '◇', '▲', '※'];
+export const ITEM_PRESS_QUEUE_S = 0.6;
 
-const PICK_R = 3.3;
+const PICK_R = 3.4;
+const PICK_Y = 4.2;
 const BOX_GAP_M = 155;
 const RESPAWN_S = 8;
 const MAX_SHOTS = 8;
@@ -50,7 +52,7 @@ export function layoutBoxes(track) {
       i += Math.max(4, Math.round(step / 4));
       continue;
     }
-    const y = (track.py ? track.py[i] : 0) + 1.35;
+    const y = (track.py ? track.py[i] : 0) + 2.15;
     boxes.push({ i, x: track.px[i], y, z: track.pz[i], alive: true, cool: 0 });
     i += step;
   }
@@ -92,12 +94,19 @@ export function clearItemState(v) {
   v.slowT = 0;
   v.aimed = false;
   v.itemAge = 0;
+  v.hitKind = 0;
+  v.hitT = 0;
+  v.hitBlock = false;
 }
 
 // 打轉只削水平速度，垂直速度留給各賽道的重力（月球也一樣）。
 export function applyDriveFx(veh, dt, inp) {
   const src = inp || {};
   if (!veh) return src;
+  if (veh.hitT > 0) {
+    veh.hitT = Math.max(0, veh.hitT - dt);
+    if (veh.hitT <= 0) { veh.hitKind = 0; veh.hitBlock = false; }
+  }
   if (veh.iFrame > 0) veh.iFrame = Math.max(0, veh.iFrame - dt);
   if (veh.shieldT > 0) {
     veh.shieldT -= dt;
@@ -158,17 +167,23 @@ function ranked(racers) {
   return racers.filter((r) => r && r.veh && !r.parked).slice().sort((a, b) => progress(b) - progress(a));
 }
 
-function hitCar(veh) {
+function hitCar(veh, kind) {
   if (!veh || veh.iFrame > 0) return false;
   if (veh.shield) {
     veh.shield = false;
     veh.shieldT = 0;
     veh.iFrame = 0.45;
+    veh.hitKind = kind | 0;
+    veh.hitT = 1.1;
+    veh.hitBlock = true;
     return 'block';
   }
   veh.spinT = 1.25;
   veh.iFrame = 2.45;
   veh.boostT = 0;
+  veh.hitKind = kind | 0;
+  veh.hitT = 1.3;
+  veh.hitBlock = false;
   return 'hit';
 }
 
@@ -177,6 +192,7 @@ export class ItemBattle {
     this.track = track;
     this.boxes = boxes || layoutBoxes(track);
     this.shots = [];
+    this.bursts = [];
     this.enabled = true;
     this.rng = rng || Math.random;
   }
@@ -184,12 +200,19 @@ export class ItemBattle {
   reset() {
     for (const b of this.boxes) { b.alive = true; b.cool = 0; }
     this.shots.length = 0;
+    this.bursts.length = 0;
   }
 
   roll(place, count) { return rollItem(place, count, this.rng); }
 
   step(dt, racers) {
     if (!this.enabled || !racers) return;
+    const keep = [];
+    for (const b of this.bursts) {
+      b.age += dt;
+      if (b.age < 0.7) keep.push(b);
+    }
+    this.bursts = keep;
     const list = racers.filter((r) => r && r.veh && !r.parked);
     for (const r of list) r.veh.aimed = false;
     for (const b of this.boxes) {
@@ -204,7 +227,7 @@ export class ItemBattle {
       for (const b of this.boxes) {
         if (!b.alive) continue;
         const dx = v.pos.x - b.x, dy = v.pos.y - b.y, dz = v.pos.z - b.z;
-        if (dx * dx + dy * dy + dz * dz > PICK_R * PICK_R) continue;
+        if (dx * dx + dz * dz > PICK_R * PICK_R || dy * dy > PICK_Y * PICK_Y) continue;
         b.alive = false;
         b.cool = RESPAWN_S;
         const place = Math.max(1, order.indexOf(r) + 1);
@@ -229,8 +252,15 @@ export class ItemBattle {
     let down = false;
     if (kind === 'local') down = !!(r.driver.input && r.driver.input.state && r.driver.input.state.item);
     else if (kind === 'remote') down = !!(r.driver.state && r.driver.state.item);
-    if (down && !r._itemLatch) this.use(r, order);
+    const pressed = down && !r._itemLatch;
     r._itemLatch = down;
+    if (pressed) r._itemQueueT = ITEM_PRESS_QUEUE_S;
+    if ((v.item | 0) && r._itemQueueT > 0) {
+      r._itemQueueT = 0;
+      this.use(r, order);
+      return;
+    }
+    if (r._itemQueueT > 0) r._itemQueueT = Math.max(0, r._itemQueueT - dt);
   }
 
   use(r, order) {
@@ -240,6 +270,7 @@ export class ItemBattle {
     const roster = order || ranked([r]);
     v.item = 0;
     v.itemAge = 0;
+    this.bursts.push({ kind: id, x: v.pos.x, y: v.pos.y + 1.3, z: v.pos.z, age: 0 });
     if (id === ITEM.AEGIS) {
       v.shield = true;
       v.shieldT = 18;
@@ -260,12 +291,18 @@ export class ItemBattle {
           ov.shield = false;
           ov.shieldT = 0;
           ov.iFrame = 0.45;
+          ov.hitKind = ITEM.STORM;
+          ov.hitT = 1.1;
+          ov.hitBlock = true;
           continue;
         }
         ov.slowT = 1.7;
         ov.spinT = 0;
         ov.boostT = 0;
         ov.iFrame = 2.2;
+        ov.hitKind = ITEM.STORM;
+        ov.hitT = 1.2;
+        ov.hitBlock = false;
       }
       v.boostT = ahead.length ? 1.15 : 1.7;
       v.boostPower = ahead.length ? 16 : 34;
@@ -339,8 +376,11 @@ export class ItemBattle {
           const dx = v.pos.x - s.x, dy = v.pos.y - s.y, dz = v.pos.z - s.z;
           const rad = s.r + 1.15;
           if (dx * dx + dy * dy + dz * dz > rad * rad) continue;
-          const res = hitCar(v);
-          if (res) s.hit.add(r);
+          const res = hitCar(v, s.kind);
+          if (res) {
+            s.hit.add(r);
+            this.bursts.push({ kind: s.kind, x: v.pos.x, y: v.pos.y + 0.8, z: v.pos.z, age: 0, hit: res });
+          }
           if (res && s.kind !== ITEM.SLICK) { s.life = 0; break; }
         }
       }
@@ -359,6 +399,7 @@ export class ItemBattle {
         owner: (s.owner && (s.owner.netId || s.owner.name)) || '',
         target: (s.target && (s.target.netId || s.target.name)) || '',
       })),
+      bursts: this.bursts.map((b) => ({ kind: b.kind, x: b.x, y: b.y, z: b.z, age: b.age, hit: b.hit || '' })),
     };
   }
 }
