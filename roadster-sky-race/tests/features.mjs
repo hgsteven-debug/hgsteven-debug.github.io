@@ -14,6 +14,7 @@ const browser = await puppeteer.launch({
 
 async function open(query) {
   if (!query.includes('nonet=1') && !query.includes('net=1')) query += '&nonet=1';
+  if (!query.includes('items=')) query += '&items=0';
   if (!query.includes('lang=')) query += '&lang=zh-TW';
   const page = await browser.newPage();
   const errors = [];

@@ -39,7 +39,7 @@ export class UI {
     this.screens = {
       loading: $('s-loading'), start: $('s-start'), mode: $('s-mode'), lobby: $('s-lobby'),
       pause: $('s-pause'), settings: $('s-settings'), mapping: $('s-mapping'),
-      garage: $('s-garage'), tracks: $('s-tracks'), ready: $('s-ready'),
+      garage: $('s-garage'), tracks: $('s-tracks'), items: $('s-items'), ready: $('s-ready'),
       results: $('s-results'), join: $('s-join'),
     };
     this.current = 'loading';
@@ -68,6 +68,7 @@ export class UI {
     if (name === 'settings') this.syncSettings();
     if (name === 'garage') this.refreshGarage();
     if (name === 'tracks') this.refreshTracks();
+    if (name === 'items') this.syncItems();
     if (name === 'mode') this.markMode();
     if (name === 'ready') this.refreshReady();
     this.setFocus(this.firstFocus());
@@ -90,8 +91,9 @@ export class UI {
     const mode = store.get('playmode', 'solo') === 'multi' ? 'multi' : 'solo';
     this.stack = ['start', 'mode'];
     if (mode === 'multi') this.stack.push('lobby');
-    if (stage === 'tracks' || stage === 'ready') this.stack.push('garage');
-    if (stage === 'ready') this.stack.push('tracks');
+    if (stage === 'tracks' || stage === 'items' || stage === 'ready') this.stack.push('garage');
+    if (stage === 'items' || stage === 'ready') this.stack.push('tracks');
+    if (stage === 'ready') this.stack.push('items');
     this.show(stage);
   }
   markMode() {
@@ -103,7 +105,7 @@ export class UI {
     }
   }
   advance() {
-    const next = { lobby: 'garage', garage: 'tracks', tracks: 'ready' }[this.current];
+    const next = { lobby: 'garage', garage: 'tracks', tracks: 'items', items: 'ready' }[this.current];
     if (next) this.show(next, true);
   }
   refreshReady() {
@@ -117,6 +119,7 @@ export class UI {
       const key = ['easy', 'normal', 'hard'].includes(diff) ? diff : 'normal';
       aiEl.textContent = n === '0' ? t('ready.aiNone') : t('ready.ai', { n, diff: t('diff.' + key) });
     }
+    this.syncItems();
     this.refreshGarage();
     this.refreshTracks();
   }
@@ -144,6 +147,7 @@ export class UI {
       if (this.wizard) return f.find((b) => b.dataset.act === 'flow-next') || f[0] || null;
       return f.find((b) => b.dataset.track === this.trackId) || f[0] || null;
     }
+    if (this.current === 'items') return f.find((b) => b.dataset.act === 'flow-next') || f[0] || null;
     return f.find((b) => b.classList.contains('primary')) || f[0] || null;
   }
   setFocus(el) {
@@ -196,6 +200,7 @@ export class UI {
       if (b.dataset.tc) { this.touchMode = b.dataset.tc; store.set('touch', b.dataset.tc); this.h.onTouchMode(); this.syncSettings(); return; }
       if (b.dataset.ai != null) { store.set('aicount', b.dataset.ai); this.syncSettings(); return; }
       if (b.dataset.diff) { store.set('aidiff', b.dataset.diff); this.syncSettings(); return; }
+      if (b.dataset.items != null) { store.set('items', b.dataset.items === '0' ? '0' : '1'); this.syncItems(); return; }
       if (b.dataset.lang) { setLocale(b.dataset.lang); this.syncSettings(); return; }
       if (b.dataset.row) { this.startLearn(b.dataset.row); return; }
       switch (act) {
@@ -401,8 +406,18 @@ export class UI {
     for (const b of document.querySelectorAll('[data-diff]')) b.classList.toggle('sel', b.dataset.diff === ad);
     this.refreshReady();
     for (const b of document.querySelectorAll('[data-lang]')) b.classList.toggle('sel', b.dataset.lang === getLocale());
+    this.syncItems();
     this.refreshGarage();
     if ($('qinfo')) $('qinfo').textContent = t('set.qinfo');
+  }
+
+  syncItems() {
+    const on = store.get('items', '1') !== '0';
+    for (const b of document.querySelectorAll('#s-items [data-items]')) {
+      b.classList.toggle('sel', (b.dataset.items === '1') === on);
+    }
+    const line = $('readyItems');
+    if (line) line.textContent = t(on ? 'ready.items' : 'ready.itemsOff');
   }
 
   // ---------- 按鍵設定 ----------

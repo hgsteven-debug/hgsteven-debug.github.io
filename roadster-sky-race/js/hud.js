@@ -2,6 +2,7 @@
 import { clamp, smoothstep, fmtTime } from './util.js';
 import { t } from './i18n.js';
 import { ROAD_HALF } from './track.js';
+import { ITEM_GLYPH, ITEM_KEY } from './items.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -14,6 +15,8 @@ export class Hud {
       toast: $('toast'), pad: $('padstate'), cam: $('camlabel'), count: $('count'),
       vig: $('vignette'), fx: $('fx'), mm: $('minimap'), flash: $('flash'),
       pill: $('linkpill'), linkKind: $('linkKind'), linkMs: $('linkMs'), linkHint: $('linkhint'),
+      slot: $('itemslot'), glyph: $('itemglyph'), iname: $('itemname'), warn: $('itemwarn'),
+      touchIco: $('touchItemIco'),
     };
     this._last = {};
     this.toastT = 0;
@@ -137,6 +140,44 @@ export class Hud {
     this.setText('lapBest', e.lapBest, fmtTime(lap.best));
     this.setText('cam', e.cam, t('hud.cam', { name: camLabel }));
     this.setText('pad', e.pad, padText);
+  }
+
+  setBattle(info) {
+    const e = this.el;
+    const on = !!(info && info.on);
+    if (e.slot) e.slot.classList.toggle('hidden', !on);
+    if (e.warn) e.warn.classList.toggle('hidden', !(on && info.aimed));
+    document.body.classList.toggle('items-on', on);
+    if (!on) {
+      this._roll = null;
+      this._itemShown = 0;
+      if (e.touchIco) e.touchIco.textContent = '';
+      return;
+    }
+    const id = info.item | 0;
+    if (id && this._itemShown === 0 && !(this._roll && this._roll.final === id)) {
+      this._roll = { until: performance.now() + 680, final: id };
+    }
+    if (!id) { this._roll = null; this._itemShown = 0; }
+    let show = id;
+    let rolling = false;
+    if (this._roll) {
+      if (performance.now() < this._roll.until) {
+        rolling = true;
+        show = 1 + (Math.floor(performance.now() / 70) % 6);
+      } else {
+        show = this._roll.final;
+        this._itemShown = show;
+        this._roll = null;
+      }
+    } else this._itemShown = id;
+    const glyph = ITEM_GLYPH[show] || '';
+    const name = show ? t('item.' + ITEM_KEY[show]) : t('item.empty');
+    if (e.slot) e.slot.classList.toggle('roll', rolling);
+    if (e.glyph) this.setText('itemglyph', e.glyph, glyph || '–');
+    if (e.iname) this.setText('itemname', e.iname, rolling ? t('item.roll') : name);
+    if (e.touchIco) this.setText('touchIco', e.touchIco, id ? (ITEM_GLYPH[id] || '') : '');
+    if (e.warn && info.aimed) this.setText('itemwarn', e.warn, t('item.warn'));
   }
 
   // 速度線與暈邊

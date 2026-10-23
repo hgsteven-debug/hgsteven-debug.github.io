@@ -74,7 +74,7 @@ async function measure(host, secs) {
 }
 
 async function runPath(browser, name, hostQuery, blockRtc) {
-  const host = await open(browser, BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&debug=1' + hostQuery);
+  const host = await open(browser, BASE + '?track=canyon&q=low&ai=0&noadapt=1&nopauseblur=1&nocount=1&debug=1&items=0' + hostQuery);
   await host.waitForFunction(() => window.__sky.net.ready || window.__sky.net.failed, { timeout: 22000 });
   const ready = await host.evaluate(() => window.__sky.net.ready);
   if (!ready) {

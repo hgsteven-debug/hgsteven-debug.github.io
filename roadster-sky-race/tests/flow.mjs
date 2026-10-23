@@ -135,6 +135,14 @@ try {
   await shot(page, 'zh-track');
 
   await page.click('#s-tracks [data-act="flow-next"]');
+  await page.waitForFunction(() => window.__sky.ui.current === 'items');
+  const items = await page.evaluate(() => ({
+    focus: window.__sky.ui.focusEl && window.__sky.ui.focusEl.dataset.act,
+    on: document.querySelector('#s-items [data-items="1"]').classList.contains('sel'),
+    title: document.querySelector('#s-items h2').textContent,
+  }));
+  assert(items.focus === 'flow-next' && items.on && items.title === '道具戰', JSON.stringify(items));
+  await page.click('#s-items [data-act="flow-next"]');
   await page.waitForFunction(() => window.__sky.ui.current === 'ready');
   const ready = await page.evaluate(() => ({
     focus: window.__sky.ui.focusEl && window.__sky.ui.focusEl.dataset.act,
@@ -151,6 +159,8 @@ try {
   assert(ready.car.includes('目前車輛') && ready.track.includes('目前賽道'), JSON.stringify(ready));
   await shot(page, 'zh-ready');
 
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.__sky.ui.current === 'items');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => window.__sky.ui.current === 'tracks');
   await page.keyboard.press('Escape');
@@ -201,14 +211,14 @@ try {
 try {
   const { page, errors } = await open('zh-TW');
   const path = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     const before = await page.evaluate(() => window.__sky.ui.current + '|' + window.__sky.game.state);
     path.push(before);
     await page.keyboard.press('Enter');
     await page.waitForFunction((prev) => (window.__sky.ui.current + '|' + window.__sky.game.state) !== prev, { timeout: 4000 }, before);
   }
   const end = await page.evaluate(() => ({ state: window.__sky.game.state, ui: window.__sky.ui.current, mode: localStorage.getItem('skyroadster.playmode') }));
-  assert(path.join('>') === 'start|menu>mode|menu>garage|menu>tracks|menu>ready|menu', path.join('>'));
+  assert(path.join('>') === 'start|menu>mode|menu>garage|menu>tracks|menu>items|menu>ready|menu', path.join('>'));
   assert(end.state === 'countdown' || end.state === 'race', JSON.stringify(end));
   assert(end.ui == null, JSON.stringify(end));
   assert(end.mode === JSON.stringify('solo'), end.mode);

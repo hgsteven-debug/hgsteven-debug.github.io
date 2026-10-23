@@ -72,16 +72,44 @@ function buildState(phoneIndex, phones, t, seq) {
   };
 }
 
-function measure(phones, link) {
+function attachBattle(msg, t) {
+  const boxes = [];
+  for (let i = 0; i < 20; i++) boxes.push({ alive: ((Math.floor(t) + i) % 8) !== 0 });
+  const nShots = Math.floor(t * 2) % 4;
+  const shots = [];
+  const owners = ['P1', 'P2', 'P3', 'P4', 'P5'];
+  for (let i = 0; i < nShots; i++) {
+    shots.push({
+      kind: 1 + (i % 3),
+      x: Math.cos(t + i) * 80, y: 2.2, z: Math.sin(t + i) * 80,
+      owner: owners[i % owners.length],
+      target: i === 0 ? owners[(i + 1) % owners.length] : '',
+    });
+  }
+  if (msg.self) {
+    msg.self.item = 2;
+    msg.self.aimed = Math.floor(t * 2) % 6 === 0;
+  }
+  for (let i = 0; i < msg.cars.length; i++) {
+    msg.cars[i].item = (i + Math.floor(t)) % 7;
+    msg.cars[i].shield = msg.cars[i].item === 4;
+  }
+  msg.battle = { on: true, boxes, shots };
+  return msg;
+}
+
+function measure(phones, link, items) {
   const gap = link === 'relay' ? 100 : 66;
   const dur = 10000;
   const ctx = Array.from({ length: phones }, () => ({}));
   let stateBytes = 0, statePkts = 0;
   const sizes = [];
+  let checked = false;
   for (let tms = 0; tms < dur; tms += gap) {
     const t = tms / 1000;
     for (let p = 0; p < phones; p++) {
-      const msg = buildState(2 + p, phones, t, Math.floor(tms / 50));
+      let msg = buildState(2 + p, phones, t, Math.floor(tms / 50));
+      if (items) msg = attachBattle(msg, t);
       const bytes = encodeState(msg, ctx[p], tms);
       let wire;
       if (link === 'relay') {
@@ -91,6 +119,11 @@ function measure(phones, link) {
       stateBytes += wire;
       statePkts++;
       sizes.push(link === 'relay' ? mqttPublish(TOPIC, JSON.stringify({ from: 'h', nonce: 'n', b: bytesToB64(bytes), mid: 'h1' })).length : bytes.length);
+      if (items && !checked && p === 0) {
+        const dec = decodeState(bytes, createDict());
+        if (!dec || !dec.battle || !dec.battle.on || dec.battle.boxes.length !== 20) throw new Error('items decode ' + (dec && dec.battle && dec.battle.boxes && dec.battle.boxes.length));
+        checked = true;
+      }
     }
   }
   let inBytes = 0, inPkts = 0;
@@ -141,6 +174,7 @@ function measure(phones, link) {
     inPps: +(inPkts / phones / sec).toFixed(2),
     inAvg: Math.round(avg(inSizes)),
     mb10: +((stateBps + inBps) * 600 / 1e6).toFixed(2),
+    items: !!items,
   };
 }
 
@@ -254,6 +288,31 @@ function testBudget() {
   assert(worst.mb10 < 8, 'relay 10 min ' + worst.mb10);
   const env = relayWireBytes({ b: 'aa', mid: 'h1', from: 'host' });
   assert(env > 20 && env < 80, 'envelope ' + env);
+  const plain = encodeInput({ t: 'input', seq: 1, steer: 0.1, throttle: 1, brake: 0, lift: false, nitro: false, item: false, pitch: 0, hist: [] });
+  const fired = encodeInput({ t: 'input', seq: 1, steer: 0.1, throttle: 1, brake: 0, lift: false, nitro: true, item: true, pitch: 0, hist: [] });
+  assert(plain.length === fired.length, 'item bit stays inside the buttons byte');
+}
+
+function testItemsOn() {
+  const rows = [];
+  for (const phones of [1, 2, 3]) for (const link of ['direct', 'relay']) rows.push(measure(phones, link, true));
+  console.log('ITEMS', JSON.stringify(rows, null, 2));
+  const direct = rows.find((r) => r.phones === 3 && r.link === 'direct');
+  const relay = rows.find((r) => r.phones === 3 && r.link === 'relay');
+  const offDirect = measure(3, 'direct', false);
+  const offRelay = measure(3, 'relay', false);
+  const dExtra = direct.stateBps - offDirect.stateBps;
+  const rExtra = relay.stateBps - offRelay.stateBps;
+  console.log('ITEMS_DELTA', JSON.stringify({
+    directOff: offDirect, relayOff: offRelay,
+    directExtraBps: dExtra, relayExtraBps: rExtra,
+    directExtraMb10: +((dExtra * 600) / 1e6).toFixed(3),
+    relayExtraMb10: +((rExtra * 600) / 1e6).toFixed(3),
+  }));
+  assert(dExtra > 0 && dExtra < 900, 'direct item extra ' + dExtra);
+  assert(rExtra > 0 && rExtra < 1600, 'relay item extra ' + rExtra);
+  assert(direct.mb10 < 3, 'items direct 10 min ' + direct.mb10);
+  assert(relay.mb10 < 8, 'items relay 10 min ' + relay.mb10);
 }
 
 function testSelfAlways() {
@@ -280,6 +339,7 @@ function testSelfAlways() {
 
 try { testSelfAlways(); ok('self full rate'); } catch (e) { bad('self full rate', e); }
 try { testBudget(); ok('budget'); } catch (e) { bad('budget', e); }
+try { testItemsOn(); ok('items on'); } catch (e) { bad('items on', e); }
 try { testLoss(); ok('loss'); } catch (e) { bad('loss', e); }
 if (fails.length) { console.error('FAILED', fails.join(', ')); process.exit(1); }
 console.log('ALL PASS');
