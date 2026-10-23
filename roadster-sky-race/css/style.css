@@ -29,6 +29,8 @@ canvas#fx { pointer-events:none; }
 #toast { position:absolute; left:50%; top:14%; transform:translateX(-50%); font-size:1.7rem; font-weight:700;
   text-shadow:0 2px 12px rgba(0,0,0,.8); opacity:0; transition:opacity .25s; text-align:center; white-space:nowrap; }
 #toast.on { opacity:1; }
+#offcount { position:absolute; left:50%; top:22%; transform:translateX(-50%); font-size:1.45rem; font-weight:800;
+  color:#ffb02e; text-shadow:0 2px 12px rgba(0,0,0,.85); letter-spacing:.04em; pointer-events:none; text-align:center; }
 #rightcol { position:absolute; right:1.2rem; top:1rem; display:flex; flex-direction:column; align-items:flex-end; gap:.5rem; }
 #rightcol canvas { width:11rem; height:11rem; background:var(--bg); border:1px solid rgba(255,255,255,.12); border-radius:.6rem; }
 button.mini { pointer-events:auto; background:var(--bg); color:var(--fg); border:1px solid rgba(255,255,255,.2); border-radius:.5rem;

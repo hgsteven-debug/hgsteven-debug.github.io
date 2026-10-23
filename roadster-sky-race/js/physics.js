@@ -54,6 +54,9 @@ export class Vehicle {
     this.sawInvert = false;
     this._jumpArmed = false;
     this.lastCp = null;
+    this.lastGoodFi = null;
+    this.offLeft = 0;
+    this._lostT = 0;
     this._safeT = 0;
     this._trapT = 0;
     this._trapDist = 0;
@@ -111,12 +114,30 @@ export class Vehicle {
     return best;
   }
 
-  recoverToCheckpoint() {
-    const i = this.lastCp != null ? this.tr.wrap(this.lastCp) : this._checkpointBehind(this.fi);
-    this.placeOnTrack(i, 0, 22);
-    this.energy = Math.max(this.energy, 55);
-    this.lastCp = this._checkpointBehind(i);
+  // 回到離開前的路面，而不是檢查點 0（起跑線）。往賽道方向退一小段，避開缺口。
+  _recoverIndex() {
+    const tr = this.tr;
+    let i = this.lastGoodFi != null ? tr.wrap(Math.round(this.lastGoodFi))
+      : (this.lastCp != null ? tr.wrap(this.lastCp) : tr.wrap(Math.round(this.fi || 0)));
+    const back = Math.max(4, Math.round(16 / Math.max(0.4, tr.ds || 1)));
+    i = tr.wrap(i - back);
+    for (let n = 0; n < 100; n++) {
+      const kind = tr.kind ? tr.kind[i] : 0;
+      if (!tr.isGapIdx(i) && kind !== KIND.FLY) break;
+      i = tr.wrap(i - 2);
+    }
+    return i;
   }
+  recoverBehind(speed = 18) {
+    const i = this._recoverIndex();
+    this.placeOnTrack(i, 0, speed);
+    this.energy = Math.max(this.energy, 55);
+    this.offLeft = 0;
+    this._lostT = 0;
+    if (this.tr.checkpoints && this.tr.checkpoints.length) this.lastCp = this._checkpointBehind(i);
+    return i;
+  }
+  recoverToCheckpoint() { this.recoverBehind(22); }
 
   // 套用車輛調校（見 vehicles.js）
   setTune(t) { this.t = fullTune(t); this.wb = this.t.wb; this.halfW = this.t.hw; }
@@ -128,6 +149,10 @@ export class Vehicle {
     const tr = this.tr;
     i = tr.wrap(Math.round(i));
     this.fi = i;
+    this.lastGoodFi = i;
+    this.offLeft = 0;
+    this._lostT = 0;
+    this.onRoad = true;
     this.lat = lat;
     this.detachCool = 0;
     this.flipAssist = false;
@@ -339,45 +364,88 @@ export class Vehicle {
     this._noteTrap(dt);
   }
 
+  // 只在真正沿著路面走的時候記下進度。查詢跳到交叉或起跑線時不要覆寫。
+  _noteGood() {
+    const tr = this.tr;
+    const q = this.q1;
+    const fi = this.attached ? this.fi : ((q && q.fi) || this.fi || 0);
+    const roadY = q && q.near ? q.y : this.groundY;
+    const side = q && q.near ? Math.abs(q.l || 0) : 999;
+    // 還在走廊裡（含路肩、跳躍、懸停）就更新。一出走廊就停，重生才會落在剛離開的地方。
+    const onLine = this.attached || (
+      q && q.near && side <= ROAD_HALF_K + 14 && !q.gap && this.pos.y > roadY - 4
+    );
+    if (!onLine || !tr) return;
+    const idx = tr.wrap(Math.round(fi));
+    if (this.lastGoodFi == null) { this.lastGoodFi = idx; return; }
+    let d = idx - this.lastGoodFi;
+    const N = tr.N;
+    if (d > N / 2) d -= N;
+    if (d < -N / 2) d += N;
+    if (d >= -15 && d <= 160) this.lastGoodFi = idx;
+  }
+
+  // 側向用 q.l，不用被切線距離灌大的 q.al。走廊上方的跳躍和懸停不算偏離。
+  _lostKind() {
+    if (this.attached) return '';
+    const q = this.q1 || {};
+    const roadY = (q.near && Math.abs(q.l || 0) < 400) ? q.y : (Number.isFinite(this.groundY) ? this.groundY : this.pos.y);
+    if (!Number.isFinite(this.pos.x) || !Number.isFinite(this.pos.y) || !Number.isFinite(this.pos.z)) return 'fall';
+    const side = q.near ? Math.abs(q.l || 0) : (q.d || 999);
+    const above = this.pos.y >= roadY - 4;
+    if (!this.grounded && above && side <= ROAD_HALF_K + 10) return '';
+    if (q.gap && above && side <= ROAD_HALF_K + 8) return '';
+    // 彎道路面比中線低，不能拿中線高度當成「掉下去」。只有峽谷缺口或真的在空中掉過路面才算。
+    if (q.near && this.tr.pitEdge(q.fi) > 0.5 && this.pos.y < q.y - 8) return 'fall';
+    // 車輪底下的地面才算。下坡或傾斜的路面比中線低，不能當成墜崖。
+    const gy = Number.isFinite(this.groundY) ? this.groundY : roadY;
+    if (!this.grounded && this.pos.y < roadY - 14 && this.pos.y < gy - 4) return 'fall';
+    if (side > ROAD_HALF_K + 16) return 'side';
+    return '';
+  }
+
   _noteTrap(dt) {
     if (this.followHost) return;
     const ev = this.events;
+    this._noteGood();
     const fi = this.attached ? this.fi : (this.q1.fi || this.fi || 0);
     if (this.tr.checkpoints && this.tr.checkpoints.length) this.lastCp = this._checkpointBehind(fi);
-    if (this._wx == null) { this._wx = this.pos.x; this._wy = this.pos.y; this._wz = this.pos.z; }
-    const moved = Math.hypot(this.pos.x - this._wx, this.pos.y - this._wy, this.pos.z - this._wz);
-    this._wx = this.pos.x; this._wy = this.pos.y; this._wz = this.pos.z;
-    if (this.pos.y < -30 || !Number.isFinite(this.pos.x)) { ev.respawn = true; if (!ev.why) ev.why = 'off'; }
-    if (this._safeT > 0) { this._safeT -= dt; this._trapT = 0; this._trapDist = 0; this._oobT = 0; this._crawlT = 0; return; }
-    const away = !this.attached && ((this.q1.al || 0) > 34 || (this.q1.d || 0) > 40);
-    const oob = this.pos.y < -8 || away || !Number.isFinite(this.pos.y);
-    this._oobT = oob ? (this._oobT || 0) + dt : 0;
-    this._trapT = (this._trapT || 0) + dt;
-    this._trapDist = (this._trapDist || 0) + moved;
-    // 貼著護欄磨、油門踩著卻快不起來：約兩秒回到檢查點。停在路面中央不算。
-    const grinding = this._onRail && this.speed < 9 && this.thrust > 0.15 && !this.attached;
-    this._railT = grinding ? (this._railT || 0) + dt : 0;
-    const g = trackGravity(this.tr);
-    const airLim = 1.6 * (9.81 / g);
-    const roadY = (this.q1 && this.q1.near) ? this.q1.y : this.groundY;
-    const longFall = this.airTime > airLim && !this.thrusting && this.pos.y < roadY - 8;
-    if ((this._lip || 0) > 1.2 || this._oobT > 2 || this._railT > 2) {
+    if (!Number.isFinite(this.pos.x) || this.pos.y < -120) {
       ev.respawn = true;
-      ev.why = this._oobT > 2 && (this._lip || 0) <= 1.2 && this._railT <= 2 ? 'off' : 'stuck';
-    } else if (this._trapT >= 2) {
-      const pinned = this._trapDist < 2.2 && (
-        this.speed > 8 || (this._lip || 0) > 0.2 || (!this.onRoad && this.speed < 4)
-        || longFall
-        || (!this.attached && this.q1.near && this.q1.al > 16 && this.speed < 8)
-      );
-      if (pinned) {
-        ev.respawn = true;
-        ev.why = 'stuck';
-      }
-      this._trapT = 0;
-      this._trapDist = 0;
+      if (!ev.why) ev.why = 'off';
+      this.offLeft = 0;
+      return;
     }
-    // 油門按住、車速仍低於約 3 km/h：先沿車頭推一把，滿 3 秒就回上一個檢查點。
+    if (this._safeT > 0) {
+      this._safeT -= dt;
+      this._trapT = 0; this._trapDist = 0; this._oobT = 0; this._crawlT = 0; this._lostT = 0;
+      this.offLeft = 0;
+      this.onRoad = true;
+      return;
+    }
+    const lost = this._lostKind();
+    if (!lost) {
+      this._lostT = 0;
+      this.offLeft = 0;
+      this.onRoad = true;
+    } else {
+      const grace = lost === 'fall' ? 0.7 : 2.8;
+      this._lostT = (this._lostT || 0) + dt;
+      this.offLeft = Math.max(0, grace - this._lostT);
+      this.onRoad = false;
+      if (this._lostT >= grace) {
+        ev.respawn = true;
+        if (!ev.why) ev.why = 'off';
+      }
+    }
+    // 貼著護欄磨、油門踩著卻快不起來。停在路面中央、或只是被護欄修正位置，不算卡住。
+    const grinding = this._onRail && this.speed < 9 && this.thrust > 0.15 && !this.attached && this.grounded;
+    this._railT = grinding ? (this._railT || 0) + dt : 0;
+    if (this._railT > 3 && !ev.respawn) {
+      ev.respawn = true;
+      ev.why = 'stuck';
+    }
+    // 油門按住、車速仍低於約 3 km/h：先沿車頭推一把，滿 3 秒再放回路面。
     const thrHeld = (this._throttle || 0) > 0.5;
     const crawling = thrHeld && this.speed < 0.85 && !this.attached;
     if (crawling) {
@@ -390,7 +458,7 @@ export class Vehicle {
         this.vel.z += -Math.cos(hdg) * 7;
         this.pos.y += 0.35;
       }
-      if (this._crawlT > 3) {
+      if (this._crawlT > 3 && !ev.respawn) {
         ev.respawn = true;
         ev.why = 'stuck';
         this._crawlT = 0;
@@ -460,7 +528,9 @@ export class Vehicle {
 
     // 目前中心查詢（賽道座標）
     const q = tr.query(this.pos.x, this.pos.z, this.q1);
-    this.onRoad = q.near && q.al <= ROAD_HALF_K + 0.6 && !q.gap;
+    // 抓地看真正的橫向距離。切線很遠的地面取樣會把 al 灌大，不能拿來判定出界。
+    const sideOff = q.near ? Math.abs(q.l || 0) : 999;
+    this.onRoad = q.near && sideOff <= ROAD_HALF_K + 0.6 && !q.gap;
     const planeY = q.near ? q.y - q.l * Math.tan(q.bank) : this.groundY;
     const refY = (q.near && q.al < ROAD_HALF_K + 8) ? Math.max(this.groundY, planeY) : this.groundY;
     this.alt = this.pos.y - refY;
@@ -705,11 +775,6 @@ export class Vehicle {
     }
     this._prevL = q2.l;
 
-    // 墜入峽谷
-    if (!this.followHost && q2.near && tr.pitEdge(q2.fi) > 0.5 && this.pos.y < q2.y - 7.5) {
-      ev.respawn = true;
-      ev.why = 'off';
-    }
     if (tr.obstacles && this.pos.y < 80) {
       for (let oi = 0; oi < tr.obstacles.length; oi++) {
         const o = tr.obstacles[oi];
@@ -767,7 +832,7 @@ export class Vehicle {
       accel: n(this.accel), latAccel: n(this.latAccel), speedF: n(this.speedF),
       thrust: n(this.thrust), lift: n(this.lift), braking: !!this.braking,
       groundY: n(this.groundY), airTime: n(this.airTime), pitchView: n(this.pitchView),
-      onRoad: !!this.onRoad, alt: n(this.alt),
+      onRoad: !!this.onRoad, alt: n(this.alt), offLeft: n(this.offLeft),
       fi: n(this.fi), lat: n(this.lat), attached: !!this.attached,
       flipAssist: !!this.flipAssist, detachCool: n(this.detachCool), vlat: n(this.vlat),
       sawCeiling: !!this.sawCeiling, sawInvert: !!this.sawInvert,

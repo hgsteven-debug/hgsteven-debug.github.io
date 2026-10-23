@@ -452,7 +452,10 @@ export function encodeState(msg, remote, now) {
   if (msg && msg.self) flags |= 2;
   if (hasHud) flags |= 4;
   if (battleOn) flags |= 16;
+  const offTenths = msg && +msg.offLeft > 0.05 ? Math.max(1, Math.min(255, Math.round(+msg.offLeft * 10))) : 0;
+  if (offTenths) flags |= 8;
   u8(w, flags);
+  if (offTenths) u8(w, offTenths);
   u16(w, ctx._stateN & 65535);
   u16(w, (msg && msg.ack) | 0);
   const phase = PHASES.indexOf(msg && msg.race);
@@ -504,6 +507,7 @@ export function decodeState(buf, dict) {
   const r = makeR(buf);
   if (ru8(r) !== STATE_MAGIC) return null;
   const flags = ru8(r);
+  const offLeft = (flags & 8) ? ru8(r) / 10 : 0;
   const keyframe = !!(flags & 1);
   const hasSelf = !!(flags & 2);
   const hasHud = !!(flags & 4);
@@ -549,7 +553,7 @@ export function decodeState(buf, dict) {
   }
   return {
     t: 'state', seq, ack, race, cd, track, selfId, self, selfLap, cars,
-    selfVehicle, selfPaint, standings, keyframe, partial: !keyframe, battle,
+    selfVehicle, selfPaint, standings, keyframe, partial: !keyframe, battle, offLeft,
   };
 }
 

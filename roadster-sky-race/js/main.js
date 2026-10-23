@@ -52,6 +52,7 @@ const guestVis = {
 };
 let guestSelfAt = 0;
 let guestRoad = { known: false, onRoad: true, since: 0, toastAt: 0 };
+let guestOffLeft = 0;
 let orientSticky = '';
 let orientTimer = 0;
 let orientPending = '';
@@ -737,6 +738,7 @@ function netStateFor(remote) {
     ack: remote.seq | 0, selfId, self, selfLap, standings, cars,
     selfVehicle: remote.vehicle, selfPaint: remote.paint,
     battle: battle && battle.enabled ? battle.view() : null,
+    offLeft: remote.racer && remote.racer.veh ? (remote.racer.veh.offLeft || 0) : 0,
   };
 }
 function itemsEnabled() {
@@ -980,6 +982,7 @@ function onGuestState(msg) {
   if (!msg.standings && prev && prev.standings) msg.standings = prev.standings;
   guestNet.latest = msg;
   guestNet.connected = true;
+  guestOffLeft = msg.offLeft > 0 ? msg.offLeft : 0;
   if (!guestCarPick && packetVehicle) setVehicle(packetVehicle, msg.selfPaint, { persist: false, notify: false, keepEnergy: true });
   const cars = (msg.cars || []).filter((c) => c && c.id !== msg.selfId);
   guestBuf.push(performance.now(), cars);
@@ -1123,6 +1126,7 @@ function leaveGuestRace() {
   guestVis.on = false;
   guestEase.ready = false;
   guestRoad = { known: false, onRoad: true, since: 0, toastAt: 0 };
+  guestOffLeft = 0;
   clearGhosts();
   setSplit(false);
   game.state = 'menu';
@@ -1239,13 +1243,21 @@ function respawnRacer(r, why) {
   const v = r ? r.veh : veh;
   const msg = whyText((v.events && v.events.why) || why);
   if (v.events) v.events.why = '';
-  if (track.checkpoints && track.checkpoints.length && v.recoverToCheckpoint) v.recoverToCheckpoint();
-  else if (!track.gaps.length) v.placeOnTrack(track.wrap(track.N - 10), r ? r.lat0 : 0, 20);
-  else {
-    const g = nearestGap(v);
-    v.placeOnTrack(track.wrap(g.g0 - track.rampRows - 32), r ? r.lat0 : 0, 24);
+  const lap = (r && r.lap) || game.lap;
+  const keep = lap ? { n: lap.n, t: lap.t, cp: lap.cp.slice(), last: lap.last, best: lap.best } : null;
+  if (v.recoverBehind) v.recoverBehind(18);
+  else if (track.checkpoints && track.checkpoints.length && v.recoverToCheckpoint) v.recoverToCheckpoint();
+  else v.placeOnTrack(track.wrap((v.lastGoodFi != null ? v.lastGoodFi : v.fi) - 8), r ? r.lat0 : 0, 18);
+  if (lap && keep) {
+    lap.n = keep.n;
+    lap.t = keep.t;
+    lap.cp = keep.cp;
+    lap.last = keep.last;
+    lap.best = keep.best;
+    lap.prevFi = v.attached ? v.fi : (v.q1 && v.q1.fi);
   }
   v.energy = Math.max(v.energy, 55);
+  v.offLeft = 0;
   if (!r || r.primary) {
     game.respawns = (game.respawns || 0) + 1;
     hud.flash();
@@ -1377,7 +1389,8 @@ function noteHostSelf(msg) {
   pendingSnap = null;
   const road = hostOffroadWarn(guestRoad, pose.onRoad, now);
   guestRoad = road.state;
-  if (road.warn && guestLive && game.state === 'race' && hud) hud.toast(t('toast.offroad'), 1400);
+  // 倒數已經在畫了。舊的「偏離賽道」每 4 秒跳一次，正常跳躍也會觸發。
+  if (road.warn && !(guestOffLeft > 0) && pose.onRoad === false && guestLive && game.state === 'race' && hud) hud.toast(t('toast.offroad'), 1400);
 }
 function sampleGuestView(dt) {
   if (!game.guest || !guestSelfAt || performance.now() - guestSelfAt > 2500) {
@@ -1646,6 +1659,7 @@ function frame(now) {
     const stLabel = shown.nitroOn ? t('hud.nitro') : !shown.grounded ? (shown.thrusting ? t('hud.flying') : t('hud.air')) : (!onRoad ? t('hud.off') : t('hud.ground'));
     const lapView = game.guest && guestLive ? guestLap : game.lap;
     hud.update(dt, shown, lapView, camName(game.camMode), game.guest ? t('hud.touchDrive') : padText(), stLabel);
+    hud.setOff(game.guest ? guestOffLeft : (veh.offLeft || 0));
     hud.setBattle(battleHud());
     if (game.guest && guestPoses.length) {
       hud.drawMinimap(shown, guestPoses.map((p) => ({ veh: { pos: { x: p.x, z: p.z }, heading: p.heading || 0 }, driver: { kind: p.kind || 'remote' } })));

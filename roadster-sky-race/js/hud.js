@@ -13,7 +13,7 @@ export class Hud {
     this.el = {
       hud: $('hud'), speed: $('speed'), fill: $('ebarFill'), txt: $('ebarTxt'), state: $('state'),
       lapN: $('lapN'), lapT: $('lapT'), lapLast: $('lapLast'), lapBest: $('lapBest'),
-      toast: $('toast'), pad: $('padstate'), cam: $('camlabel'), count: $('count'),
+      toast: $('toast'), off: $('offcount'), pad: $('padstate'), cam: $('camlabel'), count: $('count'),
       vig: $('vignette'), fx: $('fx'), mm: $('minimap'), flash: $('flash'),
       pill: $('linkpill'), linkKind: $('linkKind'), linkMs: $('linkMs'), linkHint: $('linkhint'),
       slot: $('itemslot'), glyph: $('itemglyph'), iname: $('itemname'), warn: $('itemwarn'),
@@ -116,6 +116,15 @@ export class Hud {
 
   toast(msg, ms = 1800) {
     this.el.toast.textContent = msg; this.el.toast.classList.add('on'); this.toastT = ms / 1000;
+  }
+  setOff(sec) {
+    const el = this.el.off;
+    if (!el) return;
+    const show = sec > 0.05;
+    el.classList.toggle('hidden', !show);
+    if (!show) return;
+    const n = Math.max(1, Math.ceil(sec));
+    this.setText('offcount', el, t('toast.offcount', { n }));
   }
   flash() { this.el.flash.classList.add('on'); setTimeout(() => this.el.flash.classList.remove('on'), 160); }
   count(t) { this.setText('count', this.el.count, t); }
