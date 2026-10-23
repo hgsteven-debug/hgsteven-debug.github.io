@@ -745,15 +745,35 @@ function itemsEnabled() {
   return store.get('items', '1') !== '0';
 }
 function battleFrameView() {
-  if (game.guest) return guestBattle || { on: false, boxes: [], shots: [] };
-  if (!battle || !itemsEnabled()) return { on: false, boxes: [], shots: [] };
-  if (game.state !== 'race' && game.state !== 'countdown' && game.state !== 'paused') {
-    return { on: true, boxes: battle.boxes.map((b) => ({ alive: true })), shots: [] };
+  if (game.guest) {
+    const src = guestBattle || { on: false, boxes: [], shots: [] };
+    const msg = guestNet && guestNet.latest;
+    const shields = [];
+    if (msg && msg.self && msg.self.shield) shields.push({ x: msg.self.x, y: msg.self.y + 0.7, z: msg.self.z });
+    if (msg && msg.cars) for (const c of msg.cars) if (c && c.shield) shields.push({ x: c.x, y: c.y + 0.7, z: c.z });
+    return { on: !!src.on, boxes: src.boxes || [], shots: src.shots || [], bursts: src.bursts || [], shields };
   }
-  return battle.view();
+  if (!battle || !itemsEnabled()) return { on: false, boxes: [], shots: [], bursts: [], shields: [] };
+  if (game.state !== 'race' && game.state !== 'countdown' && game.state !== 'paused') {
+    return { on: true, boxes: battle.boxes.map((b) => ({ alive: true })), shots: [], bursts: [], shields: [] };
+  }
+  const view = battle.view();
+  view.shields = [];
+  if (race) {
+    for (const r of race.racers) {
+      if (r.veh && r.veh.shield) view.shields.push({ x: r.veh.pos.x, y: r.veh.pos.y + 0.7, z: r.veh.pos.z });
+    }
+  }
+  return view;
+}
+function itemHow() {
+  if (document.body.classList.contains('touchon')) return 'touch';
+  if (input && input.padInfo && input.padInfo.connected) return 'pad';
+  return 'key';
 }
 let _spinShown = false;
 function battleHud() {
+  const how = itemHow();
   if (game.guest) {
     const msg = guestNet && guestNet.latest;
     const self = msg && msg.self;
@@ -761,13 +781,19 @@ function battleHud() {
       on: !!(msg && msg.battle && msg.battle.on),
       item: self ? (self.item | 0) : 0,
       aimed: !!(self && self.aimed),
+      how,
+      hitKind: self ? (self.hitKind | 0) : 0,
+      hitBlock: !!(self && self.hitBlock),
     };
   }
   if (!battle || !battle.enabled) return { on: false };
   const spinning = !!(veh && veh.spinT > 0.15);
   if (spinning && !_spinShown && hud) hud.flash();
   _spinShown = spinning;
-  return { on: true, item: veh ? (veh.item | 0) : 0, aimed: !!(veh && veh.aimed) };
+  return {
+    on: true, item: veh ? (veh.item | 0) : 0, aimed: !!(veh && veh.aimed), how,
+    hitKind: veh ? (veh.hitKind | 0) : 0, hitBlock: !!(veh && veh.hitBlock),
+  };
 }
 function flushNet(force) {
   if (!hostNet || game.guest) return;

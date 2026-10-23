@@ -293,7 +293,10 @@ function writeSelf(w, s, keyframe, hasItems) {
   u16(w, clamp(Math.round(Math.max(0, +s.speed || 0) * 100), 0, 65535));
   i16(w, clamp(Math.round((+s.fi || 0) * 10), -32768, 32767));
   i16(w, clamp(Math.round((+s.lat || 0) * 100), -32768, 32767));
-  if (hasItems) u8(w, packItemBits(s));
+  if (hasItems) {
+    u8(w, packItemBits(s));
+    u8(w, ((s.hitKind | 0) & 7) | (s.hitBlock ? 8 : 0));
+  }
   if (!keyframe) return;
   i16(w, clamp(Math.round((+s.yawRate || 0) * 1000), -32768, 32767));
   i16(w, clamp(Math.round((+s.hover || 0) * 100), -32768, 32767));
@@ -331,7 +334,12 @@ function readSelf(r, keyframe, hasItems) {
     thrusting: !!(flags & 8), braking: !!(flags & 16), attached: !!(flags & 32),
     flipAssist: !!(flags & 64), sawCeiling: !!(flags & 128),
   };
-  if (hasItems) Object.assign(self, unpackItemBits(ru8(r)));
+  if (hasItems) {
+    Object.assign(self, unpackItemBits(ru8(r)));
+    const hb = ru8(r);
+    self.hitKind = hb & 7;
+    self.hitBlock = !!(hb & 8);
+  }
   if (!keyframe) return self;
   self.yawRate = ri16(r) / 1000;
   self.hover = ri16(r) / 100;

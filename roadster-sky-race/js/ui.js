@@ -299,6 +299,7 @@ export class UI {
       if (!key) return;
       holds.set(key, (holds.get(key) || 0) + 1);
       setHold(key, true);
+      if (key === 'item') this.input.noteItemTap();
       held.set(e.pointerId, { type: 'hold', key });
       try { el.setPointerCapture(e.pointerId); } catch (_) { /* */ }
     };
@@ -315,11 +316,26 @@ export class UI {
       }
       if (![...held.values()].some((x) => x.type === 'stick')) releaseStick();
     };
+    const armItem = (e) => {
+      const t = e.changedTouches && e.changedTouches[0];
+      const x = t ? t.clientX : e.clientX;
+      const y = t ? t.clientY : e.clientY;
+      const el = this.padTarget(x, y);
+      if (!el || el.dataset.t !== 'item') return;
+      if (e.cancelable) e.preventDefault();
+      this.input.noteItemTap();
+    };
     root.addEventListener('pointerdown', down);
     root.addEventListener('pointermove', (e) => { if (held.get(e.pointerId)?.type === 'stick') place(e); });
     root.addEventListener('pointerup', up);
-    root.addEventListener('pointercancel', () => { /* 按住時被當成捲動也不能鬆開 */ });
-    root.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+    root.addEventListener('pointercancel', (e) => {
+      const h = held.get(e.pointerId);
+      if (h && h.type === 'hold' && h.key === 'item') up(e);
+    });
+    root.addEventListener('touchstart', (e) => {
+      armItem(e);
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
   }
 
   // ---------- 設定 ----------

@@ -76,6 +76,9 @@ export class Vehicle {
     this.slowT = 0;
     this.aimed = false;
     this.itemAge = 0;
+    this.hitKind = 0;
+    this.hitT = 0;
+    this.hitBlock = false;
   }
 
   _frameSlot(name) {
@@ -771,6 +774,7 @@ export class Vehicle {
       prevL: n(this._prevL),
       item: this.item | 0, shield: !!this.shield, spinT: n(this.spinT),
       boostT: n(this.boostT), slowT: n(this.slowT), iFrame: n(this.iFrame), aimed: !!this.aimed,
+      hitKind: this.hitKind | 0, hitT: n(this.hitT), hitBlock: !!this.hitBlock,
     };
   }
   importState(s) {
@@ -816,6 +820,9 @@ export class Vehicle {
     if (s.slowT != null) this.slowT = n(s.slowT);
     if (s.iFrame != null) this.iFrame = n(s.iFrame);
     if (s.aimed != null) this.aimed = !!s.aimed;
+    if (s.hitKind != null) this.hitKind = s.hitKind | 0;
+    if (s.hitT != null) this.hitT = n(s.hitT);
+    if (s.hitBlock != null) this.hitBlock = !!s.hitBlock;
     this.events.impact = 0; this.events.wall = 0; this.events.respawn = false; this.events.offroad = false;
     if (this.attached) this._syncQuery();
   }
