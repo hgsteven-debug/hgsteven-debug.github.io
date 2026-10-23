@@ -369,6 +369,7 @@ export function packSelf(s) {
   };
   const hitKind = (s.hitKind | 0) & 7;
   if (hitKind) out.hitKind = hitKind;
+  if (s.offLeft > 0.05) out.offLeft = Math.round(s.offLeft * 10) / 10;
   if (s.hitBlock) out.hitBlock = true;
   return out;
 }
