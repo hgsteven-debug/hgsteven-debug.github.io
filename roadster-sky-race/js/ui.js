@@ -45,6 +45,10 @@ export class UI {
     this.current = 'loading';
     this.stack = [];           // 返回用
     this.wizard = false;       // 從標題一路選到開跑
+    this.itemsSeen = false;    // 這次載入有沒有經過道具開關
+    this.afterItems = 'mode';  // 道具畫面的下一步
+    this.itemsFollowHost = false;
+    this.hostItemsOn = true;
     this.focusEl = null;
     this.learningRow = null;
     this.vehicleId = vehicleById(store.get('vehicle', DEFAULT_VEHICLE)).id;
@@ -68,7 +72,8 @@ export class UI {
     if (name === 'settings') this.syncSettings();
     if (name === 'garage') this.refreshGarage();
     if (name === 'tracks') this.refreshTracks();
-    if (name === 'items') this.syncItems();
+    if (name === 'items') this.itemsSeen = true;
+    if (name === 'items' || name === 'lobby' || name === 'start' || name === 'join') this.syncItems();
     if (name === 'mode') this.markMode();
     if (name === 'ready') this.refreshReady();
     this.setFocus(this.firstFocus());
@@ -85,16 +90,24 @@ export class UI {
     for (const el of document.querySelectorAll('.when-wizard')) el.classList.toggle('hidden', !this.wizard);
     for (const el of document.querySelectorAll('.when-browse')) el.classList.toggle('hidden', !!this.wizard);
   }
-  // 換賽道會整頁重載。記下一站，回來仍停在選賽道。
+  // 換賽道會整頁重載。記下一站，回來仍停在選賽道。道具開關在標題後面，也在返回堆疊裡。
   enterFlow(stage) {
     this.wizard = true;
     const mode = store.get('playmode', 'solo') === 'multi' ? 'multi' : 'solo';
-    this.stack = ['start', 'mode'];
+    this.stack = ['start', 'items', 'mode'];
     if (mode === 'multi') this.stack.push('lobby');
     if (stage === 'tracks' || stage === 'items' || stage === 'ready') this.stack.push('garage');
     if (stage === 'items' || stage === 'ready') this.stack.push('tracks');
     if (stage === 'ready') this.stack.push('items');
     this.show(stage);
+  }
+  // 再比一場／重新開始：先看到道具開關，下一步才是準備出發。
+  offerItems(next) {
+    this.wizard = true;
+    this.itemsFollowHost = false;
+    this.afterItems = next || 'ready';
+    this.stack = ['start'];
+    this.show('items');
   }
   markMode() {
     const mode = store.get('playmode', 'solo') === 'multi' ? 'multi' : 'solo';
@@ -105,8 +118,20 @@ export class UI {
     }
   }
   advance() {
-    const next = { lobby: 'garage', garage: 'tracks', tracks: 'items', items: 'ready' }[this.current];
-    if (next) this.show(next, true);
+    // 換賽道重載後會停在選賽道，這份頁面還沒看過開關，下一步仍是道具。
+    if (this.current === 'tracks' && !this.itemsSeen) {
+      this.afterItems = 'ready';
+      this.show('items', true);
+      return;
+    }
+    const next = { lobby: 'garage', garage: 'tracks', tracks: 'ready', items: this.afterItems || 'mode' }[this.current];
+    if (!next) return;
+    if (next === 'join') {
+      this.wizard = false;
+      this.show('join');
+      return;
+    }
+    this.show(next, true);
   }
   refreshReady() {
     const mode = store.get('playmode', 'solo') === 'multi' ? 'multi' : 'solo';
@@ -154,7 +179,14 @@ export class UI {
     // scroll garage / track cards into view when using gamepad
     if (this.focusEl) this.focusEl.classList.remove('focus');
     this.focusEl = el;
-    if (el) { el.classList.add('focus'); el.scrollIntoView({ block: 'nearest' }); }
+    if (!el) return;
+    el.classList.add('focus');
+    if (this.current === 'items') {
+      const menu = this.screens.items && this.screens.items.querySelector('.menu');
+      if (menu) menu.scrollIntoView({ block: 'center' });
+      return;
+    }
+    el.scrollIntoView({ block: 'nearest' });
   }
   move(dir) {
     const list = this.focusables();
@@ -200,12 +232,17 @@ export class UI {
       if (b.dataset.tc) { this.touchMode = b.dataset.tc; store.set('touch', b.dataset.tc); this.h.onTouchMode(); this.syncSettings(); return; }
       if (b.dataset.ai != null) { store.set('aicount', b.dataset.ai); this.syncSettings(); return; }
       if (b.dataset.diff) { store.set('aidiff', b.dataset.diff); this.syncSettings(); return; }
-      if (b.dataset.items != null) { store.set('items', b.dataset.items === '0' ? '0' : '1'); this.syncItems(); return; }
+      if (b.dataset.items != null) {
+        if (this.itemsFollowHost) { this.syncItems(); return; }
+        store.set('items', b.dataset.items === '0' ? '0' : '1');
+        this.syncItems();
+        return;
+      }
       if (b.dataset.lang) { setLocale(b.dataset.lang); this.syncSettings(); return; }
       if (b.dataset.row) { this.startLearn(b.dataset.row); return; }
       switch (act) {
         case 'start': this.h.onStart(); break;
-        case 'flow-start': this.wizard = true; this.show('mode', true); break;
+        case 'flow-start': this.wizard = true; this.itemsFollowHost = false; this.afterItems = 'mode'; this.show('items', true); break;
         case 'mode-solo': store.set('playmode', 'solo'); this.wizard = true; this.show('garage', true); break;
         case 'mode-multi': store.set('playmode', 'multi'); this.wizard = true; this.show('lobby', true); break;
         case 'flow-next': this.advance(); break;
@@ -427,13 +464,27 @@ export class UI {
     if ($('qinfo')) $('qinfo').textContent = t('set.qinfo');
   }
 
+  setHostItems(on) {
+    this.itemsFollowHost = true;
+    this.hostItemsOn = !!on;
+    this.syncItems();
+  }
+  itemsOn() {
+    if (this.itemsFollowHost) return this.hostItemsOn !== false;
+    return store.get('items', '1') !== '0';
+  }
   syncItems() {
-    const on = store.get('items', '1') !== '0';
+    const on = this.itemsOn();
     for (const b of document.querySelectorAll('#s-items [data-items]')) {
       b.classList.toggle('sel', (b.dataset.items === '1') === on);
     }
-    const line = $('readyItems');
-    if (line) line.textContent = t(on ? 'ready.items' : 'ready.itemsOff');
+    const label = t(on ? 'ready.items' : 'ready.itemsOff');
+    for (const id of ['readyItems', 'startItems', 'lobbyItems']) {
+      const line = $(id);
+      if (line) line.textContent = label;
+    }
+    const join = $('joinItems');
+    if (join) join.textContent = t(on ? 'items.host' : 'items.hostOff');
   }
 
   // ---------- 按鍵設定 ----------

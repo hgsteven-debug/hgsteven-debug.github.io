@@ -32,6 +32,7 @@
     <div id="padstate" class="panel small" data-i18n="hud.padNone">🎮 未偵測到搖桿</div>
     <div id="camlabel" class="panel small">視角：追尾</div>
   </div>
+  <div id="itembadge" class="hidden" data-i18n="items.badge">道具 ON</div>
   <div id="itemslot" class="hidden"><div id="itemglyph"></div><span id="itemname"></span></div>
   <div id="itempop" class="hidden"><div id="itempopIco"></div><b id="itempopName"></b><span id="itempopHow"></span></div>
   <div id="itemhit" class="hidden"></div>
@@ -89,6 +90,7 @@
     <p class="sub" data-i18n="tagline">致敬未來跑車的粉絲作品・會飛的賽車</p>
     <div class="notice">🅿️ <b data-i18n="notice.title">僅限停車（P 檔）時遊玩</b><br><span data-i18n="notice.body">Tesla 車機瀏覽器只允許在停妥時使用網頁遊戲。行駛中請勿操作，確保安全。</span></div>
     <button class="btn primary xl" data-act="flow-start" data-i18n="flow.start">開始</button>
+    <p id="startItems" class="carline" data-i18n="ready.items">道具：開啟</p>
   </div>
 </div>
 
@@ -126,6 +128,7 @@
       </div>
       <canvas id="phoneQr" class="hidden" width="168" height="168" aria-label="加入比賽的 QR code"></canvas>
     </div>
+    <div id="lobbyItems" class="carline" data-i18n="ready.items">道具：開啟</div>
     <div class="flowbar">
       <button class="btn" data-act="back" data-i18n="flow.back">返回</button>
       <button class="btn primary xl" data-act="flow-next" data-i18n="lobby.next">繼續</button>
@@ -235,6 +238,7 @@
     <p id="joinStatus" class="sub" data-i18n="join.wait">正在連線…</p>
     <div id="joinCode" class="roomcode"></div>
     <p id="joinCar" class="carline" data-i18n="join.carWait">這台車：等待房主指定…</p>
+    <p id="joinItems" class="carline" data-i18n="items.host">道具：開啟（房主）</p>
     <p class="small dim" data-i18n="join.help">你是 P3。畫面固定橫向，按鍵比照手把：左邊轉向，LT 煞車、RT 加速，右邊是 A／B／X／Y。車機上看到的也是這台車。</p>
     <div class="setrow stack"><span data-i18n="menu.lang">語言</span>
       <div class="seg" data-group="lang">

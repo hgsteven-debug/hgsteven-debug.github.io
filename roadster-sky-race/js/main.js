@@ -10,7 +10,7 @@ import { initLocale, onLocale, applyDom, t, getLocale, vehicleText, paintLabel }
 import { UI, shortPadName } from './ui.js';
 import { Hud } from './hud.js';
 import { GameAudio } from './audio.js';
-import { clamp, lerp, damp, wrapAngle, smoothstep, store, fmtTime } from './util.js';
+import { clamp, lerp, damp, wrapAngle, smoothstep, store, fmtTime, migrateStoredItems } from './util.js';
 import { ROAD_HALF } from './track.js';
 import { ribbonCompression, KIND } from './stunts.js';
 import { Race, LocalDriver, RemoteDriver, LOCAL_LIMIT, RACE_LAPS } from './race.js';
@@ -32,6 +32,7 @@ if (!QUALITY[qname]) qname = 'med';
 const Q = QUALITY[qname];
 const $ = (id) => document.getElementById(id);
 initLocale();
+migrateStoredItems();
 const camName = (i) => t('cam.' + i);
 const PHYS_DT = 1 / 120;
 
@@ -171,7 +172,7 @@ async function boot() {
     hud = new Hud(track, world);
 
     ui = new UI(input, {
-      onStart: () => { if (!game.guest) startGame(); }, onResume: resume, onRestart: () => { if (!game.guest) startGame(); }, onQuit: quit,
+      onStart: () => { if (!game.guest) startGame(); }, onResume: resume, onRestart: () => { if (!game.guest) offerRestart(); }, onQuit: quit,
       onFullscreen: toggleFullscreen, onVehicle: setVehicle, getCar: () => car,
       onTrack: (id) => {
         store.set('track', id);
@@ -193,6 +194,7 @@ async function boot() {
       ui.buildTracks();
       ui.refreshTracks();
       ui.applyProfile();
+      ui.syncItems();
       paintJoinCar();
       updateLobby();
       const link = document.querySelector('a[href^="gamepad-test"]');
@@ -219,7 +221,20 @@ async function boot() {
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js').catch(() => {});
+        const SW_REV = 'v2';
+        navigator.serviceWorker.register('sw.js').then(() => {
+          let once = false;
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (once) return;
+            let seen = '';
+            try { seen = sessionStorage.getItem('skyroadster.swre') || ''; } catch (e) {}
+            if (seen === SW_REV) return;
+            if (game.state === 'race' || game.state === 'countdown' || game.state === 'paused' || game.state === 'results') return;
+            once = true;
+            try { sessionStorage.setItem('skyroadster.swre', SW_REV); } catch (e) {}
+            location.reload();
+          });
+        }).catch(() => {});
       }
     } catch (e) {}
     window.addEventListener('orientationchange', () => { syncPhoneOrientation(); applySize(); });
@@ -310,7 +325,10 @@ async function boot() {
       sessionStorage.removeItem('skyroadster.flow');
     } catch (e) {}
     if (game.guest) {
-      ui.show('join');
+      ui.itemsFollowHost = true;
+      ui.hostItemsOn = true;
+      ui.afterItems = 'join';
+      ui.show('items');
       const jc = $('joinCode');
       if (jc) jc.textContent = formatCode(joinCode);
       const pg = $('btnPauseGarage'); if (pg) pg.classList.remove('hidden');
@@ -649,6 +667,19 @@ function resume() {
   game.state = game.prevState || 'race';
   input.flushKeys();
 }
+function offerRestart() {
+  if (game.guest) return;
+  clearRace();
+  clearGhosts();
+  setSplit(false);
+  game.state = 'menu';
+  hud.show(false); hud.count('');
+  const sb = $('standings'); if (sb) sb.classList.add('hidden');
+  veh.placeOnTrack(track.N - 10, 0, 0);
+  ui.offerItems('ready');
+  updateLobby();
+  flushNet(true);
+}
 function quit() {
   if (game.guest) { leaveGuestRace(); return; }
   clearRace();
@@ -748,7 +779,7 @@ function itemsEnabled() {
 }
 function battleFrameView() {
   if (game.guest) {
-    const src = guestBattle || { on: false, boxes: [], shots: [] };
+    const src = guestBattle || { on: true, boxes: [], shots: [] };
     const msg = guestNet && guestNet.latest;
     const shields = [];
     if (msg && msg.self && msg.self.shield) shields.push({ x: msg.self.x, y: msg.self.y + 0.7, z: msg.self.z });
@@ -779,8 +810,9 @@ function battleHud() {
   if (game.guest) {
     const msg = guestNet && guestNet.latest;
     const self = msg && msg.self;
+    const known = msg && (msg.battle || msg.keyframe);
     return {
-      on: !!(msg && msg.battle && msg.battle.on),
+      on: known ? !!(msg.battle && msg.battle.on) : true,
       item: self ? (self.item | 0) : 0,
       aimed: !!(self && self.aimed),
       how,
@@ -1005,6 +1037,7 @@ function onGuestState(msg) {
   else pendingSnap = null;
   if (msg.battle) guestBattle = msg.battle;
   else if (msg.keyframe) guestBattle = { on: false, boxes: [], shots: [] };
+  if (ui && (msg.battle || msg.keyframe)) ui.setHostItems(!!(guestBattle && guestBattle.on));
   guestTrackReady = true;
   const phase = msg.race;
   if (!guestLive && (phase === 'countdown' || phase === 'race' || phase === 'paused')) enterGuestRace(msg);

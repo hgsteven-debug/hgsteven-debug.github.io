@@ -18,6 +18,7 @@ const browser = await puppeteer.launch({
 
 async function open(lang, extra = '') {
   const page = await browser.newPage();
+  await page.setCacheEnabled(false);
   await page.setViewport({ width: 1600, height: 900 });
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -67,9 +68,31 @@ try {
   assert(title.acts.includes('zh-TW') && title.acts.includes('en') && title.acts.includes('settings'), title.acts.join(','));
   assert(!title.advanced, 'title still has an advanced action');
   assert(!title.acts.includes('mapping') && !title.acts.includes('tracks'), title.acts.join(','));
+  const startItems = await page.evaluate(() => document.getElementById('startItems').textContent);
+  assert(startItems === '道具：開啟', startItems);
   await shot(page, 'zh-title');
 
   await page.click('#s-start [data-act="flow-start"]');
+  await page.waitForFunction(() => window.__sky.ui.current === 'items');
+  const items = await page.evaluate(() => {
+    const onBtn = document.querySelector('#s-items [data-items="1"]');
+    const offBtn = document.querySelector('#s-items [data-items="0"]');
+    const box = onBtn.getBoundingClientRect();
+    return {
+      focus: window.__sky.ui.focusEl && window.__sky.ui.focusEl.dataset.act,
+      on: onBtn.classList.contains('sel'),
+      title: document.querySelector('#s-items h2').textContent,
+      h: box.height,
+      w: box.width,
+      offH: offBtn.getBoundingClientRect().height,
+      shown: document.getElementById('s-items').classList.contains('show'),
+    };
+  });
+  assert(items.focus === 'flow-next' && items.on && items.shown, JSON.stringify(items));
+  assert(items.title === '道具戰', items.title);
+  assert(items.h >= 64 && items.offH >= 64 && items.w >= 160, JSON.stringify(items));
+  await shot(page, 'zh-items');
+  await page.click('#s-items [data-act="flow-next"]');
   await page.waitForFunction(() => window.__sky.ui.current === 'mode');
   const mode = await page.evaluate(() => {
     const focus = window.__sky.ui.focusEl;
@@ -101,6 +124,8 @@ try {
   assert(lobby.next === '繼續', lobby.next);
   assert(lobby.focus === 'flow-next', lobby.focus);
   assert(lobby.status.includes('P3'), lobby.status);
+  const lobbyItems = await page.evaluate(() => document.getElementById('lobbyItems').textContent);
+  assert(lobbyItems === '道具：開啟', lobbyItems);
   await shot(page, 'zh-lobby');
 
   await page.click('#s-lobby [data-act="flow-next"]');
@@ -135,14 +160,6 @@ try {
   await shot(page, 'zh-track');
 
   await page.click('#s-tracks [data-act="flow-next"]');
-  await page.waitForFunction(() => window.__sky.ui.current === 'items');
-  const items = await page.evaluate(() => ({
-    focus: window.__sky.ui.focusEl && window.__sky.ui.focusEl.dataset.act,
-    on: document.querySelector('#s-items [data-items="1"]').classList.contains('sel'),
-    title: document.querySelector('#s-items h2').textContent,
-  }));
-  assert(items.focus === 'flow-next' && items.on && items.title === '道具戰', JSON.stringify(items));
-  await page.click('#s-items [data-act="flow-next"]');
   await page.waitForFunction(() => window.__sky.ui.current === 'ready');
   const ready = await page.evaluate(() => ({
     focus: window.__sky.ui.focusEl && window.__sky.ui.focusEl.dataset.act,
@@ -152,15 +169,15 @@ try {
     laps: document.querySelector('#s-ready [data-i18n="results.sub"]').textContent,
     car: document.getElementById('startCar').textContent,
     track: document.getElementById('startTrack').textContent,
+    items: document.getElementById('readyItems').textContent,
   }));
   assert(ready.focus === 'start', JSON.stringify(ready));
   assert(ready.go === '開跑' && ready.mode === '多人', JSON.stringify(ready));
+  assert(ready.items === '道具：開啟', ready.items);
   assert(ready.ai === '沒有電腦對手' && ready.laps === '兩圈衝刺', JSON.stringify(ready));
   assert(ready.car.includes('目前車輛') && ready.track.includes('目前賽道'), JSON.stringify(ready));
   await shot(page, 'zh-ready');
 
-  await page.keyboard.press('Escape');
-  await page.waitForFunction(() => window.__sky.ui.current === 'items');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => window.__sky.ui.current === 'tracks');
   await page.keyboard.press('Escape');
@@ -171,6 +188,8 @@ try {
   await page.waitForFunction(() => window.__sky.ui.current === 'mode');
   const remembered = await page.evaluate(() => window.__sky.ui.focusEl && window.__sky.ui.focusEl.dataset.mode);
   assert(remembered === 'multi', remembered);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.__sky.ui.current === 'items');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => window.__sky.ui.current === 'start');
 
@@ -218,7 +237,7 @@ try {
     await page.waitForFunction((prev) => (window.__sky.ui.current + '|' + window.__sky.game.state) !== prev, { timeout: 4000 }, before);
   }
   const end = await page.evaluate(() => ({ state: window.__sky.game.state, ui: window.__sky.ui.current, mode: localStorage.getItem('skyroadster.playmode') }));
-  assert(path.join('>') === 'start|menu>mode|menu>garage|menu>tracks|menu>items|menu>ready|menu', path.join('>'));
+  assert(path.join('>') === 'start|menu>items|menu>mode|menu>garage|menu>tracks|menu>ready|menu', path.join('>'));
   assert(end.state === 'countdown' || end.state === 'race', JSON.stringify(end));
   assert(end.ui == null, JSON.stringify(end));
   assert(end.mode === JSON.stringify('solo'), end.mode);
@@ -234,6 +253,10 @@ try {
   assert(documentLang(await page.evaluate(() => document.documentElement.lang)) === 'en');
   await shot(page, 'en-title');
   await page.click('#s-start [data-act="flow-start"]');
+  await page.waitForFunction(() => window.__sky.ui.current === 'items');
+  const enItems = await page.evaluate(() => document.querySelector('#s-items h2').textContent);
+  assert(enItems === 'Item battle', enItems);
+  await page.click('#s-items [data-act="flow-next"]');
   await page.waitForFunction(() => window.__sky.ui.current === 'mode');
   const labels = await page.evaluate(() => ({
     solo: document.querySelector('[data-mode="solo"]').textContent,
@@ -252,6 +275,8 @@ try {
   await page.evaluate(() => {
     document.querySelector('#s-start [data-act="flow-start"]').click();
   });
+  await page.waitForFunction(() => window.__sky.ui.current === 'items');
+  await page.evaluate(() => document.querySelector('#s-items [data-act="flow-next"]').click());
   await page.waitForFunction(() => window.__sky.ui.current === 'mode');
   await page.evaluate(() => document.querySelector('#s-mode [data-mode="solo"]').click());
   await page.waitForFunction(() => window.__sky.ui.current === 'garage');
