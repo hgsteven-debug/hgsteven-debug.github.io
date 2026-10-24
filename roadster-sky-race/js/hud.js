@@ -17,6 +17,7 @@ export class Hud {
       vig: $('vignette'), fx: $('fx'), mm: $('minimap'), flash: $('flash'),
       pill: $('linkpill'), linkKind: $('linkKind'), linkMs: $('linkMs'), linkHint: $('linkhint'),
       slot: $('itemslot'), glyph: $('itemglyph'), iname: $('itemname'), warn: $('itemwarn'),
+      badge: $('itembadge'),
       pop: $('itempop'), popIco: $('itempopIco'), popName: $('itempopName'), popHow: $('itempopHow'),
       hit: $('itemhit'), touchIco: $('touchItemIco'),
     };
@@ -167,6 +168,10 @@ export class Hud {
     const on = !!(info && info.on);
     if (e.slot) e.slot.classList.toggle('hidden', !on);
     if (e.warn) e.warn.classList.toggle('hidden', !(on && info.aimed));
+    if (e.badge) {
+      e.badge.classList.toggle('hidden', !on);
+      if (on && e.badge.textContent !== t('items.badge')) e.badge.textContent = t('items.badge');
+    }
     document.body.classList.toggle('items-on', on);
     if (!on) {
       this._roll = null;

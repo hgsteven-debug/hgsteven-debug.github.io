@@ -74,6 +74,14 @@ export const store = {
   },
 };
 
+// 舊存檔把道具關成 "0" 之後，開始畫面沒有開關，比賽就一直沒有箱子。
+// 這個版本只強制開回一次；之後玩家在道具畫面上關掉會保留。
+export function migrateStoredItems() {
+  if (store.get('itemsRev', '') === '1') return;
+  store.set('items', '1');
+  store.set('itemsRev', '1');
+}
+
 export const fmtTime = (t) => {
   if (t == null || !isFinite(t)) return '--:--.---';
   const m = Math.floor(t / 60);
