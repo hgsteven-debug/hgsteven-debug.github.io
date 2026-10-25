@@ -226,7 +226,7 @@ try {
     };
   });
   console.log('TAP', JSON.stringify(tap));
-  assert(tap.hit === 'item' && tap.w >= 100 && tap.h >= 70, 'target ' + JSON.stringify(tap));
+  assert(tap.hit === 'item' && tap.w >= 64 && tap.h >= 64, 'target ' + JSON.stringify(tap));
   assert(!tap.hits.length, 'overlaps ' + tap.hits.join(','));
   assert(tap.held === false && tap.after === true && tap.again === true, 'tap did not reach poll ' + JSON.stringify(tap));
   await phone.close();

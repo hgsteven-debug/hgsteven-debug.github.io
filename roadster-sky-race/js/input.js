@@ -494,7 +494,9 @@ export class InputManager {
     this._kbSteer += clamp(kt - this._kbSteer, -rate * dt, rate * dt);
     if (this.touch.stick) this._kbSteer = clamp(this.touch.steer || 0, -1, 1);
     const kThr = this.isKey('ArrowUp', 'KeyW') || this.touch.gas ? 1 : 0;
-    const kBrk = this.isKey('ArrowDown', 'KeyS') || this.touch.brake ? 1 : 0;
+    // 手機十字下鍵當煞車（停下後倒車、按住並轉向可蓄甩尾）。鍵盤下／S 與手把 ZL 不變。
+    const phonePad = typeof document !== 'undefined' && document.body && document.body.classList.contains('phone');
+    const kBrk = this.isKey('ArrowDown', 'KeyS') || this.touch.brake || (phonePad && this.touch.pdown) ? 1 : 0;
     st.steer = clamp(this._padSteer + this._kbSteer, -1, 1) * (this.invertSteer ? -1 : 1);
     st.throttle = Math.max(st.padThrottle || 0, kThr);
     st.brake = Math.max(st.padBrake || 0, kBrk);
@@ -504,7 +506,7 @@ export class InputManager {
     this._itemTap = false;
     let touchPitch = this.touch.stick ? clamp(this.touch.pitch || 0, -1, 1) : 0;
     if (this.touch.pup) touchPitch -= 1;
-    if (this.touch.pdown) touchPitch += 1;
+    if (this.touch.pdown && !phonePad) touchPitch += 1;
     st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)) + clamp(touchPitch, -1, 1), -1, 1);
     pr.camera = pr.camera || this.consumeKey('KeyC') || !!this._touchEdge.camera;
     pr.reset = pr.reset || this.consumeKey('KeyR') || !!this._touchEdge.reset;

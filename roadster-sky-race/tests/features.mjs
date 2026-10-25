@@ -428,6 +428,7 @@ async function measurePad(page) {
     };
     const gas = box('[data-t="gas"]');
     const brake = box('[data-t="brake"]');
+    const down = box('[data-t="pdown"]');
     const faces = ['y', 'x', 'b', 'a'].map((k) => box('.gpad.face.' + k));
     const stick = box('#stick');
     const dpad = box('#dpad');
@@ -459,8 +460,9 @@ async function measurePad(page) {
     const early = sky.sync.hostOffroadWarn({ known: true, onRoad: true, since: 0, toastAt: 0 }, false, 1000);
     const late = sky.sync.hostOffroadWarn(early.state, false, 1600);
     return {
-      w: innerWidth, h: innerHeight, gas, brake, faces, stick, dpad, stickShown,
-      hitG: hit(gas), hitB: hit(brake),
+      w: innerWidth, h: innerHeight, gas, brake, down, faces, stick, dpad, stickShown,
+      brakeShown: getComputedStyle(document.querySelector('[data-t="brake"]')).display !== 'none',
+      hitG: hit(gas), hitD: hit(down),
       held: sky.input.touch.gas === true, throttle: sky.input.state.throttle,
       respawn: !!sky.veh.events.respawn, why: sky.veh.events.why || '',
       step: eased.step, snapped: !!eased.snapped,
@@ -493,11 +495,12 @@ async function testPhonePad() {
     const box = await measurePad(page);
     if (errors.length) throw new Error(errors.join('\n'));
     if (box.gas.t !== '加速') throw new Error('label ' + JSON.stringify(box.gas));
-    if (box.brake.t !== '煞車') throw new Error('brake label ' + box.brake.t);
+    if (box.brakeShown || box.brake.w > 2) throw new Error('brake pedal still shown ' + JSON.stringify(box.brake));
+    if (!box.down.t.includes('煞車')) throw new Error('down label ' + box.down.t);
     if (!(box.gas.x > w * 0.55 && box.gas.y + box.gas.h > h * 0.7)) throw new Error('gas not lower right ' + JSON.stringify(box));
-    if (!(box.brake.x < w * 0.45 && box.brake.y + box.brake.h > h * 0.85)) throw new Error('brake not lower left ' + JSON.stringify(box));
+    if (!(box.down.x < w * 0.45 && box.down.y + box.down.h > h * 0.7)) throw new Error('down not lower left ' + JSON.stringify(box));
     if (!box.hitG.inside || box.hitG.key !== 'gas') throw new Error('gas hit ' + JSON.stringify(box.hitG));
-    if (!box.hitB.inside || box.hitB.key !== 'brake') throw new Error('brake hit ' + JSON.stringify(box.hitB));
+    if (!box.hitD.inside || box.hitD.key !== 'pdown') throw new Error('down hit ' + JSON.stringify(box.hitD));
     for (const f of box.faces) {
       if (f.y < 0 || f.x < 0 || f.x + f.w > w || f.y + f.h > h) throw new Error('face offscreen ' + JSON.stringify(f));
       if (overlap(f, box.gas)) throw new Error('face overlaps gas ' + JSON.stringify({ f, gas: box.gas }));
@@ -509,7 +512,7 @@ async function testPhonePad() {
     if (!(fa.x > fb.x + 16 && box.gas.x > fb.x + fb.w)) throw new Error('cluster ' + JSON.stringify(box.faces));
     if (!(fy.y + fy.h < fb.y && fx.y + fx.h < fb.y && fx.x + 4 < fy.x)) throw new Error('xy ' + JSON.stringify(box.faces));
     if (box.stickShown || box.stick.w > 2) throw new Error('stick visible ' + JSON.stringify(box.stick));
-    if (!(box.dpad.w > 40) || overlap(box.dpad, box.brake) || box.brake.y + 1 < box.dpad.y + box.dpad.h) throw new Error('brake under pad ' + JSON.stringify({ dpad: box.dpad, brake: box.brake }));
+    if (!(box.dpad.w > 40) || box.down.y + box.down.h + 2 < box.dpad.y + box.dpad.h) throw new Error('down not on pad ' + JSON.stringify({ dpad: box.dpad, down: box.down }));
     if (!box.held || !(box.throttle > 0.5)) throw new Error('hold ' + JSON.stringify(box));
     if (box.respawn || box.why) throw new Error('local off-track respawn ' + JSON.stringify(box));
     if (!(box.step < 1.5) || box.snapped) throw new Error('smooth ' + JSON.stringify(box));
