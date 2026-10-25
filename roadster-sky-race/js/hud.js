@@ -17,9 +17,11 @@ export class Hud {
       vig: $('vignette'), fx: $('fx'), mm: $('minimap'), flash: $('flash'),
       pill: $('linkpill'), linkKind: $('linkKind'), linkMs: $('linkMs'), linkHint: $('linkhint'),
       slot: $('itemslot'), glyph: $('itemglyph'), iname: $('itemname'), warn: $('itemwarn'),
+      next: $('itemnext'), nextGlyph: $('itemnextglyph'),
       badge: $('itembadge'),
       pop: $('itempop'), popIco: $('itempopIco'), popName: $('itempopName'), popHow: $('itempopHow'),
-      hit: $('itemhit'), touchIco: $('touchItemIco'),
+      hit: $('itemhit'), touchIco: $('touchItemIco'), touchNext: $('touchItemNext'),
+      drift: $('driftbar'), driftFill: $('driftfill'),
     };
     this._last = {};
     this.toastT = 0;
@@ -176,6 +178,16 @@ export class Hud {
     el.innerHTML = next ? itemSvg(next) : '';
   }
 
+  setDrift(t) {
+    const el = this.el.drift;
+    if (!el) return;
+    const n = Math.max(0, +t || 0);
+    el.classList.toggle('hidden', n < 0.05);
+    el.classList.toggle('hot', n >= 0.55);
+    el.classList.toggle('max', n >= 0.95);
+    if (this.el.driftFill) this.el.driftFill.style.width = Math.min(100, (n / 1.2) * 100).toFixed(1) + '%';
+  }
+
   setBattle(info) {
     const e = this.el;
     const on = !!(info && info.on);
@@ -189,26 +201,44 @@ export class Hud {
     if (!on) {
       this._roll = null;
       this._itemShown = 0;
+      this._nextRoll = null;
+      this._nextShown = 0;
       this._popUntil = 0;
       this._hitUntil = 0;
       if (e.pop) e.pop.classList.add('hidden');
       if (e.hit) e.hit.classList.add('hidden');
+      if (e.next) e.next.classList.add('hidden');
       this._paintIcon(e.touchIco, 0);
+      this._paintIcon(e.touchNext, 0);
+      if (e.touchNext) e.touchNext.classList.add('hidden');
+      this._paintIcon(e.nextGlyph, 0);
       return;
     }
     const id = info.item | 0;
+    const next = info.next | 0;
     const now = performance.now();
+    const fromQueue = !!(id && this._nextShown && id === this._nextShown && this._itemShown !== id);
     if (id && this._itemShown !== id) {
       this._itemShown = id;
-      this._roll = { until: now + ITEM_ROLL_MS, final: id };
-      this._popUntil = now + ITEM_POP_MS;
-      this._popFinal = id;
-      const howKey = info.how === 'touch' ? 'item.howTouch' : info.how === 'key' ? 'item.howKey' : 'item.howPad';
-      if (e.popName) e.popName.textContent = t('item.' + ITEM_KEY[id]);
-      if (e.popHow) e.popHow.textContent = t(howKey);
-      this._paintIcon(e.popIco, id);
+      if (fromQueue) {
+        this._roll = null;
+        this._popUntil = 0;
+      } else {
+        this._roll = { until: now + ITEM_ROLL_MS, final: id };
+        this._popUntil = now + ITEM_POP_MS;
+        this._popFinal = id;
+        const howKey = info.how === 'touch' ? 'item.howTouch' : info.how === 'key' ? 'item.howKey' : 'item.howPad';
+        if (e.popName) e.popName.textContent = t('item.' + ITEM_KEY[id]);
+        if (e.popHow) e.popHow.textContent = t(howKey);
+        this._paintIcon(e.popIco, id);
+      }
     }
     if (!id) { this._roll = null; this._itemShown = 0; this._popUntil = 0; }
+    if (next && this._nextShown !== next) {
+      this._nextShown = next;
+      this._nextRoll = { until: now + ITEM_ROLL_MS, final: next };
+    }
+    if (!next) { this._nextRoll = null; this._nextShown = 0; }
     let show = id;
     let rolling = false;
     if (this._roll && id) {
@@ -220,14 +250,29 @@ export class Hud {
         this._roll = null;
       }
     } else if (id) this._itemShown = id;
+    let nextShow = next;
+    let nextRolling = false;
+    if (this._nextRoll && next) {
+      if (now < this._nextRoll.until) {
+        nextRolling = true;
+        nextShow = 1 + (Math.floor(now / 70) % 6);
+      } else {
+        nextShow = this._nextRoll.final;
+        this._nextRoll = null;
+      }
+    }
     const name = id ? t('item.' + ITEM_KEY[id]) : t('item.empty');
     if (e.slot) {
       e.slot.classList.toggle('roll', rolling);
       e.slot.classList.toggle('armed', !!id && !rolling);
     }
     this._paintIcon(e.glyph, rolling ? show : id);
+    this._paintIcon(e.nextGlyph, nextRolling ? nextShow : next);
+    if (e.next) e.next.classList.toggle('hidden', !next);
     if (e.iname) this.setText('itemname', e.iname, rolling ? t('item.roll') : (id ? name : t('item.empty')));
     this._paintIcon(e.touchIco, id);
+    this._paintIcon(e.touchNext, next);
+    if (e.touchNext) e.touchNext.classList.toggle('hidden', !next);
     if (e.pop) e.pop.classList.toggle('hidden', !(id && this._popUntil && now < this._popUntil));
     if (e.warn && info.aimed) this.setText('itemwarn', e.warn, t('item.warn'));
     const hit = info.hitKind | 0;

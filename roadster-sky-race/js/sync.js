@@ -361,6 +361,7 @@ export function packSelf(s) {
     attached: !!s.attached,
     alt: n(s.alt),
     item: s.item | 0,
+    itemNext: s.itemNext | 0,
     shield: !!s.shield,
     spin: !!(s.spin || s.spinT > 0),
     aimed: !!s.aimed,

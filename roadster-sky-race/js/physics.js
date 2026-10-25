@@ -4,7 +4,7 @@ import { clamp, lerp, damp, wrapAngle } from './util.js';
 import { ROAD_HALF, ROAD_HALF_K } from './track.js';
 import { VEHICLES, fullTune } from './vehicles.js';
 import { KIND, ribbonCompression } from './stunts.js';
-import { applyDriveFx } from './items.js';
+import { applyDriveFx, stepDrift } from './items.js';
 
 const G = 9.81;
 const ENERGY_MAX = 100;
@@ -70,6 +70,9 @@ export class Vehicle {
     this._px = 0; this._py = 0; this._pz = 0;
     this._throttle = 0;
     this.item = 0;
+    this.itemNext = 0;
+    this.driftT = 0;
+    this._driftHeld = false;
     this.spinT = 0;
     this.iFrame = 0;
     this.shield = false;
@@ -362,6 +365,7 @@ export class Vehicle {
     if (leave) this._detachRibbon(f.kind === KIND.FLY);
     this._limitSpeed();
     this._noteTrap(dt);
+    this._drift(dt);
   }
 
   // 只在真正沿著路面走的時候記下進度。查詢跳到交叉或起跑線時不要覆寫。
@@ -509,6 +513,8 @@ export class Vehicle {
 
   step(dt, inp) {
     inp = applyDriveFx(this, dt, inp || {});
+    this._steer = inp.steer || 0;
+    this._brake = inp.brake || 0;
     this._px = this.pos.x; this._py = this.pos.y; this._pz = this.pos.z;
     if (this.ghostT > 0) this.ghostT -= dt;
     this._throttle = (inp && inp.throttle) || 0;
@@ -842,6 +848,11 @@ export class Vehicle {
     if (this.tr.hasRibbon && !this.attached) this._tryAttach();
     this._limitSpeed();
     this._noteTrap(dt);
+    this._drift(dt);
+  }
+
+  _drift(dt) {
+    stepDrift(this, dt, this._steer || 0, this._brake || 0);
   }
 
   // 給手機對帳：房主把這包狀態傳出去，手機可整包貼回再重播尚未確認的輸入。
@@ -863,7 +874,7 @@ export class Vehicle {
       flipAssist: !!this.flipAssist, detachCool: n(this.detachCool), vlat: n(this.vlat),
       sawCeiling: !!this.sawCeiling, sawInvert: !!this.sawInvert,
       prevL: n(this._prevL),
-      item: this.item | 0, shield: !!this.shield, spinT: n(this.spinT),
+      item: this.item | 0, itemNext: this.itemNext | 0, shield: !!this.shield, spinT: n(this.spinT),
       boostT: n(this.boostT), slowT: n(this.slowT), iFrame: n(this.iFrame), aimed: !!this.aimed,
       hitKind: this.hitKind | 0, hitT: n(this.hitT), hitBlock: !!this.hitBlock,
     };
@@ -905,6 +916,9 @@ export class Vehicle {
     this.sawInvert = !!s.sawInvert;
     this._prevL = n(s.prevL);
     if (s.item != null) this.item = s.item | 0;
+    if (s.itemNext != null) this.itemNext = s.itemNext | 0;
+    this.driftT = 0;
+    this._driftHeld = false;
     if (s.shield != null) this.shield = !!s.shield;
     if (s.spinT != null) this.spinT = n(s.spinT);
     if (s.boostT != null) this.boostT = n(s.boostT);

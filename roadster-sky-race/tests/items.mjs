@@ -5,8 +5,9 @@ import {
   encodeState, decodeState, createDict, encodeInput, decodeInput, bytesToB64, unwrapRelay,
 } from '../js/wire.js';
 import {
-  ITEM, layoutBoxes, rollItem, itemWeights, ItemBattle, applyDriveFx, packItemBits, unpackItemBits,
+  ITEM, layoutBoxes, rollItem, itemWeights, ItemBattle, applyDriveFx, packItemBits, unpackItemBits, stepDrift,
 } from '../js/items.js';
+import { armStartBoost, takeStartBoost, armAiStart } from '../js/race.js';
 
 const fails = [];
 const ok = (name, extra) => console.log('PASS', name, extra || '');
@@ -154,6 +155,7 @@ function testWire() {
   assert(dec.battle && dec.battle.on && dec.battle.boxes.length === 3, 'boxes');
   assert(dec.battle.boxes[1].alive === false && dec.battle.boxes[0].alive === true, 'mask');
   assert(dec.self.item === ITEM.DRONE && dec.self.aimed, 'self item');
+  assert((dec.self.itemNext | 0) === 0, 'empty queue ' + dec.self.itemNext);
   assert(dec.self.hitKind === ITEM.SPARK && dec.self.hitBlock === true, 'hit text ' + dec.self.hitKind);
   assert(dec.cars[0].shield && dec.cars[0].item === ITEM.AEGIS, 'shield bit');
   assert(dec.battle.shots.length === 1 && Math.abs(dec.battle.shots[0].x - 12.4) < 0.08, 'shot pos');
@@ -164,6 +166,20 @@ function testWire() {
   assert(relay.length > on.length, 'relay envelope');
   const grown = on.length - off.length;
   assert(grown > 0 && grown < 48, 'battle bytes ' + grown + ' off ' + off.length + ' on ' + on.length);
+  const queued = encodeState(Object.assign({}, plain, {
+    self: Object.assign({ item: ITEM.DRONE, itemNext: ITEM.AEGIS, aimed: true, hitKind: ITEM.SPARK, hitBlock: true }, plain.self),
+    cars: [Object.assign({ item: ITEM.AEGIS, shield: true, itemNext: ITEM.STORM }, plain.cars[0])],
+    battle: {
+      on: true,
+      boxes: [{ alive: true }, { alive: false }, { alive: true }],
+      shots: [{ kind: ITEM.SPARK, x: 12.4, y: 1.5, z: -3, owner: 'P3', target: '' }],
+    },
+  }), {}, 0);
+  assert(queued.length === on.length, 'queue adds no bytes ' + queued.length + ' vs ' + on.length);
+  const decQ = decodeState(queued, createDict());
+  assert(decQ.self.item === ITEM.DRONE && decQ.self.itemNext === ITEM.AEGIS, 'owner queue ' + decQ.self.itemNext);
+  assert(decQ.self.hitKind === ITEM.SPARK && decQ.self.hitBlock === true, 'hit nibble still free');
+  assert(decQ.cars[0].item === ITEM.AEGIS && decQ.cars[0].itemNext == null, 'others do not get a queue');
   const bits = unpackItemBits(packItemBits({ item: 6, shield: true, spinT: 0.4 }));
   assert(bits.item === 6 && bits.shield && bits.spin, JSON.stringify(bits));
   const lost = encodeInput({
@@ -191,8 +207,129 @@ function mulberry(a) {
   };
 }
 
+function testSlots() {
+  const tr = track();
+  const boxes = layoutBoxes(tr);
+  const battle = new ItemBattle(tr, boxes, () => 0.1);
+  const me = racer('P1', 0, 0, 10);
+  const b0 = boxes[0];
+  me.veh.pos.x = b0.x; me.veh.pos.y = b0.y; me.veh.pos.z = b0.z;
+  battle.step(1 / 60, [me]);
+  const first = me.veh.item | 0;
+  assert(first >= 1 && !(me.veh.itemNext | 0), 'first slot ' + first + ' next ' + me.veh.itemNext);
+  const b1 = boxes[1];
+  me.veh.pos.x = b1.x; me.veh.pos.y = b1.y; me.veh.pos.z = b1.z;
+  battle.step(1 / 60, [me]);
+  const queued = me.veh.itemNext | 0;
+  assert(me.veh.item === first && queued >= 1, 'second slot ' + queued);
+  assert(battle.use(me), 'use older item');
+  assert(me.veh.item === queued && !(me.veh.itemNext | 0), 'shift ' + me.veh.item);
+  me.veh.item = ITEM.SPARK;
+  me.veh.itemNext = ITEM.DRONE;
+  me.veh.boostT = 0;
+  me.veh.boostPower = 0;
+  me.veh.coinPing = false;
+  const b2 = boxes[2];
+  me.veh.pos.x = b2.x; me.veh.pos.y = b2.y; me.veh.pos.z = b2.z;
+  battle.step(1 / 60, [me]);
+  assert(!b2.alive, 'full box still pops');
+  assert(me.veh.item === ITEM.SPARK && me.veh.itemNext === ITEM.DRONE, 'full keeps both');
+  assert(me.veh.boostT >= 0.42 && me.veh.boostPower === 14 && me.veh.coinPing, 'speed token');
+  me.veh.boostT = 1.2;
+  me.veh.boostPower = 30;
+  const b3 = boxes[3];
+  b3.alive = true;
+  me.veh.pos.x = b3.x; me.veh.pos.y = b3.y; me.veh.pos.z = b3.z;
+  battle.step(1 / 60, [me]);
+  assert(me.veh.boostT === 1.2 && me.veh.boostPower === 30, 'token does not weaken a stronger boost');
+}
+
+function driftVeh() {
+  return {
+    grounded: true, attached: false, spinT: 0, driftT: 0, _driftHeld: false,
+    vel: { x: 0, y: 0, z: -24 }, boostT: 0, boostPower: 0, driftBoost: 0,
+  };
+}
+
+function testDrift() {
+  const veh = driftVeh();
+  for (let i = 0; i < 20; i++) stepDrift(veh, 1 / 60, 1, 1);
+  stepDrift(veh, 1 / 60, 0, 0);
+  assert(veh.boostT === 0 && !veh.driftBoost, 'short drift gives nothing ' + veh.driftT);
+  const tier1 = driftVeh();
+  for (let i = 0; i < 40; i++) stepDrift(tier1, 1 / 60, 0.8, 1);
+  assert(tier1.driftT > 0.6 && tier1.boostT === 0, 'still charging ' + tier1.driftT);
+  stepDrift(tier1, 1 / 60, 0, 0);
+  assert(tier1.driftBoost === 1 && tier1.boostT >= 0.4 && tier1.boostPower === 22, 'tier 1 ' + tier1.boostT);
+  const tier2 = driftVeh();
+  for (let i = 0; i < 70; i++) stepDrift(tier2, 1 / 60, -1, 1);
+  stepDrift(tier2, 1 / 60, 0, 0);
+  assert(tier2.driftBoost === 2 && tier2.boostT >= 0.62 && tier2.boostPower === 30, 'tier 2');
+  const held = driftVeh();
+  held.boostT = 1.35;
+  held.boostPower = 40;
+  for (let i = 0; i < 70; i++) stepDrift(held, 1 / 60, 1, 1);
+  stepDrift(held, 1 / 60, 0, 0);
+  assert(held.boostT === 1.35 && held.boostPower === 40, 'keeps the stronger boost');
+  const air = driftVeh();
+  air.grounded = false;
+  stepDrift(air, 0.8, 1, 1);
+  assert(air.driftT === 0 && air.boostT === 0, 'air does not charge');
+  const slow = driftVeh();
+  slow.vel.z = -8;
+  stepDrift(slow, 0.8, 1, 1);
+  assert(slow.driftT === 0, 'too slow');
+}
+
+function freshStart(diff, name) {
+  return { name: name || 'CPU 1', veh: { boostT: 0, boostPower: 0 }, driver: { kind: 'local', difficulty: diff || 'normal' } };
+}
+
+function testStart() {
+  const early = freshStart();
+  armStartBoost(early, 2.4, 0);
+  armStartBoost(early, 2.1, 1);
+  assert(early._startEarly && !early._startArm, 'early press');
+  armStartBoost(early, 0.7, 0);
+  armStartBoost(early, 0.7, 1);
+  assert(!early._startArm, 'early press blocks the window');
+  assert(takeStartBoost(early) === false, 'no boost');
+  const held = freshStart();
+  armStartBoost(held, 3.2, 1);
+  armStartBoost(held, 0.7, 1);
+  assert(!held._startArm, 'holding through the lights');
+  assert(takeStartBoost(held) === false, 'hold gives nothing');
+  const okR = freshStart();
+  armStartBoost(okR, 1.5, 0);
+  armStartBoost(okR, 0.7, 1);
+  assert(okR._startArm && !okR._startEarly, 'window tap');
+  assert(takeStartBoost(okR) === true, 'granted');
+  assert(okR.veh.boostT >= 0.55 && okR.veh.boostPower === 28 && okR.veh.launchBoost, 'launch boost');
+  assert(takeStartBoost(okR) === false, 'once');
+  const late = freshStart();
+  armStartBoost(late, 1.2, 0);
+  armStartBoost(late, 0.2, 1);
+  assert(!late._startArm, 'too late');
+  const hard = freshStart('hard', 'CPU 2');
+  armAiStart(hard, 0.68);
+  assert(hard._startArm, 'hard always');
+  const easy = freshStart('easy', 'CPU 2');
+  armAiStart(easy, 0.68);
+  assert(!easy._startArm, 'easy never');
+  let armed = 0;
+  for (let n = 1; n <= 8; n++) {
+    const ai = freshStart('normal', 'CPU ' + n);
+    for (let cd = 0.9; cd >= 0.5; cd -= 0.02) armAiStart(ai, cd);
+    if (ai._startArm) armed++;
+  }
+  assert(armed > 0 && armed < 8, 'normal is mixed ' + armed);
+}
+
 try { testOdds(); ok('odds'); } catch (e) { bad('odds', e); }
 try { testSpinKeepsGravity(); ok('spin keeps vertical speed'); } catch (e) { bad('spin keeps vertical speed', e); }
 try { testBattle(); ok('pickup, gale, shield, seeker'); } catch (e) { bad('pickup, gale, shield, seeker', e); }
+try { testSlots(); ok('two slots and full-hands token'); } catch (e) { bad('two slots and full-hands token', e); }
+try { testDrift(); ok('drift boost'); } catch (e) { bad('drift boost', e); }
+try { testStart(); ok('start boost'); } catch (e) { bad('start boost', e); }
 try { testWire(); ok('wire and relay'); } catch (e) { bad('wire and relay', e); }
 if (fails.length) { console.error('FAILED', fails.join(', ')); process.exit(1); }

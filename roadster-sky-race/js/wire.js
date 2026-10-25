@@ -295,7 +295,8 @@ function writeSelf(w, s, keyframe, hasItems) {
   i16(w, clamp(Math.round((+s.lat || 0) * 100), -32768, 32767));
   if (hasItems) {
     u8(w, packItemBits(s));
-    u8(w, ((s.hitKind | 0) & 7) | (s.hitBlock ? 8 : 0));
+    // 第二格只放在車主這包的命中位元組高半（別人的 pose 不加位元組）。
+    u8(w, ((s.hitKind | 0) & 7) | (s.hitBlock ? 8 : 0) | (((s.itemNext | 0) & 7) << 4));
   }
   if (!keyframe) return;
   i16(w, clamp(Math.round((+s.yawRate || 0) * 1000), -32768, 32767));
@@ -339,6 +340,7 @@ function readSelf(r, keyframe, hasItems) {
     const hb = ru8(r);
     self.hitKind = hb & 7;
     self.hitBlock = !!(hb & 8);
+    self.itemNext = (hb >> 4) & 7;
   }
   if (!keyframe) return self;
   self.yawRate = ri16(r) / 1000;

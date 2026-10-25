@@ -13,7 +13,7 @@ import { GameAudio } from './audio.js';
 import { clamp, lerp, damp, wrapAngle, smoothstep, store, fmtTime, migrateStoredItems } from './util.js';
 import { ROAD_HALF } from './track.js';
 import { ribbonCompression, KIND } from './stunts.js';
-import { Race, LocalDriver, RemoteDriver, LOCAL_LIMIT, RACE_LAPS } from './race.js';
+import { Race, LocalDriver, RemoteDriver, LOCAL_LIMIT, RACE_LAPS, armStartBoost, takeStartBoost, armAiStart } from './race.js';
 import { ItemBattle, layoutBoxes, clearItemState } from './items.js';
 import { AiDriver } from './ai.js';
 import { createHost, createGuest, drawRoomQr } from './net.js';
@@ -264,7 +264,7 @@ async function boot() {
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        const SW_REV = 'v5';
+        const SW_REV = 'v6';
         navigator.serviceWorker.register('sw.js').then(() => {
           let once = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -849,6 +849,7 @@ function battleHud() {
     return {
       on: known ? !!(msg.battle && msg.battle.on) : true,
       item: self ? (self.item | 0) : 0,
+      next: self ? (self.itemNext | 0) : 0,
       aimed: !!(self && self.aimed),
       how,
       hitKind: self ? (self.hitKind | 0) : 0,
@@ -860,7 +861,7 @@ function battleHud() {
   if (spinning && !_spinShown && hud) hud.flash();
   _spinShown = spinning;
   return {
-    on: true, item: veh ? (veh.item | 0) : 0, aimed: !!(veh && veh.aimed), how,
+    on: true, item: veh ? (veh.item | 0) : 0, next: veh ? (veh.itemNext | 0) : 0, aimed: !!(veh && veh.aimed), how,
     hitKind: veh ? (veh.hitKind | 0) : 0, hitBlock: !!(veh && veh.hitBlock),
   };
 }
@@ -869,6 +870,18 @@ function flushNet(force) {
   const st = game.state;
   if (!force && (st === 'menu' || st === 'loading')) return;
   try { hostNet.broadcast((remote) => netStateFor(remote), !!force); } catch (e) {}
+}
+function pollStartBoosts() {
+  if (!race) return;
+  try { applyRemoteInputs(); } catch (e) {}
+  const cd = game.countdown;
+  for (const r of race.racers) {
+    if (!r || r.parked || !r.driver || r._startDone) continue;
+    const kind = r.driver.kind;
+    if (kind === 'ai') armAiStart(r, cd);
+    else if (kind === 'remote') armStartBoost(r, cd, r.driver.state ? r.driver.state.throttle : 0);
+    else armStartBoost(r, cd, r.driver.input && r.driver.input.state ? r.driver.input.state.throttle : 0);
+  }
 }
 function applyRemoteInputs() {
   if (!hostNet || !race) return;
@@ -1086,10 +1099,14 @@ function onGuestState(msg) {
   if (phase === 'countdown' && game.state !== 'paused') {
     game.countdown = typeof msg.cd === 'number' ? msg.cd : game.countdown;
     if (game.state !== 'countdown') game.state = 'countdown';
+    game._launchWatch = 0;
+    game._launchTold = false;
   }
   if (phase === 'race' && game.state === 'countdown') {
     game.state = 'race';
     game.hostPaused = false;
+    game._launchWatch = 0.5;
+    game._launchTold = false;
     if (hud) { hud.count(t('toast.go')); setTimeout(() => hud && hud.count(''), 700); }
   }
   if (phase === 'paused' && (game.state === 'race' || game.state === 'countdown')) {
@@ -1686,6 +1703,7 @@ function frame(now) {
           }
         }
       } else if (!game.guest) {
+        pollStartBoosts();
         if (game._cdStart && performance.now() - game._cdStart > 8000) game.countdown = 0;
         game.countdown -= dt;
         const c = Math.ceil(game.countdown - 0.4);
@@ -1693,7 +1711,11 @@ function frame(now) {
           game.lastCount = c;
           if (c > 0) { hud.count(String(c)); audio.beep(false); } else { hud.count(t('toast.go')); audio.beep(true); }
         }
-        if (game.countdown <= 0.4 && game.state === 'countdown') { game.state = 'race'; setTimeout(() => hud.count(''), 700); }
+        if (game.countdown <= 0.4 && game.state === 'countdown') {
+          if (race) for (const r of race.racers) takeStartBoost(r);
+          game.state = 'race';
+          setTimeout(() => hud.count(''), 700);
+        }
         if (race) for (const r of race.racers) r.veh.energy = 100;
         else veh.energy = 100;
       } else {
@@ -1736,6 +1758,20 @@ function frame(now) {
     hud.update(dt, shown, lapView, camName(game.camMode), game.guest ? t('hud.touchDrive') : padText(), stLabel);
     hud.setOff(game.guest ? guestOffLeft : (veh.offLeft || 0));
     hud.setBattle(battleHud());
+    hud.setDrift(veh ? veh.driftT : 0);
+    if (!game.guest && veh) {
+      if (veh.launchBoost) { hud.toast(t('toast.launch'), 1100); veh.launchBoost = false; }
+      if (veh.driftBoost) { hud.toast(t(veh.driftBoost >= 2 ? 'toast.drift2' : 'toast.drift'), 1000); veh.driftBoost = 0; }
+      if (veh.coinPing) { hud.toast(t('item.full'), 900); veh.coinPing = false; }
+    }
+    if (game.guest && game._launchWatch > 0) {
+      game._launchWatch -= dt;
+      const self = guestNet && guestNet.latest && guestNet.latest.self;
+      if (self && self.boost && !game._launchTold) {
+        hud.toast(t('toast.launch'), 1100);
+        game._launchTold = true;
+      }
+    }
     if (game.guest && guestPoses.length) {
       hud.drawMinimap(shown, guestPoses.map((p) => ({ veh: { pos: { x: p.x, z: p.z }, heading: p.heading || 0 }, driver: { kind: p.kind || 'remote' } })));
     } else hud.drawMinimap(shown, race ? race.racers : null);
