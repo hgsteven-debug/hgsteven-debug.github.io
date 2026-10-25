@@ -2,10 +2,10 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep, fbm2 } from './util.js';
 
-export const ROAD_HALF = 11;          // 路面半寬（公尺）
+export const ROAD_HALF = 15;          // 路面半寬（公尺）。原 11m，約加寬 36%
 export const KERB = 1.2;              // 路緣寬
 export const ROAD_HALF_K = ROAD_HALF + KERB;
-export const RAIL_L = ROAD_HALF_K + 0.5; // 護欄橫向位置
+export const RAIL_L = ROAD_HALF_K + 1.8; // 護欄再外推，碰撞面在路緣外側
 export const PIT_DEPTH = 11;
 const GAP_LEN = 40, RAMP_LEN = 24, RAMP_H = 2.4;
 
@@ -90,7 +90,9 @@ export class Track {
       ks[i] = s / (2 * W + 1);
     }
     this.bank = new Float32Array(N);
-    for (let i = 0; i < N; i++) this.bank[i] = clamp(ks[i] * 75, -0.3, 0.3);
+    const bankGain = def.bankGain == null ? 1 : def.bankGain;
+    const bankCap = Math.min(0.42, 0.32 * Math.max(0.35, bankGain));
+    for (let i = 0; i < N; i++) this.bank[i] = clamp(ks[i] * 75 * bankGain, -bankCap, bankCap);
 
     // 缺口：選在最直的位置附近
     this.gaps = [];
@@ -169,6 +171,97 @@ export class Track {
       for (let k = 0; k < nCp; k++) this.checkpoints.push(wrap(k * step));
     }
     applyStunts(this);
+    this._placeFeatures();
+  }
+
+  _inSpan(fi, i0, len) {
+    let a = fi - i0;
+    const N = this.N;
+    if (a < -N / 2) a += N;
+    if (a > N / 2) a -= N;
+    return a >= 0 && a < len;
+  }
+
+  _clearGround(i) {
+    if (this.isGapIdx(i)) return false;
+    const k = this.kind ? this.kind[this.wrap(i)] : 0;
+    return k !== KIND.LOOP && k !== KIND.INVERT && k !== KIND.FLY && k !== KIND.WALL && k !== KIND.DECK;
+  }
+
+  // 加速帶、抓地帶、跳台。都是賽道上的靜態取樣，不進每幀封包。
+  _placeFeatures() {
+    const def = this.def || {};
+    const N = this.N;
+    const wrap = this.wrap;
+    this.half = ROAD_HALF;
+    this.pads = this.pads || [];
+    this.zones = [];
+    const ds = Math.max(0.5, this.ds || 1);
+    const nearestClear = (i) => {
+      if (this._clearGround(i)) return i;
+      for (let k = 1; k < 48; k++) {
+        const a = wrap(i + k), b = wrap(i - k);
+        if (this._clearGround(a)) return a;
+        if (this._clearGround(b)) return b;
+      }
+      return -1;
+    };
+    for (const f of def.pads || []) {
+      const c = nearestClear(wrap(Math.round(f * N)));
+      if (c < 0) continue;
+      const half = Math.max(3, Math.round((def.padLen || 16) / ds));
+      this.pads.push({ i0: wrap(c - half), len: half * 2, power: def.padPower || 1 });
+    }
+    for (const z of def.zones || []) {
+      const c = wrap(Math.round(z.f * N));
+      const len = Math.max(6, Math.round((z.len || 0.06) * N));
+      this.zones.push({ i0: wrap(c - Math.floor(len / 2)), len, k: z.k == null ? 1 : z.k, drag: z.drag || 0, kind: z.kind || '' });
+    }
+    if (!def.stunts) {
+      const span = Math.max(6, Math.round((def.rampW || 20) / ds));
+      const h = def.rampH || 3.4;
+      for (const f of def.ramps || []) {
+        const c = nearestClear(wrap(Math.round(f * N)));
+        if (c < 0) continue;
+        for (let k = -span; k <= span; k++) {
+          const u = 1 - Math.abs(k) / span;
+          this.py[wrap(c + k)] += h * Math.pow(Math.max(0, u), 1.55);
+        }
+        this.boosts.push({ i: wrap(c + Math.round(span * 0.42)), v: def.rampBoost || 8.2 });
+      }
+      for (const d of def.swells || []) {
+        const c = nearestClear(wrap(Math.round(d.f * N)));
+        if (c < 0) continue;
+        const w = Math.max(8, Math.round((d.w || 34) / ds));
+        const lift = d.h || 0;
+        for (let k = -w; k <= w; k++) {
+          const u = 1 - Math.abs(k) / w;
+          this.py[wrap(c + k)] += lift * u * u;
+        }
+      }
+    }
+  }
+
+  surfaceFx(fi) {
+    let grip = 1, drag = 0, kind = '';
+    if (this.zones) {
+      const x = this.wrapF(fi);
+      for (const z of this.zones) {
+        if (!this._inSpan(x, z.i0, z.len)) continue;
+        if (z.k < grip) { grip = z.k; kind = z.kind || kind; }
+        if (z.drag > drag) drag = z.drag;
+      }
+    }
+    return { grip, drag, kind };
+  }
+
+  onPad(fi) {
+    if (!this.pads || !this.pads.length) return 0;
+    const x = this.wrapF(fi);
+    for (const p of this.pads) {
+      if (this._inSpan(x, p.i0, p.len)) return p.power || 1;
+    }
+    return 0;
   }
 
   // 特技賽道把樣本換成含迴圈的 3D 點列後，重新建立索引。
@@ -204,6 +297,7 @@ export class Track {
     this.ds = length / N;
     this.bounds = { minX, maxX, minZ, maxZ };
     this.hasRibbon = true;
+    this.kappa = null;
     this.fine = new Grid(this, 30, 1, 3);
     this.coarse = new Grid(this, 150, 6, 3);
     this._q = this.newQuery();
