@@ -142,6 +142,8 @@ const ROWS = [
   ['join.carWait', '這台車：等待房主指定…', 'Car: waiting for the host…', 'Voiture : en attente de l’hôte…', '車両：ホストの指定待ち…', '차량: 호스트 지정 대기…'],
   ['join.car', '這台車：{name}・{paint}', 'Car: {name} · {paint}', 'Voiture : {name} · {paint}', '車両：{name}・{paint}', '차량: {name} · {paint}'],
   ['join.help', '你是 P3。畫面固定橫向，按鍵比照手把：左邊轉向，LT 煞車、RT 加速，右邊是 A／B／X／Y。車機上看到的也是這台車。', 'You are P3. The view stays landscape. Left stick steers, LT brakes, RT accelerates, and A/B/X/Y sit on the right. The car screen shows this same car.', 'Vous êtes P3. L’image reste en paysage. Le stick gauche tourne, LT freine, RT accélère, A/B/X/Y à droite. La voiture à l’écran de l’hôte est la même.', 'あなたは P3。画面は横固定。左でステア、LT ブレーキ、RT 加速、右は A／B／X／Y。車の画面にも同じ車が出ます。', '당신은 P3. 화면은 가로 고정. 왼쪽 조향, LT 브레이크, RT 가속, 오른쪽은 A/B/X/Y. 차량 화면에도 같은 차가 보입니다.'],
+  ['phone.turn', '請把手機轉成橫向', 'Turn your phone sideways', 'Tournez le téléphone en paysage', 'スマホを横向きにしてください', '휴대폰을 가로로 돌려 주세요'],
+  ['phone.turnSub', '直向先不開。轉成橫向後，畫面會鋪滿你看得到的範圍。', 'Portrait waits. Landscape fills the screen you can see.', 'Le portrait attend. Le paysage remplit l’écran visible.', '縦向きでは待ちます。横にすると見える範囲いっぱいになります。', '세로는 기다립니다. 가로로 돌리면 보이는 화면을 채웁니다.'],
   ['join.garage', '換一台車', 'Change car', 'Changer', '車を変える', '차 바꾸기'],
   ['join.retry', '重新連線', 'Reconnect', 'Reconnecter', '再接続', '다시 연결'],
   ['join.leave', '離開，自己開一場', 'Leave and race alone', 'Quitter et jouer seul', '出て一人で走る', '나가고 혼자 달리기'],

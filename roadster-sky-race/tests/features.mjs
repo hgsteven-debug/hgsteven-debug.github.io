@@ -516,16 +516,23 @@ async function testPhonePad() {
     if (box.early || !box.late) throw new Error('warn debounce ' + JSON.stringify(box));
   }
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
-  await page.evaluate(() => {
-    document.documentElement.classList.add('force-landscape');
-    document.body.style.width = '844px';
-    document.body.style.height = '390px';
-  });
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  const turned = await measurePad(page);
-  if (!turned.hitG.inside || turned.hitG.key !== 'gas') throw new Error('rotated gas ' + JSON.stringify(turned));
-  if (!turned.hitB.inside || turned.hitB.key !== 'brake') throw new Error('rotated brake ' + JSON.stringify(turned));
-  if (turned.gas.t !== '加速') throw new Error('rotated label ' + turned.gas.t);
+  const turned = await page.evaluate(() => {
+    const turn = document.getElementById('turnPhone');
+    const r = turn.getBoundingClientRect();
+    const body = getComputedStyle(document.body);
+    return {
+      need: document.body.classList.contains('need-rotate'),
+      forced: document.documentElement.classList.contains('force-landscape'),
+      transform: body.transform,
+      w: Math.round(r.width), h: Math.round(r.height),
+      text: (turn.innerText || '').replace(/\s+/g, ''),
+      iw: innerWidth, ih: innerHeight,
+    };
+  });
+  if (turned.forced || turned.transform !== 'none') throw new Error('portrait still rotates ' + JSON.stringify(turned));
+  if (!turned.need || turned.w < 380 || turned.h < 800) throw new Error('rotate overlay ' + JSON.stringify(turned));
+  if (turned.text.indexOf('橫向') < 0) throw new Error('rotate copy ' + turned.text);
   const pr = await page.evaluate(() => window.__sky.renderer.getPixelRatio());
   if (!(pr <= 1.05)) throw new Error('dpr ' + pr);
   await page.close();

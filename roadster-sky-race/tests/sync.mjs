@@ -145,6 +145,11 @@ function testGuestSmooth() {
   assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 0, win: 90, iw: 800, ih: 760 }, 'css') === false, 'window.orientation landscape');
   assert(sync.wantCssRotate({ type: 'landscape-secondary', angle: 270, win: 90, iw: 390, ih: 844 }, 'css') === false, 'type landscape wins');
   assert(sync.wantCssRotate({ type: 'portrait-primary', angle: 0, win: 90, iw: 412, ih: 915 }, '') === true, 'layout still portrait');
+  assert(sync.phoneHeldPortrait({ iw: 390, ih: 664 }) === true, 'portrait chrome');
+  assert(sync.phoneHeldPortrait({ iw: 390, ih: 844 }) === true, 'portrait full');
+  assert(sync.phoneHeldPortrait({ iw: 844, ih: 390 }) === false, 'landscape full');
+  assert(sync.phoneHeldPortrait({ iw: 844, ih: 320 }) === false, 'landscape short');
+  assert(sync.phoneHeldPortrait({ type: 'landscape-primary', iw: 390, ih: 700 }) === true, 'viewport wins over type');
   const right = sync.viewportDeltaToUi(0, 40, 0, 1, -1, 0);
   const left = sync.viewportDeltaToUi(0, -40, 0, 1, -1, 0);
   const up = sync.viewportDeltaToUi(30, 0, 0, 1, -1, 0);

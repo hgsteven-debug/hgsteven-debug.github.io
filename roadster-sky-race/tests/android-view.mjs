@@ -82,6 +82,8 @@ try {
         canvas: { x: r.x, y: r.y, w: r.width, h: r.height, bw: gl.width, bh: gl.height, sw: gl.style.width, sh: gl.style.height },
         pr: sky.renderer.getPixelRatio(),
         forced: document.documentElement.classList.contains('force-landscape'),
+        need: document.body.classList.contains('need-rotate'),
+        transform: getComputedStyle(document.body).transform,
         view: { x: again.x, y: again.y, w: again.z, h: again.w },
         buf: { w: buf2.x, h: buf2.y },
         hit: host && (host.id || host.dataset.t || host.dataset.p),
@@ -92,13 +94,13 @@ try {
     const coverW = Math.min(box.canvas.x + box.canvas.w, w) - Math.max(box.canvas.x, 0);
     const coverH = Math.min(box.canvas.y + box.canvas.h, h) - Math.max(box.canvas.y, 0);
     assert(coverW >= w - 2 && coverH >= h - 2, name + ' canvas cover ' + JSON.stringify(box.canvas));
-    const expectW = box.forced ? h : w;
-    const expectH = box.forced ? w : h;
-    assert(box.canvas.bw >= expectW * 0.95 && box.canvas.bh >= expectH * 0.95, name + ' buffer ' + JSON.stringify(box));
+    assert(!box.forced && box.transform === 'none', name + ' no css rotate ' + JSON.stringify(box));
+    assert(box.canvas.bw >= w * 0.95 && box.canvas.bh >= h * 0.95, name + ' buffer ' + JSON.stringify(box));
     assert(box.pr <= 1.01, name + ' dpr ' + box.pr);
     assert(box.view.x === 0 && box.view.y === 0 && Math.abs(box.view.w - box.buf.w) <= 2 && Math.abs(box.view.h - box.buf.h) <= 2, name + ' viewport ' + JSON.stringify(box));
     assert(box.touchPe === 'none' && box.gasPe === 'auto', name + ' pointer ' + box.touchPe + ' ' + box.gasPe);
-    assert(box.hit === 'gl', name + ' center hit ' + box.hit);
+    if (h > w) assert(box.need, name + ' portrait prompt ' + JSON.stringify(box));
+    else assert(!box.need && box.hit === 'gl', name + ' center hit ' + box.hit);
     if (errors.length) throw new Error(name + ' ' + errors.join('\n'));
     if (w === 915) await page.screenshot({ path: '/opt/cursor/artifacts/android-915x412.png' });
     if (w === 780) await page.screenshot({ path: '/opt/cursor/artifacts/android-780x360.png' });
