@@ -77,6 +77,11 @@ export class UI {
     if (name === 'mode') this.markMode();
     if (name === 'ready') this.refreshReady();
     this.setFocus(this.firstFocus());
+    // 手機短畫面先從標題開始，不要一進來就把標題捲出可視範圍。
+    if (document.body.classList.contains('guest')) {
+      const scroller = this.screens[name];
+      if (scroller) scroller.scrollTop = 0;
+    }
   }
   hideAll() {
     for (const el of Object.values(this.screens)) if (el) el.classList.remove('show');

@@ -128,10 +128,18 @@ function normAngle(v) {
   return ((Math.round(n) % 360) + 360) % 360;
 }
 
-// 橫向鎖定失敗時才用 CSS 轉正。看螢幕方向或螢幕邊長，不看會跟著網址列跳的 innerHeight。
-// 瀏覽器已經是橫向（方向 API，或視窗比螢幕寬）就不要再轉一次，否則搖桿和按鍵會再偏 90°。
-// screen.orientation.angle 和 window.orientation 不一致時，以「畫面是不是已經橫向」為準。
-// sticky 讓一次誤判沒辦法立刻翻回去：要明顯超過 80px 才換邊。
+// 直向：請使用者把手機轉橫。只看可視範圍的寬高，不看會說謊的方向 API，也不做 CSS 旋轉。
+// 橫向網址列伸縮不會把寬高對調，所以 24px 就夠擋抖動。
+export function phoneHeldPortrait(sample) {
+  const iw = (sample && sample.iw) || 0;
+  const ih = (sample && sample.ih) || 0;
+  if (iw >= 2 && ih >= 2) return ih > iw + 24;
+  const sw = (sample && sample.sw) || 0;
+  const sh = (sample && sample.sh) || 0;
+  return sh > sw + 24;
+}
+
+// 舊的 CSS 轉正判斷。手機畫面不再套用，直向改成全螢幕提示。測試仍鎖住這份判斷。
 export function wantCssRotate(sample, sticky) {
   const type = (sample && sample.type) || '';
   const iw = (sample && sample.iw) || 0;

@@ -142,6 +142,26 @@ async function hold(session, page, button, polls) {
 async function runMode(name, viewport, orient, expectCss) {
   const { context, page, session } = await openPhone(viewport, orient);
   try {
+    if (expectCss === 'overlay') {
+      const turn = await page.evaluate(() => {
+        const el = document.getElementById('turnPhone');
+        const r = el.getBoundingClientRect();
+        const body = getComputedStyle(document.body);
+        return {
+          need: document.body.classList.contains('need-rotate'),
+          forced: document.documentElement.classList.contains('force-landscape'),
+          transform: body.transform,
+          w: Math.round(r.width), h: Math.round(r.height),
+          text: (el.innerText || '').replace(/\s+/g, ''),
+          iw: innerWidth, ih: innerHeight,
+        };
+      });
+      assert(turn.need && !turn.forced && turn.transform === 'none', name + ' overlay ' + JSON.stringify(turn));
+      assert(turn.w >= viewport.width - 4 && turn.h >= viewport.height - 4, name + ' cover ' + JSON.stringify(turn));
+      assert(turn.text.indexOf('橫向') >= 0, name + ' copy ' + turn.text);
+      ok(name);
+      return;
+    }
     const box = await layout(page);
     assert(box.forced === expectCss, name + ' css ' + box.forced + ' ' + JSON.stringify({ iw: box.iw, ih: box.ih }));
     const expect = {
@@ -236,7 +256,7 @@ try {
     }, false],
     ['portrait-fallback', { width: 412, height: 915 }, {
       type: 'portrait-primary', angle: 0, win: 90, sw: 412, sh: 915, iw: 412, ih: 915,
-    }, true],
+    }, 'overlay'],
   ];
   for (const [name, viewport, orient, css] of modes) {
     try { await runMode(name, viewport, orient, css); }

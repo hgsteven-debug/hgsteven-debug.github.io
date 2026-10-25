@@ -19,7 +19,7 @@ import { AiDriver } from './ai.js';
 import { createHost, createGuest, drawRoomQr } from './net.js';
 import {
   normalizeCode, formatCode, joinUrl, heldInput, reconcileDecision, StateBuffer, zeroInput,
-  packSelf, packPose, easeGuestPose, hostOffroadWarn, wantCssRotate,
+  packSelf, packPose, easeGuestPose, hostOffroadWarn, phoneHeldPortrait,
 } from './sync.js';
 import * as syncApi from './sync.js';
 
@@ -55,9 +55,6 @@ const guestVis = {
 let guestSelfAt = 0;
 let guestRoad = { known: false, onRoad: true, since: 0, toastAt: 0 };
 let guestOffLeft = 0;
-let orientSticky = '';
-let orientTimer = 0;
-let orientPending = '';
 let lastApplied = '';
 let guestLive = false;
 let guestTrackReady = false;
@@ -107,42 +104,61 @@ function fail(msg, err) {
 }
 
 function baseDpr() { return Math.min(window.devicePixelRatio || 1, game.guest ? 1 : 1.5); }
-function visibleSize() {
+function readViewport() {
   const vv = window.visualViewport;
-  const w = Math.round((vv && vv.width) || window.innerWidth);
-  const h = Math.round((vv && vv.height) || window.innerHeight);
-  return { w: Math.max(1, w), h: Math.max(1, h) };
+  const w = Math.round((vv && vv.width) || window.innerWidth || 1);
+  const h = Math.round((vv && vv.height) || window.innerHeight || 1);
+  const top = Math.round((vv && vv.offsetTop) || 0);
+  const left = Math.round((vv && vv.offsetLeft) || 0);
+  return { w: Math.max(1, w), h: Math.max(1, h), top, left };
+}
+function visibleSize() {
+  return readViewport();
 }
 function viewSize() {
-  const box = visibleSize();
-  if (!document.documentElement.classList.contains('force-landscape')) return box;
-  return { w: box.h, h: box.w };
+  return visibleSize();
 }
-function pinSurface(w, h) {
+function pinSurface(box) {
   for (const id of ['gl', 'fx']) {
     const el = $(id);
     if (!el) continue;
-    el.style.width = w + 'px';
-    el.style.height = h + 'px';
+    el.style.width = box.w + 'px';
+    el.style.height = box.h + 'px';
+    if (game.guest) {
+      el.style.top = box.top + 'px';
+      el.style.left = box.left + 'px';
+    }
   }
 }
 function applyForceBox() {
   const b = document.body;
   if (!b) return;
-  if (!document.documentElement.classList.contains('force-landscape')) {
+  document.documentElement.classList.remove('force-landscape');
+  if (!game.guest) {
     b.style.width = '';
     b.style.height = '';
+    b.style.top = '';
+    b.style.left = '';
     return;
   }
-  const { w, h } = viewSize();
-  b.style.width = w + 'px';
-  b.style.height = h + 'px';
+  const box = readViewport();
+  const root = document.documentElement;
+  root.style.setProperty('--vv-w', box.w + 'px');
+  root.style.setProperty('--vv-h', box.h + 'px');
+  root.style.setProperty('--vv-top', box.top + 'px');
+  root.style.setProperty('--vv-left', box.left + 'px');
+  b.style.width = box.w + 'px';
+  b.style.height = box.h + 'px';
+  b.style.top = box.top + 'px';
+  b.style.left = box.left + 'px';
 }
 function applySize() {
   applyForceBox();
   if (!renderer) return;
-  const { w, h } = viewSize();
-  pinSurface(w, h);
+  const box = viewSize();
+  const w = box.w;
+  const h = box.h;
+  pinSurface(box);
   const pr = game.guest ? Math.min(1, window.devicePixelRatio || 1) : Math.min(1.5, baseDpr() * Q.scale * game.dyn);
   const key = pr.toFixed(3) + ':' + w + 'x' + h;
   renderer.setViewport(0, 0, w, h);
@@ -153,12 +169,13 @@ function applySize() {
   lastApplied = key;
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
-  pinSurface(w, h);
+  pinSurface(box);
   if (hud) hud.resize();
 }
 
 async function boot() {
   try {
+    syncPhoneOrientation();
     game._loadTimer = setTimeout(() => {
       if (game.state === 'loading') fail(t('load.timeout'));
     }, 25000);
@@ -264,7 +281,7 @@ async function boot() {
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        const SW_REV = 'v7';
+        const SW_REV = 'v8';
         navigator.serviceWorker.register('sw.js').then(() => {
           let once = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -280,7 +297,12 @@ async function boot() {
         }).catch(() => {});
       }
     } catch (e) {}
-    window.addEventListener('orientationchange', () => { syncPhoneOrientation(); applySize(); });
+    window.addEventListener('orientationchange', () => {
+      syncPhoneOrientation();
+      applySize();
+      // iOS 會晚一拍才把 innerHeight / visualViewport 改成轉完的尺寸。
+      setTimeout(() => { syncPhoneOrientation(); applySize(); }, 280);
+    });
     for (const ev of ['pointerdown', 'touchend', 'click']) {
       window.addEventListener(ev, () => { tryLockLandscape(); }, { passive: true });
     }
@@ -470,37 +492,21 @@ function orientSample() {
       sh = ih;
     }
   }
-  return { type, angle, win, sw, sh, iw: window.innerWidth, ih: window.innerHeight };
+  const box = readViewport();
+  return { type, angle, win, sw, sh, iw: box.w, ih: box.h };
 }
 function syncPhoneOrientation() {
+  document.documentElement.classList.remove('force-landscape');
+  if (!document.body) return;
   if (!game.guest) {
-    document.documentElement.classList.remove('force-landscape');
-    orientSticky = '';
-    orientPending = '';
-    if (orientTimer) { clearTimeout(orientTimer); orientTimer = 0; }
+    document.body.classList.remove('need-rotate');
     applyForceBox();
     return;
   }
-  const want = wantCssRotate(orientSample(), orientSticky);
-  const key = want ? 'css' : 'native';
-  const on = document.documentElement.classList.contains('force-landscape');
-  if (want === on && orientSticky) return;
-  if (orientPending === key && orientTimer) return;
-  orientPending = key;
-  if (orientTimer) clearTimeout(orientTimer);
-  const wait = orientSticky ? 280 : 0;
-  orientTimer = setTimeout(() => {
-    orientTimer = 0;
-    if (!game.guest) return;
-    const still = wantCssRotate(orientSample(), orientSticky);
-    if ((still ? 'css' : 'native') !== key) return;
-    document.documentElement.classList.toggle('force-landscape', still);
-    orientSticky = still ? 'css' : 'native';
-    orientPending = '';
-    lastApplied = '';
-    applyForceBox();
-    applySize();
-  }, wait);
+  const portrait = phoneHeldPortrait(orientSample());
+  document.body.classList.toggle('need-rotate', portrait);
+  lastApplied = '';
+  applyForceBox();
 }
 async function tryLockLandscape() {
   if (!game.guest || orientLockTried) return;
@@ -508,7 +514,7 @@ async function tryLockLandscape() {
   // 不要在第一下就要求全螢幕。Android Chrome 會把版面停在半個螢幕，畫布跟著只畫一半。
   try {
     if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
-  } catch (e) { /* 鎖不住就用 CSS 把整個畫面轉成橫向 */ }
+  } catch (e) { /* iOS 鎖不住。直向改顯示全螢幕提示，不再用 CSS 把畫面轉 90°。 */ }
   syncPhoneOrientation();
   applySize();
 }
