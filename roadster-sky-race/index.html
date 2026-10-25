@@ -39,7 +39,8 @@
     <div id="camlabel" class="panel small">視角：追尾</div>
   </div>
   <div id="itembadge" class="hidden" data-i18n="items.badge">道具 ON</div>
-  <div id="itemslot" class="hidden"><div id="itemglyph"></div><span id="itemname"></span></div>
+  <div id="itemslot" class="hidden"><div id="itemrow"><div id="itemglyph"></div><div id="itemnext" class="hidden"><div id="itemnextglyph"></div></div></div><span id="itemname"></span></div>
+  <div id="driftbar" class="hidden"><i id="driftfill"></i></div>
   <div id="itempop" class="hidden"><div id="itempopIco"></div><b id="itempopName"></b><span id="itempopHow"></span></div>
   <div id="itemhit" class="hidden"></div>
   <div id="itemwarn" class="hidden"></div>
@@ -72,7 +73,7 @@
   <button class="gpad face x" data-p="reset" data-i18n-aria="touch.resetAria" aria-label="X 回賽道">X<br><span data-i18n="touch.reset">回賽道</span></button>
   <button class="gpad face b" data-t="lift" data-i18n-aria="touch.liftAria" aria-label="B 推進">B<br><span data-i18n="touch.lift">推進</span></button>
   <button class="gpad face a" data-t="nitro" data-i18n-aria="touch.nitroAria" aria-label="A 氮氣">A<br><span data-i18n="touch.nitro">氮氣</span></button>
-  <button class="gpad item" data-t="item" data-i18n-aria="touch.itemAria" aria-label="R 道具"><span class="ico" id="touchItemIco"></span><span class="itemlbl"><span class="keyletter">R</span><span data-i18n="touch.item">道具</span></span></button>
+  <button class="gpad item" data-t="item" data-i18n-aria="touch.itemAria" aria-label="R 道具"><span class="icos"><span class="ico" id="touchItemIco"></span><span class="ico next hidden" id="touchItemNext"></span></span><span class="itemlbl"><span class="keyletter">R</span><span data-i18n="touch.item">道具</span></span></button>
   <button class="gpad menu" data-p="pause" data-i18n="touch.pause" data-i18n-aria="touch.pauseAria" aria-label="暫停">暫停</button>
 </div>
 

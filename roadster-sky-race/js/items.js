@@ -93,6 +93,7 @@ export function unpackItemBits(bits) {
 export function clearItemState(v) {
   if (!v) return;
   v.item = 0;
+  v.itemNext = 0;
   v.spinT = 0;
   v.iFrame = 0;
   v.shield = false;
@@ -160,6 +161,44 @@ export function applyDriveFx(veh, dt, inp) {
     }
   }
   return src;
+}
+
+// 煞車加方向累積甩尾。放開（或離地、速度掉下來）時，夠久就給一小段加速。
+// 加速走既有的 boostT，不另佔封包。比手上那發更強的加速不會被蓋掉。
+export function stepDrift(veh, dt, steer, brake) {
+  if (!veh) return 0;
+  if (veh.spinT > 0) {
+    veh.driftT = 0;
+    veh._driftHeld = false;
+    return 0;
+  }
+  const vf = veh.attached
+    ? Math.abs(veh.speedF || 0)
+    : Math.hypot(veh.vel ? veh.vel.x : 0, veh.vel ? veh.vel.z : 0);
+  const charging = !!veh.grounded && (brake || 0) > 0.28 && Math.abs(steer || 0) > 0.32 && vf > 13;
+  const was = veh.driftT || 0;
+  if (charging) {
+    veh.driftT = Math.min(1.2, was + dt);
+    veh._driftHeld = true;
+    return 0;
+  }
+  veh.driftT = 0;
+  if (!veh._driftHeld) return 0;
+  veh._driftHeld = false;
+  return grantDriftBoost(veh, was);
+}
+
+function grantDriftBoost(veh, held) {
+  let dur = 0;
+  let pow = 0;
+  let tier = 0;
+  if (held >= 0.95) { dur = 0.62; pow = 30; tier = 2; }
+  else if (held >= 0.55) { dur = 0.4; pow = 22; tier = 1; }
+  if (!tier) return 0;
+  if ((veh.boostT || 0) < dur) veh.boostT = dur;
+  if ((veh.boostPower || 0) < pow) veh.boostPower = pow;
+  veh.driftBoost = tier;
+  return tier;
 }
 
 function progress(r) {
@@ -231,7 +270,6 @@ export class ItemBattle {
     const order = ranked(list);
     for (const r of list) {
       const v = r.veh;
-      if ((v.item | 0) !== 0) continue;
       for (const b of this.boxes) {
         if (!b.alive) continue;
         const dx = v.pos.x - b.x, dy = v.pos.y - b.y, dz = v.pos.z - b.z;
@@ -239,8 +277,7 @@ export class ItemBattle {
         b.alive = false;
         b.cool = RESPAWN_S;
         const place = Math.max(1, order.indexOf(r) + 1);
-        v.item = this.roll(place, order.length);
-        v.itemAge = 0;
+        this._give(v, this.roll(place, order.length));
         break;
       }
     }
@@ -271,12 +308,30 @@ export class ItemBattle {
     if (r._itemQueueT > 0) r._itemQueueT = Math.max(0, r._itemQueueT - dt);
   }
 
+  // 空位先補第一格，再補排隊的第二格。兩格都滿時箱子仍會破，只補一小段速度。
+  _give(v, id) {
+    if (!(v.item | 0)) {
+      v.item = id;
+      v.itemAge = 0;
+      return;
+    }
+    if (!(v.itemNext | 0)) {
+      v.itemNext = id;
+      return;
+    }
+    v.boostT = Math.max(v.boostT || 0, 0.42);
+    if ((v.boostPower || 0) < 14) v.boostPower = 14;
+    v.coinPing = true;
+    this.bursts.push({ kind: ITEM.BURST, x: v.pos.x, y: (v.pos.y || 0) + 1.3, z: v.pos.z, age: 0 });
+  }
+
   use(r, order) {
     const v = r && r.veh;
     const id = v && (v.item | 0);
     if (!v || !id) return false;
     const roster = order || ranked([r]);
-    v.item = 0;
+    v.item = v.itemNext | 0;
+    v.itemNext = 0;
     v.itemAge = 0;
     this.bursts.push({ kind: id, x: v.pos.x, y: v.pos.y + 1.3, z: v.pos.z, age: 0 });
     if (id === ITEM.AEGIS) {

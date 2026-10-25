@@ -161,6 +161,13 @@ export class AiDriver {
     }
     if (!veh.grounded && veh.alt < -1) { lift = true; pitch = Math.max(pitch, 0.5); }
     if (tr.jumpBoost && tr.jumpBoost(fi)) { throttle = 1; if (cfg.nitro) nitro = veh.energy > 8; }
+    // 甩尾蓄滿、而且還在路面中間，才鬆開煞車。貼邊時繼續煞，避免加速衝進護欄。
+    if (!lift && !onRibbon && !stuntSoon && veh.grounded && (veh.driftT || 0) >= 1 && Math.abs(lat) < half * 0.28) {
+      brake = 0;
+      throttle = 1;
+      const pull = clamp(-lat / (half * 0.5), -1, 1);
+      steer = clamp(steer * 0.25 + pull, -1, 1);
+    }
 
     st.steer = steer;
     st.throttle = throttle;

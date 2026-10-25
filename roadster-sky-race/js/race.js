@@ -8,6 +8,56 @@ const ROAD_HALF = 15;
 export const LOCAL_LIMIT = 2;
 export const RACE_LAPS = 2;
 
+// 起跑加速：倒數進到這個區間才踩下油門才算。一開始就按住、或按太早，都不算。
+export const START_WINDOW_LO = 0.48;
+export const START_WINDOW_HI = 0.92;
+
+export function armStartBoost(racer, countdown, throttle) {
+  if (!racer || racer._startDone) return;
+  const thr = (throttle || 0) > 0.55;
+  if (racer._startPrev == null) {
+    racer._startPrev = thr;
+    return;
+  }
+  const edge = thr && !racer._startPrev;
+  racer._startPrev = thr;
+  if (!edge) return;
+  if (countdown > START_WINDOW_HI) racer._startEarly = true;
+  else if (countdown >= START_WINDOW_LO && !racer._startEarly) racer._startArm = true;
+}
+
+export function takeStartBoost(racer) {
+  if (!racer || !racer.veh || racer._startDone) return false;
+  const ok = !!racer._startArm && !racer._startEarly;
+  racer._startDone = true;
+  racer._startArm = false;
+  if (!ok) return false;
+  const v = racer.veh;
+  const dur = 0.55;
+  const pow = 28;
+  if ((v.boostT || 0) < dur) v.boostT = dur;
+  if ((v.boostPower || 0) < pow) v.boostPower = pow;
+  v.launchBoost = true;
+  return true;
+}
+
+// 困難一定抓得到。普通用名字決定，大約一半抓得到。簡單不抓。
+export function armAiStart(racer, countdown) {
+  if (!racer || racer._startDone || racer._startArm || racer._startEarly) return;
+  const diff = (racer.driver && racer.driver.difficulty) || 'normal';
+  if (diff === 'easy') return;
+  if (diff === 'hard') {
+    if (countdown <= 0.74 && countdown >= 0.62) racer._startArm = true;
+    return;
+  }
+  const name = String(racer.name || '');
+  let h = 2166136261;
+  for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 16777619);
+  if ((h >>> 0) % 100 >= 55) return;
+  const at = 0.56 + ((h >>> 0) % 18) / 100;
+  if (countdown <= at && countdown >= START_WINDOW_LO) racer._startArm = true;
+}
+
 export class LocalDriver {
   constructor(input) {
     this.kind = 'local';
