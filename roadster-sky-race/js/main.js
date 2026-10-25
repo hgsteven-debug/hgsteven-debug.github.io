@@ -264,7 +264,7 @@ async function boot() {
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        const SW_REV = 'v6';
+        const SW_REV = 'v7';
         navigator.serviceWorker.register('sw.js').then(() => {
           let once = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -990,8 +990,12 @@ function paintHostStatus(info) {
   const hint = $('phoneHint');
   if (hint) hint.className = 'small dim' + (info.kind === 'fail' ? ' bad' : info.kind === 'warn' ? ' warn' : '');
   const canvas = $('phoneQr');
-  if (canvas && info.url && (info.kind === 'ready' || info.kind === 'joined')) {
-    if (drawRoomQr(canvas, info.url)) canvas.classList.remove('hidden');
+  // 加入網址一出來就在本機畫 QR。掃碼伺服器或網頁中繼還沒通，也不要藏起來。
+  if (canvas && info.url && (canvas.dataset.qr !== info.url || canvas.classList.contains('hidden'))) {
+    if (drawRoomQr(canvas, info.url)) {
+      canvas.dataset.qr = info.url;
+      canvas.classList.remove('hidden');
+    }
   }
 }
 function beginHost() {

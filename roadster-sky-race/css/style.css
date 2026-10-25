@@ -161,10 +161,11 @@ h2 { margin:0 0 .8rem; font-size:1.8rem; } h3 { margin:.2rem 0 .6rem; font-size:
 .padlist { font:.82rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--dim); margin:-.35rem 0 .7rem; word-break:break-word; }
 .padlist .p1 { color:#7dffa0; } .padlist .p2 { color:#9fd4ff; } .padlist .virt { color:#ffe29a; }
 .padhint { font-size:.95rem; color:#cfe9ff; margin:.15rem 0 .55rem; font-weight:650; }
-.phonejoin { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; margin:.2rem 0 .8rem; }
+.phonejoin { display:flex; flex-wrap:nowrap; gap:.8rem; align-items:flex-start; margin:.2rem 0 .8rem; }
 .phonejoin .grow { flex:1; min-width:0; }
 .phonejoin .padline { margin-bottom:.25rem; }
-#phoneQr { width:8.6rem; height:8.6rem; background:#fff; border-radius:.4rem; flex:none; }
+#phoneQr { width:9.2rem; height:9.2rem; background:#fff; border-radius:.45rem; flex:none; align-self:flex-start; }
+#s-lobby #phoneQr { position:sticky; top:.4rem; }
 .roomcode { font:800 1.35rem/1.2 ui-monospace, SFMono-Regular, monospace; letter-spacing:.14em; color:var(--accent); margin:.15rem 0 .35rem; }
 #phoneUrl { word-break:break-all; margin:.1rem 0 .3rem; }
 .small.bad, .sub.bad { color:#ff9a8a; } .small.warn { color:#ffe29a; } .sub.ok { color:#7dffa0; }
