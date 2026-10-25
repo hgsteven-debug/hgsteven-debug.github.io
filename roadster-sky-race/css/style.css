@@ -1,7 +1,9 @@
 :root { --accent:#27d7ff; --accent2:#ff7a1a; --bg:rgba(8,12,18,.72); --fg:#f2f6fa; --dim:#9aa7b4; }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none; touch-action:none; }
 html { font-size:clamp(14px,1.35vw,30px); }
-html,body { margin:0; height:100%; overflow:hidden; background:#0b0f14; color:var(--fg);
+html { --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+  --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px); }
+html,body { margin:0; height:100%; overflow:hidden; background:#0b0f14; color:var(--fg); overscroll-behavior:none;
   font-family:"PingFang TC","Microsoft JhengHei","Heiti TC","Noto Sans CJK TC","Source Han Sans TC","Noto Sans TC",
     "Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","YuGothic","Meiryo","Noto Sans CJK JP","Source Han Sans JP","Noto Sans JP",
     "Apple SD Gothic Neo","Malgun Gothic","Noto Sans CJK KR","Source Han Sans KR","Noto Sans KR",
@@ -55,9 +57,7 @@ html[lang="fr"] .legend, html[lang="ja"] .legend, html[lang="ko"] .legend { font
 #hint { position:absolute; left:1.2rem; bottom:1rem; color:rgba(255,255,255,.55); max-width:26rem; line-height:1.5; }
 #count { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%); font-size:9rem; font-weight:900; text-shadow:0 4px 30px rgba(0,0,0,.8); pointer-events:none; }
 
-#touch { position:fixed; inset:0; pointer-events:none; z-index:5;
-  --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
-  --safe-b: env(safe-area-inset-bottom, 0px); --safe-t: env(safe-area-inset-top, 0px); }
+#touch { position:fixed; inset:0; pointer-events:none; z-index:5; }
 .gpad, .stick { position:absolute; pointer-events:auto; touch-action:none; }
 .gpad { border:2px solid rgba(255,255,255,.42); background:rgba(10,16,24,.58); color:#fff; font:inherit; font-weight:800;
   display:flex; align-items:center; justify-content:center; text-align:center; line-height:1.15; }
@@ -83,6 +83,7 @@ html[lang="fr"] .legend, html[lang="ja"] .legend, html[lang="ko"] .legend { font
 .gpad.item { right:calc(210px + var(--safe-r)); bottom:calc(150px + var(--safe-b)); width:132px; height:92px; border-radius:1.15rem;
   font-size:.95rem; z-index:8; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
   background:rgba(18,16,28,.78); border-color:rgba(255,220,120,.85); touch-action:manipulation; }
+.gpad.item .keyletter { display:none; }
 .gpad.item .ico { width:52px; height:52px; display:flex; align-items:center; justify-content:center; }
 .gpad.item .ico svg { width:52px; height:52px; display:block; }
 body:not(.items-on) .gpad.item { display:none !important; }
@@ -226,3 +227,149 @@ body.touchon #hint { display:none; }
 
 .setrow.stack { flex-direction:column; align-items:flex-start; gap:.4rem; } .setrow.stack .seg { flex-wrap:wrap; }
 #s-garage .paintbtn { white-space:nowrap; padding:.45rem .55rem; gap:.35rem; } #s-garage .setrow > span { white-space:nowrap; } #s-garage .seg { flex-wrap:nowrap; }
+
+/* 手機（guest）橫向按鍵：半透明方鍵、十字方向、右下拇指群。車機觸控仍用圓形搖桿。 */
+#dpad { display:none; }
+body.guest {
+  --short: min(100dvh, 100dvw);
+  --key: min(104px, max(52px, calc((var(--short) - var(--safe-t) - var(--safe-b) - 136px) / 3.5)));
+  --gap: min(30px, max(8px, calc(var(--key) * 0.29)));
+  --brake-h: min(56px, max(38px, calc(var(--key) * 0.62)));
+  --gas-w: min(132px, max(96px, calc(var(--short) * 0.28)));
+  --gas-h: min(118px, max(76px, calc(var(--short) * 0.22)));
+  --face: min(100px, max(64px, calc(var(--short) * 0.175)));
+  --c-gap: 32px;
+  --map: min(84px, max(56px, calc(var(--short) * 0.15)));
+  --xy-h: 36px;
+  --xy-w: min(108px, 22vw);
+  --full-h: 28px;
+}
+body.guest #stick { display:none !important; }
+body.guest #dpad { display:block; }
+body.guest .gpad,
+body.guest .gpad.face,
+body.guest .gpad.face.a,
+body.guest .gpad.face.b,
+body.guest .gpad.face.x,
+body.guest .gpad.face.y,
+body.guest .gpad.brake,
+body.guest .gpad.gas,
+body.guest .gpad.item,
+body.guest .gpad.menu {
+  background:rgba(255,255,255,.40);
+  border:2.5px solid #fff;
+  border-radius:8px;
+  color:#fff;
+  font-weight:800;
+  letter-spacing:0;
+  text-shadow:0 1px 2px rgba(0,0,0,.92), 0 0 8px rgba(0,0,0,.75);
+  touch-action:none;
+  -webkit-touch-callout:none;
+}
+body.guest .gpad.on,
+body.guest .gpad.face.on,
+body.guest .gpad.brake.on,
+body.guest .gpad.gas.on,
+body.guest .gpad.item.on { filter:none; background:rgba(255,255,255,.62); border-color:#fff; }
+body.guest .dpad {
+  position:absolute;
+  left:calc(8px + var(--safe-l));
+  bottom:calc(8px + var(--safe-b) + var(--brake-h) + 6px);
+  width:calc(3 * var(--key) + 2 * var(--gap));
+  height:calc(3 * var(--key) + 2 * var(--gap));
+  pointer-events:none;
+}
+body.guest .dkey {
+  width:var(--key); height:var(--key);
+  flex-direction:column; gap:2px; padding:2px;
+}
+body.guest .dkey span { font-size:clamp(10px, calc(var(--key) * .2), 18px); font-weight:800; line-height:1; max-width:100%; }
+html[lang="en"] body.guest .dkey span,
+html[lang="fr"] body.guest .dkey span,
+html[lang="ko"] body.guest .dkey span { font-size:clamp(9px, calc(var(--key) * .16), 14px); }
+body.guest .dkey.up { left:calc(var(--key) + var(--gap)); top:0; }
+body.guest .dkey.down { left:calc(var(--key) + var(--gap)); bottom:0; }
+body.guest .dkey.left { left:0; top:calc(var(--key) + var(--gap)); }
+body.guest .dkey.right { right:0; top:calc(var(--key) + var(--gap)); }
+body.guest .chev { width:0; height:0; border-style:solid; display:block; }
+body.guest .chev.up { border-width:0 calc(var(--key) * .15) calc(var(--key) * .2) calc(var(--key) * .15); border-color:transparent transparent #fff transparent; }
+body.guest .chev.down { border-width:calc(var(--key) * .2) calc(var(--key) * .15) 0 calc(var(--key) * .15); border-color:#fff transparent transparent transparent; }
+body.guest .chev.left { border-width:calc(var(--key) * .15) calc(var(--key) * .2) calc(var(--key) * .15) 0; border-color:transparent #fff transparent transparent; }
+body.guest .chev.right { border-width:calc(var(--key) * .15) 0 calc(var(--key) * .15) calc(var(--key) * .2); border-color:transparent transparent transparent #fff; }
+body.guest .gpad.brake {
+  left:calc(8px + var(--safe-l));
+  bottom:calc(8px + var(--safe-b));
+  width:calc(3 * var(--key) + 2 * var(--gap));
+  height:var(--brake-h);
+  font-size:clamp(16px, 4.2vw, 26px);
+}
+body.guest .gpad.gas {
+  right:calc(8px + var(--safe-r));
+  bottom:calc(8px + var(--safe-b));
+  width:var(--gas-w);
+  height:var(--gas-h);
+  font-size:clamp(18px, 4.6vw, 28px);
+  letter-spacing:.02em;
+}
+body.guest .gpad.face.a,
+body.guest .gpad.face.b { flex-direction:row; gap:4px; padding:0 6px; font-size:clamp(14px, 3.2vw, 22px); white-space:nowrap; }
+body.guest .gpad.face.a br, body.guest .gpad.face.b br, body.guest .gpad.face.x br, body.guest .gpad.face.y br { display:none; }
+body.guest .gpad.face.b {
+  width:var(--face); height:var(--gas-h);
+  right:calc(8px + var(--safe-r) + var(--gas-w) + var(--c-gap));
+  bottom:calc(8px + var(--safe-b));
+}
+body.guest .gpad.face.a {
+  width:var(--gas-w); height:var(--face);
+  right:calc(8px + var(--safe-r));
+  bottom:calc(8px + var(--safe-b) + var(--gas-h) + var(--c-gap));
+}
+body.guest .gpad.item {
+  right:calc(8px + var(--safe-r) + var(--gas-w) + var(--c-gap));
+  bottom:calc(8px + var(--safe-b) + var(--gas-h) + var(--c-gap));
+  width:var(--face); height:var(--face);
+  touch-action:none;
+  border-color:#fff;
+}
+body.guest .gpad.item .keyletter { display:inline; margin-right:.2em; }
+body.guest .gpad.item .itemlbl { display:flex; align-items:center; font-size:clamp(12px, 3vw, 18px); font-weight:800; line-height:1; }
+body.guest .gpad.item .ico, body.guest .gpad.item .ico svg { width:min(36px, 46%); height:min(36px, 46%); }
+body.guest .gpad.face.x, body.guest .gpad.face.y {
+  top:calc(var(--safe-t) + 4px + var(--full-h) + 6px + var(--map) + 8px);
+  bottom:auto;
+  width:var(--xy-w); height:var(--xy-h);
+  flex-direction:row; gap:4px; padding:0 6px;
+  font-size:13px; white-space:nowrap;
+}
+body.guest .gpad.face.y { right:calc(8px + var(--safe-r)); }
+body.guest .gpad.face.x { right:calc(8px + var(--safe-r) + var(--xy-w) + 8px); }
+body.guest .gpad.menu {
+  top:calc(4px + var(--safe-t));
+  width:76px; height:32px;
+  font-size:.8rem;
+}
+body.guest #lapbox {
+  left:calc(8px + var(--safe-l));
+  top:calc(4px + var(--safe-t));
+  min-width:0; padding:.12rem .4rem;
+}
+body.guest #lapbox .row { font-size:.64rem; gap:.3rem; }
+body.guest #lapbox .row.big b { font-size:.9rem; }
+body.guest #lapbox .lbl { font-size:.56rem; }
+body.guest #rightcol { right:calc(8px + var(--safe-r)); top:calc(4px + var(--safe-t)); gap:6px; }
+body.guest #rightcol canvas { width:var(--map); height:var(--map); }
+body.guest #btnFull {
+  height:var(--full-h); min-height:0; padding:0 .45rem; line-height:1;
+  background:rgba(255,255,255,.40); border:2.5px solid #fff; border-radius:8px;
+  color:#fff; font-weight:800; text-shadow:0 1px 2px rgba(0,0,0,.9);
+}
+body.guest #padstate, body.guest #camlabel, body.guest #hint,
+body.guest #itemslot, body.guest #itembadge { display:none !important; }
+body.guest #speedbox {
+  left:50%; bottom:auto; top:calc(var(--safe-t) + 78px);
+  transform:translateX(-50%); min-width:0; width:max-content;
+}
+body.guest .speedrow b { font-size:1.6rem; min-width:2.4rem; }
+body.guest #state { font-size:.6rem; height:auto; letter-spacing:.02em; }
+body.guest .ebar { height:.6rem; margin-top:.1rem; }
+body.guest #gbadge { left:50%; top:calc(var(--safe-t) + 168px); transform:translateX(-50%); }

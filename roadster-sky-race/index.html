@@ -56,11 +56,17 @@
     <div class="knob"></div>
     <span class="stick-lbl" data-i18n="touch.steer">轉向</span>
   </div>
+  <div id="dpad" class="dpad">
+    <button class="gpad dkey up" data-t="pup" data-i18n-aria="touch.pitchAria" aria-label="俯仰"><i class="chev up" aria-hidden="true"></i><span data-i18n="touch.pitch">俯仰</span></button>
+    <button class="gpad dkey left" data-t="left" data-i18n-aria="touch.turnLAria" aria-label="左轉"><i class="chev left" aria-hidden="true"></i><span data-i18n="touch.turnL">左轉</span></button>
+    <button class="gpad dkey right" data-t="right" data-i18n-aria="touch.turnRAria" aria-label="右轉"><i class="chev right" aria-hidden="true"></i><span data-i18n="touch.turnR">右轉</span></button>
+    <button class="gpad dkey down" data-t="pdown" data-i18n-aria="touch.pitchDownAria" aria-label="俯仰"><i class="chev down" aria-hidden="true"></i></button>
+  </div>
   <button class="gpad face y" data-p="camera" data-i18n-aria="touch.camAria" aria-label="Y 視角">Y<br><span data-i18n="touch.cam">視角</span></button>
   <button class="gpad face x" data-p="reset" data-i18n-aria="touch.resetAria" aria-label="X 回賽道">X<br><span data-i18n="touch.reset">回賽道</span></button>
   <button class="gpad face b" data-t="lift" data-i18n-aria="touch.liftAria" aria-label="B 推進">B<br><span data-i18n="touch.lift">推進</span></button>
   <button class="gpad face a" data-t="nitro" data-i18n-aria="touch.nitroAria" aria-label="A 氮氣">A<br><span data-i18n="touch.nitro">氮氣</span></button>
-  <button class="gpad item" data-t="item" data-i18n-aria="touch.itemAria" aria-label="R 道具"><span class="ico" id="touchItemIco"></span><span data-i18n="touch.item">道具</span></button>
+  <button class="gpad item" data-t="item" data-i18n-aria="touch.itemAria" aria-label="R 道具"><span class="ico" id="touchItemIco"></span><span class="itemlbl"><span class="keyletter">R</span><span data-i18n="touch.item">道具</span></span></button>
   <button class="gpad menu" data-p="pause" data-i18n="touch.pause" data-i18n-aria="touch.pauseAria" aria-label="暫停">暫停</button>
 </div>
 

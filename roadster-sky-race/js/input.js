@@ -160,7 +160,7 @@ export class InputManager {
     this.keys = new Set();
     this.useKeyboard = keys !== false;
     this.exclusive = !!exclusive;
-    this.touch = { left: false, right: false, gas: false, brake: false, lift: false, nitro: false, item: false, stick: false, steer: 0, pitch: 0 };
+    this.touch = { left: false, right: false, gas: false, brake: false, lift: false, nitro: false, item: false, pup: false, pdown: false, stick: false, steer: 0, pitch: 0 };
     this.padIndex = padIndex;       // null = 自動選擇
     this.pad = null;                // 目前使用的 Gamepad 物件
     this.padInfo = { connected: false, id: '', mapping: '', index: -1, profile: 'switch' };
@@ -502,8 +502,10 @@ export class InputManager {
     st.nitro = !!st.padNitro || this.isKey('ShiftLeft', 'ShiftRight') || this.touch.nitro;
     st.item = !!st.padItem || (this.useKeyboard && this.isKey('KeyF')) || !!this.touch.item || !!this._itemTap;
     this._itemTap = false;
-    const touchPitch = this.touch.stick ? clamp(this.touch.pitch || 0, -1, 1) : 0;
-    st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)) + touchPitch, -1, 1);
+    let touchPitch = this.touch.stick ? clamp(this.touch.pitch || 0, -1, 1) : 0;
+    if (this.touch.pup) touchPitch -= 1;
+    if (this.touch.pdown) touchPitch += 1;
+    st.pitch = clamp((st.padPitch || 0) + ((this.isKey('KeyE') ? 1 : 0) - (this.isKey('KeyQ') ? 1 : 0)) + clamp(touchPitch, -1, 1), -1, 1);
     pr.camera = pr.camera || this.consumeKey('KeyC') || !!this._touchEdge.camera;
     pr.reset = pr.reset || this.consumeKey('KeyR') || !!this._touchEdge.reset;
     pr.pause = pr.pause || this.consumeKey('Escape') || this.consumeKey('KeyP') || !!this._touchEdge.pause;

@@ -32,6 +32,11 @@ try {
     assert(DICTS[loc]['touch.liftAria'].startsWith('B '), loc + ' aria ' + DICTS[loc]['touch.liftAria']);
     assert(!/倒車|reverse|recul|後退|후진/i.test(DICTS[loc]['touch.lift']), loc + ' lift is reverse');
   }
+  assert(DICTS['zh-TW']['touch.pitch'] === '俯仰' && DICTS['zh-TW']['touch.turnL'] === '左轉' && DICTS['zh-TW']['touch.turnR'] === '右轉');
+  assert(DICTS.en['touch.pitch'] === 'PITCH' && DICTS.en['touch.turnL'] === 'LEFT' && DICTS.en['touch.turnR'] === 'RIGHT');
+  assert(DICTS.fr['touch.pitch'] === 'TANG.' && DICTS.fr['touch.turnL'] === 'GAUCHE' && DICTS.fr['touch.turnR'] === 'DROITE');
+  assert(DICTS.ja['touch.pitch'] === '俯仰' && DICTS.ja['touch.turnL'] === '左折' && DICTS.ja['touch.turnR'] === '右折');
+  assert(DICTS.ko['touch.pitch'] === '피치' && DICTS.ko['touch.turnL'] === '좌회전' && DICTS.ko['touch.turnR'] === '우회전');
   assert(DICTS['zh-TW']['touch.gas'] === '加速', DICTS['zh-TW']['touch.gas']);
   assert(DICTS['zh-TW']['touch.brake'] === '煞車');
   assert(DICTS['zh-TW']['hud.off'] === '離開路面');

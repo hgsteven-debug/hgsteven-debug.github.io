@@ -25,6 +25,7 @@ import * as syncApi from './sync.js';
 
 const params = new URLSearchParams(location.search);
 const joinCode = normalizeCode(params.get('join') || '');
+if (joinCode) document.body.classList.add('guest');
 const netOff = params.get('nonet') === '1';
 let qname = params.get('q') || store.get('quality', null) || ((navigator.hardwareConcurrency || 8) <= 4 ? 'low' : 'med');
 if (joinCode && !params.get('q')) qname = 'low';
@@ -221,7 +222,7 @@ async function boot() {
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        const SW_REV = 'v2';
+        const SW_REV = 'v3';
         navigator.serviceWorker.register('sw.js').then(() => {
           let once = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {

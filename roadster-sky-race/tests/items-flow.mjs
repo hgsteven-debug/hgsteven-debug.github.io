@@ -29,11 +29,13 @@ try {
   migrateStoredItems();
   assert(store.get('items') === '0', 'turned off after the one-shot must stay off');
   const sw = fs.readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
-  assert(sw.includes("const CACHE = 'sky-roadster-v2'"), 'cache name');
+  const main = fs.readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
+  assert(sw.includes("const CACHE = 'sky-roadster-v3'"), 'cache name');
+  assert(main.includes("const SW_REV = 'v3'"), 'sw rev');
   assert(sw.includes('caches.delete'), 'old caches deleted');
-  assert(!sw.includes('sky-roadster-v1'), 'v1 still named');
-  ok('saved items=0 migrates once, service worker is v2');
-} catch (e) { bad('saved items=0 migrates once, service worker is v2', e); }
+  assert(!sw.includes('sky-roadster-v1') && !sw.includes('sky-roadster-v2'), 'old cache still named');
+  ok('saved items=0 migrates once, service worker is v3');
+} catch (e) { bad('saved items=0 migrates once, service worker is v3', e); }
 
 const browser = await puppeteer.launch({
   executablePath: '/usr/bin/google-chrome',
