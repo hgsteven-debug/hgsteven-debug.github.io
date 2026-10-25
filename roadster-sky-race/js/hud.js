@@ -30,8 +30,9 @@ export class Hud {
     this.resize();
   }
   resize() {
-    const forced = document.documentElement.classList.contains('force-landscape');
-    const vw = forced ? innerHeight : innerWidth, vh = forced ? innerWidth : innerHeight;
+    const gl = document.getElementById('gl');
+    const vw = gl && parseFloat(gl.style.width) || innerWidth;
+    const vh = gl && parseFloat(gl.style.height) || innerHeight;
     const w = Math.max(2, Math.round(vw * this.fxScale)), h = Math.max(2, Math.round(vh * this.fxScale));
     this.el.fx.width = w; this.el.fx.height = h;
   }

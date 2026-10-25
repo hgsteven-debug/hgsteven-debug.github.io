@@ -58,7 +58,6 @@ let guestOffLeft = 0;
 let orientSticky = '';
 let orientTimer = 0;
 let orientPending = '';
-let viewLock = null;
 let lastApplied = '';
 let guestLive = false;
 let guestTrackReady = false;
@@ -78,8 +77,19 @@ const camPos = new THREE.Vector3();
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion();
 const noAdapt = params.get('noadapt') === '1';
 
+function showGlFail(msg) {
+  const box = $('glfail');
+  const text = $('glfailMsg');
+  if (text) text.textContent = msg || t('boot.webgl');
+  if (box) box.classList.remove('hidden');
+}
+function hideGlFail() {
+  const box = $('glfail');
+  if (box) box.classList.add('hidden');
+}
 function fail(msg, err) {
   console.error(msg, err);
+  showGlFail(msg);
   const el = $('loadTxt');
   if (el) { el.style.color = '#ff9a8a'; el.textContent = msg; }
   if ($('loadRetry')) return;
@@ -97,13 +107,24 @@ function fail(msg, err) {
 }
 
 function baseDpr() { return Math.min(window.devicePixelRatio || 1, game.guest ? 1 : 1.5); }
+function visibleSize() {
+  const vv = window.visualViewport;
+  const w = Math.round((vv && vv.width) || window.innerWidth);
+  const h = Math.round((vv && vv.height) || window.innerHeight);
+  return { w: Math.max(1, w), h: Math.max(1, h) };
+}
 function viewSize() {
-  const forced = document.documentElement.classList.contains('force-landscape');
-  if (!forced) { viewLock = null; return { w: window.innerWidth, h: window.innerHeight }; }
-  const w = window.innerHeight, h = window.innerWidth;
-  if (!viewLock) viewLock = { w, h };
-  else if (Math.abs(w - viewLock.w) > 120 || Math.abs(h - viewLock.h) > 120) viewLock = { w, h };
-  return viewLock;
+  const box = visibleSize();
+  if (!document.documentElement.classList.contains('force-landscape')) return box;
+  return { w: box.h, h: box.w };
+}
+function pinSurface(w, h) {
+  for (const id of ['gl', 'fx']) {
+    const el = $(id);
+    if (!el) continue;
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+  }
 }
 function applyForceBox() {
   const b = document.body;
@@ -120,15 +141,19 @@ function applyForceBox() {
 function applySize() {
   applyForceBox();
   if (!renderer) return;
-  const scale = game.guest ? Math.min(Q.scale, 0.62) : Q.scale;
-  const pr = Math.min(game.guest ? 1 : 1.5, baseDpr() * scale * game.dyn);
   const { w, h } = viewSize();
-  const key = pr.toFixed(3) + ':' + Math.round(w) + 'x' + Math.round(h);
+  pinSurface(w, h);
+  const pr = game.guest ? Math.min(1, window.devicePixelRatio || 1) : Math.min(1.5, baseDpr() * Q.scale * game.dyn);
+  const key = pr.toFixed(3) + ':' + w + 'x' + h;
+  renderer.setViewport(0, 0, w, h);
+  camera.aspect = w / Math.max(1, h);
+  camera.updateProjectionMatrix();
+  if (camera2) { camera2.aspect = camera.aspect; camera2.updateProjectionMatrix(); }
   if (key === lastApplied) return;
   lastApplied = key;
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
-  camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
+  pinSurface(w, h);
   if (hud) hud.resize();
 }
 
@@ -138,9 +163,21 @@ async function boot() {
       if (game.state === 'loading') fail(t('load.timeout'));
     }, 25000);
     const canvas = $('gl');
+    const glRetry = $('glfailRetry');
+    if (glRetry) glRetry.addEventListener('click', () => location.reload());
+    canvas.addEventListener('webglcontextlost', (ev) => {
+      ev.preventDefault();
+      showGlFail(t('boot.webglLost'));
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      hideGlFail();
+      lastApplied = '';
+      applySize();
+    });
     try {
       renderer = new THREE.WebGLRenderer({ canvas, antialias: Q.aa, powerPreference: 'high-performance', stencil: false });
     } catch (e) { return fail(t('boot.webgl'), e); }
+    if (!renderer.getContext()) return fail(t('boot.webgl'));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     scene = new THREE.Scene();
@@ -218,11 +255,16 @@ async function boot() {
     renderer.render(scene, camera);
     $('loadBar').style.width = '100%';
 
-    window.addEventListener('resize', () => { syncPhoneOrientation(); applySize(); game._presentAt = 0; });
+    const onView = () => { syncPhoneOrientation(); applySize(); game._presentAt = 0; };
+    window.addEventListener('resize', onView);
+    if (window.visualViewport) {
+      visualViewport.addEventListener('resize', onView);
+      visualViewport.addEventListener('scroll', onView);
+    }
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        const SW_REV = 'v3';
+        const SW_REV = 'v4';
         navigator.serviceWorker.register('sw.js').then(() => {
           let once = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -455,7 +497,6 @@ function syncPhoneOrientation() {
     document.documentElement.classList.toggle('force-landscape', still);
     orientSticky = still ? 'css' : 'native';
     orientPending = '';
-    viewLock = null;
     lastApplied = '';
     applyForceBox();
     applySize();
@@ -464,11 +505,7 @@ function syncPhoneOrientation() {
 async function tryLockLandscape() {
   if (!game.guest || orientLockTried) return;
   orientLockTried = true;
-  const el = document.documentElement;
-  try {
-    const req = el.requestFullscreen || el.webkitRequestFullscreen;
-    if (req && !document.fullscreenElement) await req.call(el);
-  } catch (e) { /* iOS Safari 沒有頁面全螢幕 */ }
+  // 不要在第一下就要求全螢幕。Android Chrome 會把版面停在半個螢幕，畫布跟著只畫一半。
   try {
     if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
   } catch (e) { /* 鎖不住就用 CSS 把整個畫面轉成橫向 */ }
@@ -650,9 +687,6 @@ function setSplit(on) {
     renderer.autoClear = true;
     renderer.setScissorTest(false);
     camera.clearViewOffset();
-    const w = innerWidth, h = innerHeight;
-    renderer.setViewport(0, 0, w, h);
-    camera.aspect = w / h;
     applySize();
   }
 }
@@ -1579,6 +1613,13 @@ function renderSplit(dt) {
 let last = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  const glCtx = renderer && renderer.getContext();
+  if (glCtx && glCtx.isContextLost()) {
+    showGlFail(t('boot.webglLost'));
+    return;
+  }
+  const glBox = $('glfail');
+  if (glBox && !glBox.classList.contains('hidden') && $('glfailMsg') && $('glfailMsg').textContent === t('boot.webglLost')) hideGlFail();
   let dt = (now - last) / 1000; last = now;
   if (!(dt > 0)) return;
   dt = Math.min(dt, 0.1);

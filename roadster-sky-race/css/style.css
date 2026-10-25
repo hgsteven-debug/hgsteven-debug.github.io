@@ -8,7 +8,7 @@ html,body { margin:0; height:100%; overflow:hidden; background:#0b0f14; color:va
     "Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","YuGothic","Meiryo","Noto Sans CJK JP","Source Han Sans JP","Noto Sans JP",
     "Apple SD Gothic Neo","Malgun Gothic","Noto Sans CJK KR","Source Han Sans KR","Noto Sans KR",
     "Noto Sans CJK SC","PingFang SC","Source Han Sans SC",system-ui,sans-serif; }
-canvas#gl,canvas#fx { position:fixed; inset:0; width:100%; height:100%; display:block; }
+canvas#gl,canvas#fx { position:fixed; top:0; left:0; display:block; }
 canvas#fx { pointer-events:none; }
 #vignette { position:fixed; inset:0; pointer-events:none; opacity:0;
   background:radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,.55) 100%); }
@@ -111,8 +111,13 @@ body:not(.items-on) .gpad.item { display:none !important; }
 #itemwarn { position:absolute; left:50%; top:16%; transform:translateX(-50%); z-index:6; pointer-events:none;
   background:rgba(176,32,24,.92); color:#fff; font-weight:900; font-size:1.35rem; padding:.45rem 1.1rem; border-radius:999px;
   box-shadow:0 0 18px rgba(255,80,40,.5); }
-html.force-landscape body { position:fixed; width:100lvh; height:100lvw; top:0; left:0; transform-origin:top left;
+html.force-landscape body { position:fixed; top:0; left:0; transform-origin:top left;
   transform:rotate(90deg) translateY(-100%); overflow:hidden; }
+body.guest .panel { backdrop-filter:none; -webkit-backdrop-filter:none; }
+#glfail { position:fixed; inset:0; z-index:40; display:flex; align-items:center; justify-content:center;
+  background:rgba(8,12,18,.94); color:#fff; text-align:center; padding:1.4rem; pointer-events:auto; }
+#glfail.hidden { display:none; }
+#glfail p { margin:0 0 1rem; font-size:1.25rem; font-weight:800; line-height:1.45; max-width:22rem; }
 
 .screen { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:10;
   background:radial-gradient(ellipse at 30% 40%, rgba(8,14,24,.55), rgba(5,8,12,.88)); }

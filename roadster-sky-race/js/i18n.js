@@ -303,6 +303,7 @@ const ROWS = [
   ['boot.fail', '載入失敗，請重新整理或改用較新的瀏覽器。', 'Load failed. Refresh, or use a newer browser.', 'Échec du chargement. Actualisez, ou utilisez un navigateur plus récent.', '読み込みに失敗しました。更新するか、新しいブラウザを使ってください。', '불러오지 못했습니다. 새로고침하거나 더 새 브라우저를 쓰세요.'],
   ['boot.old', '此瀏覽器版本過舊，不支援 ES 模組 importmap（需要 Chromium 89 以上）。', 'This browser is too old for ES module import maps (Chromium 89 or newer).', 'Ce navigateur est trop ancien pour les import maps (Chromium 89 ou plus).', 'このブラウザは古すぎて import map に対応していません（Chromium 89 以上）。', '이 브라우저는 너무 오래되어 import map을 지원하지 않습니다 (Chromium 89 이상).'],
   ['boot.webgl', '此瀏覽器無法啟用 WebGL，無法執行遊戲。請改用較新的 Chromium 瀏覽器。', 'This browser cannot start WebGL, so the game cannot run. Use a newer Chromium browser.', 'Ce navigateur ne lance pas WebGL, le jeu ne peut pas démarrer. Utilisez un Chromium plus récent.', 'このブラウザは WebGL を起動できないため、ゲームを実行できません。新しい Chromium を使ってください。', '이 브라우저는 WebGL을 켤 수 없어 게임을 실행할 수 없습니다. 더 새 Chromium을 쓰세요.'],
+  ['boot.webglLost', '畫面中斷了。點一下重新載入。', 'The picture stopped. Tap to reload.', 'Image interrompue. Touchez pour recharger.', '画面が止まりました。タップして再読み込み。', '화면이 멈췄습니다. 눌러서 새로고침.'],
   ['boot.err', '錯誤：{msg}', 'Error: {msg}', 'Erreur : {msg}', 'エラー：{msg}', '오류: {msg}'],
 
   ['lobby.empty', '（尚未回報手把槽）', '(no pad slots yet)', '(aucun emplacement de manette)', '（パッド枠はまだありません）', '(아직 패드 슬롯 없음)'],

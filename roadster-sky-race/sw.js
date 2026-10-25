@@ -1,6 +1,6 @@
 // 同網域的靜態檔在連得上時更新快取，斷線時用上次成功的回應。
-// v3：手機方向鍵。舊殼還是圓形搖桿，activate 會丟掉舊快取。
-const CACHE = 'sky-roadster-v3';
+// v4：手機畫面改成跟可視範圍一樣大。舊殼的畫布只有一塊，activate 會丟掉舊快取。
+const CACHE = 'sky-roadster-v4';
 
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => {
