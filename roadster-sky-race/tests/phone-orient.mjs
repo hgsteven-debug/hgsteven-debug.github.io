@@ -166,7 +166,6 @@ async function runMode(name, viewport, orient, expectCss) {
     assert(box.forced === expectCss, name + ' css ' + box.forced + ' ' + JSON.stringify({ iw: box.iw, ih: box.ih }));
     const expect = {
       gas: { label: '加速', field: 'throttle' },
-      brake: { label: '煞車', field: 'brake' },
       lift: { label: 'B推進', field: 'lift' },
       nitro: { label: 'A氮氣', field: 'nitro' },
       camera: { label: 'Y視角', field: 'camera' },
@@ -191,6 +190,9 @@ async function runMode(name, viewport, orient, expectCss) {
       assert(b && b.inside && b.hit === key, name + ' dpad ' + key + ' ' + JSON.stringify(b));
     }
     assert(box.buttons.left.label === '左轉' && box.buttons.right.label === '右轉' && box.buttons.pup.label === '俯仰', name + ' dpad labels');
+    assert(box.buttons.pdown.label === '煞車', name + ' down label ' + box.buttons.pdown.label);
+    const pedal = await page.evaluate(() => getComputedStyle(document.querySelector('[data-t="brake"]')).display);
+    assert(pedal === 'none', name + ' brake pedal shown');
     const quiet = (h) => Math.abs(h.steer) < 0.05 && h.throttle === 0 && h.brake === 0 && !h.lift && !h.nitro && h.pitch === 0;
 
     const right = await hold(session, page, box.buttons.right, 18);
@@ -203,13 +205,11 @@ async function runMode(name, viewport, orient, expectCss) {
     assert(Math.abs(up.steer) < 0.25 && up.pitch < -0.45, name + ' dpad up ' + JSON.stringify(up));
     await idle(page, 8);
     const down = await hold(session, page, box.buttons.pdown, 3);
-    assert(Math.abs(down.steer) < 0.25 && down.pitch > 0.45, name + ' dpad down ' + JSON.stringify(down));
+    assert(Math.abs(down.steer) < 0.25 && down.brake > 0.5 && Math.abs(down.pitch) < 0.05 && down.throttle === 0, name + ' dpad down brake ' + JSON.stringify(down));
     await idle(page, 8);
 
     const gas = await pressButton(session, page, box.buttons.gas);
     assert(gas.host.throttle > 0.5 && gas.host.brake === 0 && !gas.host.lift && !gas.host.nitro, name + ' gas ' + JSON.stringify(gas.host));
-    const brake = await pressButton(session, page, box.buttons.brake);
-    assert(brake.host.brake > 0.5 && brake.host.throttle === 0 && !brake.host.lift && !brake.host.nitro, name + ' brake ' + JSON.stringify(brake.host));
     const lift = await pressButton(session, page, box.buttons.lift);
     assert(lift.host.lift === true && lift.host.nitro === false && lift.host.throttle === 0, name + ' lift ' + JSON.stringify(lift.host));
     const nitro = await pressButton(session, page, box.buttons.nitro);

@@ -101,7 +101,7 @@ try {
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.setViewport({ width: 844, height: 390, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
   await bootGuest(page);
-  const keys = ['brake', 'gas', 'lift', 'nitro', 'item', 'reset', 'camera', 'pause', 'pup', 'pdown', 'left', 'right'];
+  const keys = ['gas', 'lift', 'nitro', 'item', 'reset', 'camera', 'pause', 'pup', 'pdown', 'left', 'right'];
   const hud = ['map', 'full', 'lap', 'speed'];
   for (const [w, h] of SIZES) {
     for (const inset of INSETS) {
@@ -122,18 +122,22 @@ try {
       for (const k of keys) {
         for (const u of hud) assert(!overlaps(box[k], box[u]), name + ' covers ' + u + ' with ' + k);
       }
-      assert(hGap(box.lift, box.gas) >= 31, name + ' B/gas gap ' + hGap(box.lift, box.gas));
-      assert(vGap(box.nitro, box.gas) >= 31, name + ' A/gas gap ' + vGap(box.nitro, box.gas));
-      assert(vGap(box.item, box.lift) >= 31, name + ' item/B gap ' + vGap(box.item, box.lift));
-      assert(hGap(box.item, box.nitro) >= 31, name + ' item/A gap ' + hGap(box.item, box.nitro));
+      assert(hGap(box.lift, box.gas) >= 36, name + ' B/gas gap ' + hGap(box.lift, box.gas));
+      assert(vGap(box.nitro, box.gas) >= 36, name + ' A/gas gap ' + vGap(box.nitro, box.gas));
+      assert(vGap(box.item, box.lift) >= 36, name + ' item/B gap ' + vGap(box.item, box.lift));
+      assert(hGap(box.item, box.nitro) >= 36, name + ' item/A gap ' + hGap(box.item, box.nitro));
       const dgap = hGap(box.left, box.pup);
       assert(dgap >= 8, name + ' dpad gap ' + dgap);
       if (h >= 700) assert(dgap >= 28 && box.pup.w >= 100, name + ' tablet key ' + JSON.stringify(box.pup));
-      assert(box.brake.y + 1 >= box.dpad.y + box.dpad.h, name + ' brake not under pad');
+      assert(box.brake.display === 'none' && box.brake.w < 2, name + ' brake pedal shown ' + JSON.stringify(box.brake));
+      assert(box.pdown.y + box.pdown.h + 2 >= box.dpad.y + box.dpad.h, name + ' down not at pad bottom');
+      assert(box.dpad.y + box.dpad.h >= h - inset.b - 12, name + ' pad not using the brake row');
       assert(box.gas.w >= box.lift.w - 1 && box.gas.h + 1 >= box.lift.h * 0.9, name + ' gas not largest');
       assert(box.reset.y + 2 >= box.map.y + box.map.h && box.camera.y + 2 >= box.map.y + box.map.h, name + ' XY not under map');
       assert(box.camera.x > box.reset.x, name + ' Y not right of X');
-      for (const k of ['gas', 'brake', 'lift', 'pause', 'pup', 'full']) {
+      const clusterGap = hGap(box.dpad, box.lift);
+      assert(clusterGap >= 24, name + ' dpad/cluster gap ' + clusterGap);
+      for (const k of ['gas', 'lift', 'pause', 'pup', 'pdown', 'full']) {
         const el = box[k];
         const radius = parseFloat(el.radius);
         assert(radius <= 12, name + ' round ' + k + ' ' + el.radius);
@@ -168,13 +172,28 @@ try {
     fire('[data-t="pup"]', 'pointerdown', 14);
     const upPitch = sky.input.poll(1 / 60).pitch;
     fire('[data-t="pup"]', 'pointerup', 14);
+    const snap = (st) => ({ brake: st.brake, pitch: st.pitch, throttle: st.throttle, steer: st.steer });
     fire('[data-t="pdown"]', 'pointerdown', 15);
-    const downPitch = sky.input.poll(1 / 60).pitch;
+    const down = snap(sky.input.poll(1 / 60));
     fire('[data-t="pdown"]', 'pointerup', 15);
-    return { mid, up: upPitch, down: downPitch };
+    fire('[data-t="pdown"]', 'pointerdown', 16);
+    fire('[data-t="right"]', 'pointerdown', 17);
+    let drift = null;
+    for (let i = 0; i < 36; i++) drift = snap(sky.input.poll(1 / 60));
+    fire('[data-t="pdown"]', 'pointerup', 16);
+    fire('[data-t="right"]', 'pointerup', 17);
+    sky.input.touch.pdown = false;
+    sky.input.touch.right = false;
+    sky.input.touch.brake = false;
+    sky.input.keys.add('ArrowDown');
+    const key = snap(sky.input.poll(1 / 60));
+    sky.input.keys.delete('ArrowDown');
+    return { mid, up: upPitch, down, drift, key };
   });
   assert(multi.mid.steer < -0.8 && multi.mid.throttle > 0.5 && multi.mid.item === true && multi.mid.brake === 0, 'multi ' + JSON.stringify(multi));
-  assert(multi.up < -0.45 && multi.down > 0.45, 'pitch ' + JSON.stringify(multi));
+  assert(multi.up < -0.45 && multi.down.brake > 0.5 && Math.abs(multi.down.pitch) < 0.05 && multi.down.throttle === 0, 'down brake ' + JSON.stringify(multi));
+  assert(multi.drift.brake > 0.5 && multi.drift.steer > 0.8 && Math.abs(multi.drift.pitch) < 0.05, 'drift ' + JSON.stringify(multi.drift));
+  assert(multi.key.brake > 0.5, 'keyboard brake ' + JSON.stringify(multi.key));
   if (errors.length) throw new Error(errors.join('\n'));
   ok('guest pad layout and multi-touch');
   await page.close();
@@ -189,26 +208,61 @@ try {
   const host = await page.evaluate(() => {
     document.getElementById('touch').classList.remove('hidden');
     document.body.classList.add('touchon', 'items-on');
-    const face = getComputedStyle(document.querySelector('.gpad.face.b'));
-    const gas = getComputedStyle(document.querySelector('.gpad.gas'));
     const stick = getComputedStyle(document.getElementById('stick'));
     const dpad = getComputedStyle(document.getElementById('dpad'));
-    const br = document.querySelector('.gpad.face.b').getBoundingClientRect();
+    const brake = getComputedStyle(document.querySelector('.gpad.brake'));
+    const slot = getComputedStyle(document.getElementById('itemslot'));
     return {
       guest: document.body.classList.contains('guest'),
+      phone: document.body.classList.contains('phone'),
       stick: stick.display,
       dpad: dpad.display,
-      radius: face.borderRadius,
-      faceW: br.width,
-      gas: gas.backgroundColor,
+      brake: brake.display,
+      slot: slot.display,
     };
   });
-  assert(host.guest === false, 'host marked guest');
-  assert(host.stick !== 'none' && host.dpad === 'none', 'host pad swapped ' + JSON.stringify(host));
-  const radius = parseFloat(host.radius);
-  assert(radius >= host.faceW * 0.45, 'host face not round ' + JSON.stringify(host));
-  assert(/rgba?\(\s*24\s*,\s*150\s*,\s*64/.test(host.gas), 'host gas recolored ' + host.gas);
-  ok('host touch pad unchanged');
+  assert(host.guest === false && host.phone === true, 'phone host class ' + JSON.stringify(host));
+  assert(host.stick === 'none' && host.dpad !== 'none', 'phone host pad ' + JSON.stringify(host));
+  assert(host.brake === 'none' && host.slot === 'none', 'phone host extras ' + JSON.stringify(host));
+  ok('phone host uses the square pad');
+  await page.close();
+} catch (e) { bad('phone host uses the square pad', e); }
+
+try {
+  const page = await browser.newPage();
+  await page.setCacheEnabled(false);
+  await page.setViewport({ width: 1600, height: 900, hasTouch: true, deviceScaleFactor: 1 });
+  await page.goto(BASE + '?track=canyon&q=low&ai=0&nocount=1&noadapt=1&nopauseblur=1&nonet=1&items=1&autostart=1&lang=zh-TW', { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForFunction(() => window.__sky && window.__sky.game.state === 'race', { timeout: 90000 });
+  const desk = await page.evaluate(() => {
+    document.getElementById('touch').classList.remove('hidden');
+    document.body.classList.add('touchon');
+    const stick = getComputedStyle(document.getElementById('stick'));
+    const dpad = getComputedStyle(document.getElementById('dpad'));
+    const face = getComputedStyle(document.querySelector('.gpad.face.b'));
+    const gas = getComputedStyle(document.querySelector('.gpad.gas'));
+    const br = document.querySelector('.gpad.face.b').getBoundingClientRect();
+    window.__sky.input.touch.pdown = true;
+    window.__sky.input.touch.brake = false;
+    window.__sky.input.keys.clear();
+    const st = window.__sky.input.poll(1 / 60);
+    window.__sky.input.touch.pdown = false;
+    return {
+      phone: document.body.classList.contains('phone'),
+      stick: stick.display,
+      dpad: dpad.display,
+      radius: parseFloat(face.borderRadius),
+      faceW: br.width,
+      gas: gas.backgroundColor,
+      brake: st.brake,
+      pitch: st.pitch,
+    };
+  });
+  assert(desk.phone === false && desk.stick !== 'none' && desk.dpad === 'none', 'large touch became a phone ' + JSON.stringify(desk));
+  assert(desk.radius >= desk.faceW * 0.45, 'large face not round ' + JSON.stringify(desk));
+  assert(/rgba?\(\s*24\s*,\s*150\s*,\s*64/.test(desk.gas), 'large gas recolored ' + desk.gas);
+  assert(desk.brake === 0 && desk.pitch > 0.45, 'large pdown still pitches ' + JSON.stringify(desk));
+  ok('large touch screen keeps the round stick');
   await page.close();
 } catch (e) { bad('host touch pad unchanged', e); }
 

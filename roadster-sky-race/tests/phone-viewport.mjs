@@ -216,10 +216,12 @@ try {
   assert(!race.need && race.transform === 'none', 'race rotated');
   assert(Math.abs(race.canvas.w - bars.w) <= 3 && Math.abs(race.canvas.h - bars.h) <= 3, 'race canvas ' + JSON.stringify(race.canvas));
   assert(Math.abs(race.canvas.y - bars.top) <= 2, 'race canvas y ' + JSON.stringify(race.canvas));
-  for (const key of ['gas', 'brake', 'left', 'right', 'pup', 'pdown', 'lift', 'nitro', 'pause', 'item']) {
+  for (const key of ['gas', 'left', 'right', 'pup', 'pdown', 'lift', 'nitro', 'pause', 'item']) {
     const b = race.buttons[key];
     assert(b && b.inside && b.hit === key, 'control ' + key + ' ' + JSON.stringify(b));
   }
+  assert(!race.buttons.brake, 'brake pedal still in the race view ' + JSON.stringify(race.buttons.brake));
+  assert(race.buttons.pdown.t.includes('煞車'), 'down is the brake ' + race.buttons.pdown.t);
   assert(race.luma > 28, 'phone view under-lit ' + JSON.stringify({ luma: race.luma, buf: race.buf }));
   await page.screenshot({ path: OUT + '/iphone13-race-bars.png' });
   await context.close();

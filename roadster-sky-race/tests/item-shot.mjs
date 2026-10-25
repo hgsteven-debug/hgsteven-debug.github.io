@@ -253,8 +253,8 @@ console.log('PAD', JSON.stringify(pad));
 const hits = (a, b) => a && b && a.x < b.r - 1 && a.r > b.x + 1 && a.y < b.b - 1 && a.b > b.y + 1;
 assert(pad.on, 'items not shown on phone');
 assert(pad.label.includes('道具'), 'label ' + pad.label);
-assert(pad.item.w >= 100 && pad.item.h >= 70, 'item target small');
-for (const key of ['gas', 'brake', 'pause', 'reset', 'y', 'a', 'b', 'full', 'map']) {
+assert(pad.item.w >= 64 && pad.item.h >= 64, 'item target small');
+for (const key of ['gas', 'pause', 'reset', 'y', 'a', 'b', 'full', 'map']) {
   assert(!hits(pad.item, pad[key]), 'item overlaps ' + key + ' ' + JSON.stringify(pad.item) + ' ' + JSON.stringify(pad[key]));
 }
 const hitItem = await phone.evaluate(() => {

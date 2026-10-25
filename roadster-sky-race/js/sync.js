@@ -128,6 +128,18 @@ function normAngle(v) {
   return ((Math.round(n) % 360) + 360) % 360;
 }
 
+// 手機與小平板（觸控、短邊 ≤ 900、長邊 ≤ 1400）用方鍵十字。車機瀏覽器維持圓形搖桿。
+// 加入比賽的客戶端另外一律加 phone，這裡只判斷這支裝置本身像不像手機。
+export function phoneLayout(sample) {
+  if (!sample || !sample.touch) return false;
+  const ua = String(sample.ua || '');
+  if (/Tesla|QtCarBrowser/i.test(ua)) return false;
+  const w = Number(sample.w) || 0;
+  const h = Number(sample.h) || 0;
+  if (!(w >= 2 && h >= 2)) return false;
+  return Math.min(w, h) <= 900 && Math.max(w, h) <= 1400;
+}
+
 // 直向：請使用者把手機轉橫。只看可視範圍的寬高，不看會說謊的方向 API，也不做 CSS 旋轉。
 // 橫向網址列伸縮不會把寬高對調，所以 24px 就夠擋抖動。
 export function phoneHeldPortrait(sample) {

@@ -1,6 +1,6 @@
 // 同網域的靜態檔在連得上時更新快取，斷線時用上次成功的回應。
-// v8：手機直向改成全螢幕轉橫提示，橫向用可視範圍鋪滿。activate 會丟掉舊快取。
-const CACHE = 'sky-roadster-v8';
+// v9：每一支手機都用方鍵，下鍵煞車，不再另放煞車鍵。activate 會丟掉舊快取。
+const CACHE = 'sky-roadster-v9';
 
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => {

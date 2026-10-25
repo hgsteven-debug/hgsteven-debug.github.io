@@ -19,13 +19,13 @@ import { AiDriver } from './ai.js';
 import { createHost, createGuest, drawRoomQr } from './net.js';
 import {
   normalizeCode, formatCode, joinUrl, heldInput, reconcileDecision, StateBuffer, zeroInput,
-  packSelf, packPose, easeGuestPose, hostOffroadWarn, phoneHeldPortrait,
+  packSelf, packPose, easeGuestPose, hostOffroadWarn, phoneHeldPortrait, phoneLayout,
 } from './sync.js';
 import * as syncApi from './sync.js';
 
 const params = new URLSearchParams(location.search);
 const joinCode = normalizeCode(params.get('join') || '');
-if (joinCode) document.body.classList.add('guest');
+if (joinCode) document.body.classList.add('guest', 'phone');
 const netOff = params.get('nonet') === '1';
 let qname = params.get('q') || store.get('quality', null) || ((navigator.hardwareConcurrency || 8) <= 4 ? 'low' : 'med');
 if (joinCode && !params.get('q')) qname = 'low';
@@ -103,7 +103,8 @@ function fail(msg, err) {
   host.appendChild(btn);
 }
 
-function baseDpr() { return Math.min(window.devicePixelRatio || 1, game.guest ? 1 : 1.5); }
+function isPhone() { return !!(document.body && document.body.classList.contains('phone')); }
+function baseDpr() { return Math.min(window.devicePixelRatio || 1, isPhone() ? 1 : 1.5); }
 function readViewport() {
   const vv = window.visualViewport;
   const w = Math.round((vv && vv.width) || window.innerWidth || 1);
@@ -124,7 +125,7 @@ function pinSurface(box) {
     if (!el) continue;
     el.style.width = box.w + 'px';
     el.style.height = box.h + 'px';
-    if (game.guest) {
+    if (isPhone()) {
       el.style.top = box.top + 'px';
       el.style.left = box.left + 'px';
     }
@@ -134,11 +135,16 @@ function applyForceBox() {
   const b = document.body;
   if (!b) return;
   document.documentElement.classList.remove('force-landscape');
-  if (!game.guest) {
+  if (!isPhone()) {
     b.style.width = '';
     b.style.height = '';
     b.style.top = '';
     b.style.left = '';
+    const root = document.documentElement;
+    root.style.removeProperty('--vv-w');
+    root.style.removeProperty('--vv-h');
+    root.style.removeProperty('--vv-top');
+    root.style.removeProperty('--vv-left');
     return;
   }
   const box = readViewport();
@@ -159,7 +165,7 @@ function applySize() {
   const w = box.w;
   const h = box.h;
   pinSurface(box);
-  const pr = game.guest ? Math.min(1, window.devicePixelRatio || 1) : Math.min(1.5, baseDpr() * Q.scale * game.dyn);
+  const pr = isPhone() ? Math.min(1, window.devicePixelRatio || 1) : Math.min(1.5, baseDpr() * Q.scale * game.dyn);
   const key = pr.toFixed(3) + ':' + w + 'x' + h;
   renderer.setViewport(0, 0, w, h);
   camera.aspect = w / Math.max(1, h);
@@ -281,7 +287,7 @@ async function boot() {
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        const SW_REV = 'v8';
+        const SW_REV = 'v9';
         navigator.serviceWorker.register('sw.js').then(() => {
           let once = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -495,10 +501,20 @@ function orientSample() {
   const box = readViewport();
   return { type, angle, win, sw, sh, iw: box.w, ih: box.h };
 }
+function phoneSample() {
+  const box = readViewport();
+  const touch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  return { touch, w: box.w, h: box.h, ua: navigator.userAgent || '' };
+}
+function syncPhoneClass() {
+  if (!document.body) return;
+  document.body.classList.toggle('phone', !!(game.guest || phoneLayout(phoneSample())));
+}
 function syncPhoneOrientation() {
   document.documentElement.classList.remove('force-landscape');
   if (!document.body) return;
-  if (!game.guest) {
+  syncPhoneClass();
+  if (!isPhone()) {
     document.body.classList.remove('need-rotate');
     applyForceBox();
     return;

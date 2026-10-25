@@ -150,6 +150,13 @@ function testGuestSmooth() {
   assert(sync.phoneHeldPortrait({ iw: 844, ih: 390 }) === false, 'landscape full');
   assert(sync.phoneHeldPortrait({ iw: 844, ih: 320 }) === false, 'landscape short');
   assert(sync.phoneHeldPortrait({ type: 'landscape-primary', iw: 390, ih: 700 }) === true, 'viewport wins over type');
+  assert(sync.phoneLayout({ touch: true, w: 390, h: 844 }) === true, 'phone portrait');
+  assert(sync.phoneLayout({ touch: true, w: 844, h: 390 }) === true, 'phone landscape');
+  assert(sync.phoneLayout({ touch: true, w: 1024, h: 768 }) === true, 'small tablet');
+  assert(sync.phoneLayout({ touch: true, w: 1600, h: 900 }) === false, 'large touch screen');
+  assert(sync.phoneLayout({ touch: true, w: 1920, h: 1080, ua: 'Mozilla/5.0 (X11; GNU/Linux) AppleWebKit/537.36 Tesla/2024.44 QtCarBrowser' }) === false, 'car browser');
+  assert(sync.phoneLayout({ touch: false, w: 390, h: 844 }) === false, 'no touch');
+  assert(sync.phoneLayout({ touch: true, w: 800, h: 1200, ua: 'QtCarBrowser/1.0' }) === false, 'car ua wins');
   const right = sync.viewportDeltaToUi(0, 40, 0, 1, -1, 0);
   const left = sync.viewportDeltaToUi(0, -40, 0, 1, -1, 0);
   const up = sync.viewportDeltaToUi(30, 0, 0, 1, -1, 0);
@@ -372,7 +379,7 @@ try {
     phoneUrl.searchParams.set('noadapt', '1');
     phoneUrl.searchParams.set('nopauseblur', '1');
     const phone = await openPage(phoneUrl.toString());
-    await phone.page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    await phone.page.setViewport({ width: 844, height: 390, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
     await phone.page.waitForFunction(() => {
       const t = (document.getElementById('joinStatus') || {}).textContent || '';
       return t.startsWith('階段：') && t.indexOf('正在連上房間') < 0;
@@ -443,19 +450,30 @@ try {
       kinds: window.__sky.race.racers.map((r) => r.driver.kind),
     }));
     if (hostView.split || hostView.locals !== 1 || !hostView.kinds.includes('remote')) throw new Error('host view ' + JSON.stringify(hostView));
-    await host.page.waitForFunction(() => {
-      const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
-      return !!(r && r.driver.state.throttle > 0.5);
-    }, { timeout: 8000, polling: 100 });
-    const phoneAt = await phone.page.evaluate(() => ({
-      x: window.__sky.car.root.position.x,
-      z: window.__sky.car.root.position.z,
-      sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
-      sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
-    }));
-    const hostMove = await host.page.evaluate(() => {
+    const phoneAt = await phone.page.evaluate(() => {
+      const gas = document.querySelector('[data-t="gas"]');
+      const r = gas.getBoundingClientRect();
+      gas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 8, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerType: 'touch' }));
+      window.__sky.input.poll(1 / 60);
+      for (let i = 0; i < 4; i++) window.__sky.net.flushInput();
+      return {
+        x: window.__sky.car.root.position.x,
+        z: window.__sky.car.root.position.z,
+        sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
+        sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
+      };
+    });
+    await host.page.bringToFront();
+    const hostMove = await host.page.evaluate(async () => {
       const sky = window.__sky;
-      const r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+      const start = performance.now();
+      let r = null;
+      while (performance.now() - start < 8000) {
+        r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+        if (r && r.driver.state.throttle > 0.5) break;
+        await new Promise((done) => setTimeout(done, 40));
+      }
+      if (!r) return { thr: 0, sp: 0, moved: 0, x: 0 };
       const x0 = r.veh.pos.x, z0 = r.veh.pos.z;
       const thr = r.driver.state.throttle;
       const cmd = r.driver.sample();
@@ -592,20 +610,30 @@ try {
       window.__sky.input.poll(1 / 60);
       for (let i = 0; i < 4; i++) window.__sky.net.flushInput();
     });
+    const phoneAt = await phone.evaluate(() => {
+      const gas = document.querySelector('[data-t="gas"]');
+      const r = gas.getBoundingClientRect();
+      gas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 9, clientX: r.x + 12, clientY: r.y + 12, pointerType: 'touch' }));
+      window.__sky.input.poll(1 / 60);
+      for (let i = 0; i < 4; i++) window.__sky.net.flushInput();
+      return {
+        x: window.__sky.car.root.position.x,
+        z: window.__sky.car.root.position.z,
+        sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
+        sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
+      };
+    });
     await host.page.bringToFront();
-    await host.page.waitForFunction(() => {
-      const r = window.__sky.race.racers.find((x) => x.driver.kind === 'remote');
-      return !!(r && r.driver.state.throttle > 0.5);
-    }, { timeout: 8000, polling: 100 });
-    const phoneAt = await phone.evaluate(() => ({
-      x: window.__sky.car.root.position.x,
-      z: window.__sky.car.root.position.z,
-      sx: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.x : 0,
-      sz: window.__sky.net.latest && window.__sky.net.latest.self ? window.__sky.net.latest.self.z : 0,
-    }));
-    const hostMove = await host.page.evaluate(() => {
+    const hostMove = await host.page.evaluate(async () => {
       const sky = window.__sky;
-      const r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+      const start = performance.now();
+      let r = null;
+      while (performance.now() - start < 8000) {
+        r = sky.race.racers.find((x) => x.driver.kind === 'remote');
+        if (r && r.driver.state.throttle > 0.5) break;
+        await new Promise((done) => setTimeout(done, 40));
+      }
+      if (!r) return { thr: 0, sp: 0, moved: 0 };
       const x0 = r.veh.pos.x, z0 = r.veh.pos.z;
       const thr = r.driver.state.throttle;
       const cmd = r.driver.sample();
