@@ -11,7 +11,7 @@ const PICK_Y = 4.2;
 const BOX_GAP_M = 155;
 const RESPAWN_S = 8;
 const MAX_SHOTS = 8;
-const SKIP_KIND = new Set([1, 2, 3]);
+const SKIP_KIND = new Set([1, 2, 3, 4, 5]);
 
 export function itemWeights(place, count) {
   const back = count <= 1 ? 0.35 : (place - 1) / Math.max(1, count - 1);
@@ -52,8 +52,16 @@ export function layoutBoxes(track) {
       i += Math.max(4, Math.round(step / 4));
       continue;
     }
+    if (track.isGapIdx && track.isGapIdx(i)) {
+      i += Math.max(4, Math.round(step / 4));
+      continue;
+    }
     const y = (track.py ? track.py[i] : 0) + 2.15;
-    boxes.push({ i, x: track.px[i], y, z: track.pz[i], alive: true, cool: 0 });
+    const half = track.half || 15;
+    const side = (boxes.length % 2 ? 1 : -1) * Math.min(half * 0.34, 5.2);
+    const rx = track.rx ? track.rx[i] : 0;
+    const rz = track.rz ? track.rz[i] : 0;
+    boxes.push({ i, x: track.px[i] + rx * side, y, z: track.pz[i] + rz * side, alive: true, cool: 0 });
     i += step;
   }
   return boxes;

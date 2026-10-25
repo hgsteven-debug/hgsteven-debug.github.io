@@ -19,6 +19,18 @@ const SKY_FRAG = `
 varying vec3 vDir; uniform vec3 sunDir; uniform float skyKind;
 void main(){
   vec3 d = normalize(vDir); float h = d.y;
+  if (skyKind > 3.5) {
+    vec3 horizon = vec3(0.82, 0.90, 0.96);
+    vec3 mid = vec3(0.55, 0.70, 0.84);
+    vec3 zenith = vec3(0.22, 0.36, 0.58);
+    float t = clamp(h, 0.0, 1.0);
+    vec3 col = mix(horizon, mid, smoothstep(0.0, 0.28, t));
+    col = mix(col, zenith, smoothstep(0.2, 0.85, t));
+    gl_FragColor = vec4(col, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
+  }
   if (skyKind > 2.5) {
     float stars = step(0.996, fract(sin(dot(d * 90.0, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
     float stars2 = step(0.9985, fract(sin(dot(d.zyx * 140.0, vec3(39.346, 11.135, 83.155))) * 24634.6345));
@@ -95,7 +107,7 @@ export class World {
     const geo = new THREE.SphereGeometry(50, 32, 16);
     const mat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { sunDir: { value: new THREE.Vector3(...this.theme.sun).normalize() }, skyKind: { value: this.theme.skyKind === 'space' ? 3.0 : (this.theme.skyKind === 'night' ? 2.0 : (this.theme.skyKind === 'sunset' ? 1.0 : 0.0)) } },
+      uniforms: { sunDir: { value: new THREE.Vector3(...this.theme.sun).normalize() }, skyKind: { value: this.theme.skyKind === 'ice' ? 4.0 : (this.theme.skyKind === 'space' ? 3.0 : (this.theme.skyKind === 'night' ? 2.0 : (this.theme.skyKind === 'sunset' ? 1.0 : 0.0))) } },
     });
     const sky = new THREE.Mesh(geo, mat);
     sky.renderOrder = -10; sky.frustumCulled = false;
@@ -348,18 +360,26 @@ export class World {
         [outer.x, outer.y + 0.92, outer.z], [outer.x, outer.y + 0.38, outer.z],
       ];
     };
+    const pushSeg = (i0, i1, side) => {
+      const a = pts(i0, side), b = pts(i1, side);
+      const shade = (Math.floor(i0 / 64) % 2) ? 1 : 0.9;
+      for (const [p, q] of [[0, 1], [1, 2], [2, 3]]) {
+        const o = pos.length / 3;
+        pos.push(...a[p], ...a[q], ...b[q], ...b[p]);
+        for (let k = 0; k < 4; k++) col.push(shade, shade, shade);
+        if ((side < 0) === (p !== 1)) idx.push(o, o + 1, o + 2, o, o + 2, o + 3); else idx.push(o, o + 2, o + 1, o, o + 3, o + 2);
+      }
+    };
+    const STEP = 5;
     for (const side of [-1, 1]) {
-      for (let i = 0; i < N; i++) {
-        if (!tr.hasRail(i + 0.5)) continue;
-        const a = pts(i, side), b = pts(i + 1, side);
-        // 三個面：內側、頂面、外側
-        for (const [p, q] of [[0, 1], [1, 2], [2, 3]]) {
-          const o = pos.length / 3;
-          pos.push(...a[p], ...a[q], ...b[q], ...b[p]);
-          const shade = (i % 20 < 10) ? 1 : 0.86;
-          for (let k = 0; k < 4; k++) col.push(shade, shade, shade);
-          if ((side < 0) === (p !== 1)) idx.push(o, o + 1, o + 2, o, o + 2, o + 3); else idx.push(o, o + 2, o + 1, o, o + 3, o + 2);
-        }
+      let i = 0;
+      while (i < N) {
+        if (!tr.hasRail(i + 0.5)) { i++; continue; }
+        let j = i + 1;
+        const limit = Math.min(N, i + STEP);
+        while (j < limit && tr.hasRail(j + 0.5)) j++;
+        pushSeg(i, j, side);
+        i = j;
       }
     }
     const geo = new THREE.BufferGeometry();
@@ -372,7 +392,7 @@ export class World {
     this.scene.add(rail);
 
     // 立柱（實例化）
-    const spacing = 4;
+    const spacing = 8;
     const list = [];
     for (const side of [-1, 1]) for (let i = 0; i < N; i += spacing) {
       if (!tr.hasRail(i + 0.5) || !tr.hasRail(i + spacing - 0.5)) continue;
@@ -598,7 +618,7 @@ export class World {
       if (tr.stunt) {
         const deckMat = new THREE.MeshStandardMaterial({ color: 0x5a534c, roughness: 0.92 });
         for (let i = tr.stunt.jump0; i <= tr.stunt.jump1; i += 2) {
-          const deck = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.28, Math.max(1.6, tr.ds * 2.1)), deckMat);
+          const deck = new THREE.Mesh(new THREE.BoxGeometry(ROAD_HALF_K * 2, 0.28, Math.max(1.6, tr.ds * 2.1)), deckMat);
           deck.position.set(tr.px[i], tr.py[i] + 0.15, tr.pz[i]);
           deck.rotation.y = Math.atan2(tr.tx[i], tr.tz[i]);
           group.add(deck);
@@ -634,9 +654,108 @@ export class World {
     }
     this.scene.add(group);
     this.extras = group;
+    this._courseMarks();
     this._cityBlocks();
     this._moonSet();
     this._stuntGuides();
+  }
+
+  _markAt(i) {
+    const tr = this.track;
+    const ii = tr.wrap(Math.floor(i));
+    const p = tr.surface(ii, 0);
+    return { x: p.x, y: p.y, z: p.z, tx: tr.tx[ii] || 0, tz: tr.tz[ii] || 1 };
+  }
+
+  // 加速帶、抓地色塊、會沿路流動的箭頭，以及幾顆慢轉的標燈。
+  _courseMarks() {
+    const tr = this.track;
+    if (!tr) return;
+    const pads = tr.pads || [];
+    const zones = tr.zones || [];
+    const d = new THREE.Object3D();
+    const padSlots = [];
+    for (const p of pads) {
+      const n = 3;
+      for (let k = 0; k < n; k++) padSlots.push(tr.wrap(p.i0 + Math.round((k + 0.5) * p.len / n)));
+    }
+    if (padSlots.length) {
+      const mesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(ROAD_HALF * 1.2, 0.05, Math.max(2.4, tr.ds * 3.2)),
+        new THREE.MeshBasicMaterial({ color: 0x3dffb0, toneMapped: false }),
+        padSlots.length,
+      );
+      mesh.frustumCulled = false;
+      mesh.castShadow = false;
+      padSlots.forEach((i, n) => {
+        const p = tr.surface(i, 0);
+        d.position.set(p.x, p.y + 0.08, p.z);
+        d.rotation.set(0, Math.atan2(tr.tx[i], tr.tz[i]), 0);
+        d.scale.set(1, 1, 1);
+        d.updateMatrix();
+        mesh.setMatrixAt(n, d.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      this.scene.add(mesh);
+    }
+    if (zones.length) {
+      const slots = [];
+      for (const z of zones) {
+        const step = Math.max(4, Math.round(z.len / 4));
+        for (let k = 0; k < z.len; k += step) slots.push({ i: tr.wrap(z.i0 + k), kind: z.kind });
+      }
+      const mesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(ROAD_HALF_K * 1.85, 0.04, Math.max(3, tr.ds * 4)),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45, toneMapped: false }),
+        slots.length,
+      );
+      mesh.frustumCulled = false;
+      mesh.castShadow = false;
+      const col = new THREE.Color();
+      slots.forEach((s, n) => {
+        const p = tr.surface(s.i, 0);
+        d.position.set(p.x, p.y + 0.06, p.z);
+        d.rotation.set(0, Math.atan2(tr.tx[s.i], tr.tz[s.i]), 0);
+        d.scale.set(1, 1, 1);
+        d.updateMatrix();
+        mesh.setMatrixAt(n, d.matrix);
+        col.set(s.kind === 'sand' ? 0xd2b48c : s.kind === 'wet' ? 0x3d8eb0 : 0xd7f6ff);
+        mesh.setColorAt(n, col);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      this.scene.add(mesh);
+    }
+    if (pads.length) {
+      const mesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1.6, 0.07, 2.6),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+        pads.length,
+      );
+      mesh.frustumCulled = false;
+      mesh.castShadow = false;
+      this.scene.add(mesh);
+      this.flowMarks = pads.map((p, slot) => ({ mesh, slot, i0: p.i0, len: Math.max(1, p.len), phase: slot * 0.17 }));
+    }
+    if (tr.id === 'neon' || tr.id === 'orbit' || tr.id === 'glacier' || tr.id === 'rift') {
+      const list = [];
+      const step = Math.max(1, Math.round(tr.N / 6));
+      for (let n = 0; n < 6; n++) {
+        const i = tr.wrap(n * step + 6);
+        const side = n % 2 ? 1 : -1;
+        const p = tr.surface(i, side * (RAIL_L + 1.4));
+        list.push({ x: p.x, y: p.y + 6.2, z: p.z, phase: n * 0.9 });
+      }
+      const tint = tr.id === 'glacier' ? 0xbfefff : tr.id === 'orbit' ? 0x8ec5ff : tr.id === 'rift' ? 0xff8a4a : 0xff4ad0;
+      const mesh = new THREE.InstancedMesh(
+        new THREE.OctahedronGeometry(0.7, 0),
+        new THREE.MeshBasicMaterial({ color: tint, toneMapped: false }),
+        list.length,
+      );
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      this.beacons = { mesh, list };
+    }
   }
 
   // 月球：地球、慢落的塵、低面數隕石。
@@ -878,6 +997,33 @@ export class World {
       }
       attr.needsUpdate = true;
       this.moonDust.position.set(carPos.x, carPos.y, carPos.z);
+    }
+    if (this.flowMarks && this.flowMarks.length) {
+      const t = (typeof performance !== 'undefined' ? performance.now() : 0) * 0.001;
+      const d = this._flowDummy || (this._flowDummy = new THREE.Object3D());
+      for (const mark of this.flowMarks) {
+        const phase = (t * 0.35 + mark.phase) % 1;
+        const i = mark.i0 + Math.floor(phase * mark.len);
+        const p = this._markAt(i);
+        d.position.set(p.x, p.y + 0.22, p.z);
+        d.rotation.set(0, Math.atan2(p.tx, p.tz), 0);
+        d.scale.set(1, 1, 1);
+        d.updateMatrix();
+        mark.mesh.setMatrixAt(mark.slot, d.matrix);
+        mark.mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+    if (this.beacons) {
+      const t = (typeof performance !== 'undefined' ? performance.now() : 0) * 0.001;
+      const d = this._flowDummy || (this._flowDummy = new THREE.Object3D());
+      this.beacons.list.forEach((b, n) => {
+        d.position.set(b.x, b.y + Math.sin(t * 1.4 + b.phase) * 0.8, b.z);
+        d.rotation.set(0, t * 0.7 + b.phase, 0);
+        d.scale.set(1, 1, 1);
+        d.updateMatrix();
+        this.beacons.mesh.setMatrixAt(n, d.matrix);
+      });
+      this.beacons.mesh.instanceMatrix.needsUpdate = true;
     }
     if (this.sun) {
       const tx = this.q.shadows ? Math.round(carPos.x / 2) * 2 : carPos.x;

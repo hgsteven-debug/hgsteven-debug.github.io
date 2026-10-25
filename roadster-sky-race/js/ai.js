@@ -48,8 +48,9 @@ export class AiDriver {
 
     const fi = veh.attached ? veh.fi : (veh.q1.fi || veh.fi || 0);
     const sp = Math.max(0, veh.speedF || 0, veh.grounded ? 0 : veh.speed);
-    const far = !veh.attached && veh.q1.near && veh.q1.al > 18;
-    const offEdge = !veh.attached && veh.q1.near && veh.q1.al > 9.5 && sp < 16;
+    const half = tr.half || 15;
+    const far = !veh.attached && veh.q1.near && veh.q1.al > half + 10;
+    const offEdge = !veh.attached && veh.q1.near && veh.q1.al > half + 1.5 && sp < 12;
     if (veh.pos.y < -6 || veh.airTime > 5.5 || (sp < 1.4 && veh.grounded) || offEdge || far) this.stuck += dt;
     else this.stuck = Math.max(0, this.stuck - dt * 0.5);
     if (this.stuck > 2.6) {
@@ -58,7 +59,8 @@ export class AiDriver {
       return blank();
     }
 
-    const ahead = tr.frame(fi + cfg.look);
+    const look = cfg.look + Math.min(18, sp * 0.22);
+    const ahead = tr.frame(fi + look);
     const desired = Math.atan2(-ahead.tangent.x, -ahead.tangent.z);
     let err = desired - veh.heading;
     while (err > Math.PI) err -= Math.PI * 2;
@@ -66,9 +68,13 @@ export class AiDriver {
     const lat = veh.attached ? (veh.lat || 0) : (veh.q1.near ? veh.q1.l : 0);
     // steer 為正是右轉（偏航減少）。橫向右為正，所以偏離中線時往反方向打。
     let steer = veh.attached
-      ? clamp(-lat * 0.55 - (veh.vlat || 0) * 0.35, -1, 1)
-      : clamp(-err * 0.9 - lat * 0.1, -1, 1);
-    if (!veh.attached && Math.abs(lat) > 6) steer = clamp(-lat * 0.22, -1, 1);
+      ? clamp(-lat * 0.45 - (veh.vlat || 0) * 0.3, -1, 1)
+      : clamp(-err * 0.85 - lat * 0.045, -1, 1);
+    const band = half * 0.2;
+    if (!veh.attached && Math.abs(lat) > band) {
+      const pull = clamp(-lat / (half * 0.5), -1, 1);
+      steer = clamp(steer * 0.35 + pull, -1, 1);
+    }
 
     let target = (veh.t ? veh.t.vTop : 60) * cfg.speed;
     let stuntSoon = false;
@@ -84,12 +90,12 @@ export class AiDriver {
       if (tr.isGapIdx(fi + k)) { gapDist = k; break; }
     }
     const overGap = !!(veh.q1 && veh.q1.gap) || tr.isGapIdx(fi);
-    if (stuntSoon) target = Math.max(target, 50);
+    if (stuntSoon) target = Math.max(target, 62);
     if (gapDist < 36) target = Math.max(target, 42);
     const here = tr.kind ? tr.kind[tr.wrap(Math.floor(fi))] : 0;
     const onRibbon = veh.attached && (here === KIND.LOOP || here === KIND.INVERT || here === KIND.WALL || here === KIND.DECK);
     if (onRibbon) {
-      target = Math.max(target, here === KIND.WALL || here === KIND.DECK ? 36 : 48);
+      target = Math.max(target, here === KIND.WALL || here === KIND.DECK ? 42 : 58);
     }
     const soonFly = tr.kind && tr.kind[tr.wrap(Math.round(fi) + 8)] === KIND.FLY;
 
@@ -97,8 +103,26 @@ export class AiDriver {
     let throttle = spd < target - 1 ? 1 : 0.25;
     let brake = !onRibbon && gapDist > 20 && spd > target + 8 ? clamp((spd - target) / 16, 0, 1) : 0;
     let nitro = !!(cfg.nitro && veh.energy > 35 && spd < target - 6 && (stuntSoon || gapDist < 28 || onRibbon));
-    if (tr.hasRibbon && cfg.nitro && veh.energy > 22 && spd < 50 && !overGap) nitro = true;
-    if (onRibbon) { brake = 0; if (spd < target) throttle = 1; }
+    if (tr.hasRibbon && cfg.nitro && veh.energy > 28 && spd < 46 && (stuntSoon || onRibbon) && !overGap) nitro = true;
+    if (onRibbon || stuntSoon) { brake = 0; if (spd < target) throttle = 1; }
+    if (tr.kappa && !onRibbon) {
+      let kap = 0;
+      const base = Math.round(fi);
+      for (let k = 4; k <= 18; k += 4) kap = Math.max(kap, Math.abs(tr.kappa[tr.wrap(base + k)] || 0));
+      if (kap > 0.008 && spd > 28) brake = Math.max(brake, clamp((kap - 0.008) * 32, 0, 0.72));
+    }
+    if (!veh.attached && !stuntSoon && Math.abs(lat) > half * 0.62) {
+      brake = Math.max(brake, 0.4);
+      throttle = Math.min(throttle, 0.45);
+    }
+    if (tr.surfaceFx) {
+      const hereFx = tr.surfaceFx(fi);
+      const soonFx = tr.surfaceFx(fi + 14);
+      if ((hereFx.grip < 0.6 || soonFx.grip < 0.6) && spd > 30) {
+        brake = Math.max(brake, 0.28);
+        throttle = Math.min(throttle, 0.72);
+      }
+    }
 
     let avoid = 0;
     const others = racer.others || [];
@@ -157,6 +181,7 @@ export class AiDriver {
       }
     }
     if (tr.isGapIdx(i)) i = tr.wrap(i - 20);
-    veh.placeOnTrack(i, 0, 26);
+    veh.placeOnTrack(i, 0, tr.hasRibbon ? 54 : 28);
+    if (tr.hasRibbon) veh.energy = Math.max(veh.energy, 70);
   }
 }

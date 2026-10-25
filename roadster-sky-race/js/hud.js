@@ -70,11 +70,23 @@ export class Hud {
     const off = document.createElement('canvas'); off.width = off.height = S;
     const g = off.getContext('2d');
     const P = (i) => [tr.px[i % tr.N] * sc + this.mmOff.x, tr.pz[i % tr.N] * sc + this.mmOff.y];
+    const ribbon = Math.max(6, Math.round(5 * ((tr.half || 11) / 11)));
     g.lineJoin = 'round'; g.lineCap = 'round';
-    g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 9;
+    g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = ribbon + 4;
     g.beginPath(); for (let i = 0; i <= tr.N; i += 4) { const [x, y] = P(i); i ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke();
-    g.strokeStyle = '#cfd6dd'; g.lineWidth = 5;
+    g.strokeStyle = '#cfd6dd'; g.lineWidth = ribbon;
     g.beginPath(); for (let i = 0; i <= tr.N; i += 4) { const [x, y] = P(i); i ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke();
+    if (tr.pads && tr.pads.length) {
+      g.strokeStyle = '#3dffb0'; g.lineWidth = Math.max(3, ribbon - 1);
+      for (const pad of tr.pads) {
+        g.beginPath();
+        for (let k = 0; k <= pad.len; k += 2) {
+          const [x, y] = P(pad.i0 + k);
+          k ? g.lineTo(x, y) : g.moveTo(x, y);
+        }
+        g.stroke();
+      }
+    }
     // 缺口
     g.strokeStyle = '#ff4a3a'; g.lineWidth = 5;
     for (const gp of tr.gaps) { const glen = tr.gapSpan ? tr.gapSpan(gp) : tr.gapLen; g.beginPath(); for (let k = 0; k <= glen; k++) { const [x, y] = P(gp.g0 + k); k ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); }

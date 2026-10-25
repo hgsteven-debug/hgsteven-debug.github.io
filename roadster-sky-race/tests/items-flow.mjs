@@ -30,12 +30,12 @@ try {
   assert(store.get('items') === '0', 'turned off after the one-shot must stay off');
   const sw = fs.readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
   const main = fs.readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
-  assert(sw.includes("const CACHE = 'sky-roadster-v4'"), 'cache name');
-  assert(main.includes("const SW_REV = 'v4'"), 'sw rev');
+  assert(sw.includes("const CACHE = 'sky-roadster-v5'"), 'cache name');
+  assert(main.includes("const SW_REV = 'v5'"), 'sw rev');
   assert(sw.includes('caches.delete'), 'old caches deleted');
-  assert(!sw.includes('sky-roadster-v1') && !sw.includes('sky-roadster-v2') && !sw.includes('sky-roadster-v3'), 'old cache still named');
-  ok('saved items=0 migrates once, service worker is v4');
-} catch (e) { bad('saved items=0 migrates once, service worker is v4', e); }
+  assert(!sw.includes('sky-roadster-v1') && !sw.includes('sky-roadster-v2') && !sw.includes('sky-roadster-v3') && !sw.includes('sky-roadster-v4'), 'old cache still named');
+  ok('saved items=0 migrates once, service worker is v5');
+} catch (e) { bad('saved items=0 migrates once, service worker is v5', e); }
 
 const browser = await puppeteer.launch({
   executablePath: '/usr/bin/google-chrome',

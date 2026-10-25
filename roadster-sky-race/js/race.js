@@ -2,7 +2,8 @@
 // LOCAL_LIMIT 目前是 2（上下分屏）。想加到 4 人時，提高這個數字並多切幾塊畫面即可。
 import { AiDriver } from './ai.js';
 
-const ROAD_HALF = 11;
+// 與 track.js 的 ROAD_HALF 相同。這裡不能 import track.js，否則會把 three 拉進來。
+const ROAD_HALF = 15;
 
 export const LOCAL_LIMIT = 2;
 export const RACE_LAPS = 2;
@@ -192,7 +193,7 @@ export class Race {
       lap.t += dt;
       const q = veh.q1;
       const fi = veh.attached ? veh.fi : (q.fi || 0);
-      if ((q.near && q.al < 30) || veh.attached) r.lastGoodI = veh.attached ? Math.floor(veh.fi) : q.i;
+      if ((q.near && q.al < ROAD_HALF + 18) || veh.attached) r.lastGoodI = veh.attached ? Math.floor(veh.fi) : q.i;
       if (lap.prevFi != null) {
         if (lap.prevFi > N * 0.8 && fi < N * 0.2) {
           if (lap.cp.every(Boolean)) {
@@ -209,7 +210,7 @@ export class Race {
         }
       }
       const cps = [0.25, 0.5, 0.75];
-      const onLine = veh.attached || (q.near && q.al < 18);
+      const onLine = veh.attached || (q.near && q.al < ROAD_HALF + 7);
       for (let k = 0; k < 3; k++) {
         if (onLine && !lap.cp[k] && (k === 0 || lap.cp[k - 1]) && fi > cps[k] * N && fi < (cps[k] + 0.06) * N) lap.cp[k] = true;
       }

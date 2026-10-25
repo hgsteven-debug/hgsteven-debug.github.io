@@ -574,6 +574,11 @@ export class Vehicle {
       let gripScale = 1;
       const off = !this.onRoad;
       if (off) { af -= vf * 0.3; gripScale *= 0.55; if (!this.followHost) ev.offroad = true; }
+      if (tr.surfaceFx && q.near && !q.gap) {
+        const fx = tr.surfaceFx(q.fi);
+        gripScale *= fx.grip;
+        if (fx.drag) af -= vf * fx.drag;
+      }
       const steer = inp.steer;
       if (brk > 0.3 && Math.abs(steer) > 0.25 && vf > 12) gripScale *= 0.55;     // 煞車漂移
       else if (thr > 0.7 && Math.abs(steer) > 0.6 && vf > 3 && vf < 32) gripScale *= 0.8; // 低速出彎甩尾
@@ -681,7 +686,7 @@ export class Vehicle {
     const overGap = tr.isGapIdx(tr._q.fi);
     if (!wantLift && !overGap && this.airTime < 0.35 && rise > 1.15 && this.pos.y < gy - 0.5) {
       // 低矮路緣：油門踩著就爬過去。高牆才退回，而且不要把速度反轉釘在原地。
-      const climbing = rise < 2.6 && (inp.throttle || 0) > 0.35;
+      const climbing = rise < 3.1 && (inp.throttle || 0) > 0.2;
       if (climbing) {
         this.pos.y = gy + 0.02;
         if (this.vel.y < 1.2) this.vel.y = 1.2;
@@ -689,10 +694,26 @@ export class Vehicle {
         this.grounded = true;
         this.airTime = 0;
       } else {
+        // 擦牆：消掉撞進牆面的速度，沿牆滑過去，只掉一點車速，不要彈回或停死。
+        const bx = this.pos.x - px, bz = this.pos.z - pz;
+        const bl = Math.hypot(bx, bz);
+        const ix = bl > 0.04 ? bx / bl : -Math.sin(this.heading);
+        const iz = bl > 0.04 ? bz / bl : -Math.cos(this.heading);
+        const into = this.vel.x * ix + this.vel.z * iz;
+        if (into > 0) {
+          this.vel.x -= ix * into;
+          this.vel.z -= iz * into;
+        }
         this.pos.x = px; this.pos.z = pz;
-        this.vel.x *= 0.35; this.vel.z *= 0.35;
-        if (this.vel.y > 0) this.vel.y = 0;
-        ev.wall = Math.max(ev.wall, sp0);
+        this.vel.x *= 0.93; this.vel.z *= 0.93;
+        if (this.vel.y > 2) this.vel.y *= 0.45;
+        const sp = Math.hypot(this.vel.x, this.vel.z);
+        if (sp < 8 && (inp.throttle || 0) > 0.25) {
+          const kick = (9 - sp) * 0.45;
+          this.vel.x += -Math.sin(this.heading) * kick;
+          this.vel.z += -Math.cos(this.heading) * kick;
+        }
+        ev.wall = Math.max(ev.wall, Math.max(2, into));
         this.grounded = false;
         this._lip = (this._lip || 0) + dt;
       }
@@ -736,8 +757,8 @@ export class Vehicle {
     const q2 = tr.query(this.pos.x, this.pos.z, this.q1);
     this._onRail = false;
     if (q2.near && !q2.gap && tr.hasRail(q2.fi) && this.alt < 3.2) {
-      const lim = ROAD_HALF_K - 0.4;
-      if (q2.al > lim && Math.abs(this._prevL) <= lim + 0.5) {
+      const lim = ROAD_HALF_K + 0.55;
+      if (q2.al > lim && Math.abs(this._prevL) <= lim + 1.6) {
         const side = Math.sign(q2.l) || 1;
         const ex = q2.al - lim;
         this.pos.x -= q2.rx * ex * side; this.pos.z -= q2.rz * ex * side;
@@ -745,31 +766,32 @@ export class Vehicle {
         this._onRail = true;
         if (vlat > 0) {
           this.vel.x -= q2.rx * side * vlat; this.vel.z -= q2.rz * side * vlat;
-          if (vlat > 8) {
-            const loss = clamp((vlat - 8) / 55, 0, 0.22) / t.tough;
+          if (vlat > 5) {
+            const loss = clamp((vlat - 5) / 140, 0, 0.08) / t.tough;
             this.vel.x *= 1 - loss; this.vel.z *= 1 - loss;
           }
-          ev.wall = Math.max(ev.wall, vlat * 1.2 + 2);
-          // 車手正在把車頭轉開時不要把航向鎖回護欄，否則方向盤打滿也離不開。
+          ev.wall = Math.max(ev.wall, Math.min(16, vlat * 0.65 + 1));
+          // 只有埋進護欄才輕輕把車頭順回去。打方向想離開時不要鎖死。
           const into = (inp.steer || 0) * side;
-          if (into > -0.15 && vlat > 6) {
+          if (into > 0.35 && vlat > 11) {
             const ht = Math.atan2(-q2.tx, -q2.tz);
             let dh = ht - this.heading;
             while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
-            if (Math.abs(dh) <= Math.PI / 2) this.heading += dh * Math.min(0.1, dt * 1.5);
+            if (Math.abs(dh) <= Math.PI / 2) this.heading += dh * Math.min(0.04, dt * 0.7);
           }
         }
-        // into > 0 ＝往護欄裡打。往反方向打時補一點向內的速度，車身才不會被位置修正釘住。
         const intoWall = (inp.steer || 0) * side;
-        if (intoWall < -0.2) {
-          const push = 9 * dt;
+        if (intoWall < -0.15) {
+          const push = 11 * dt;
           this.vel.x -= q2.rx * side * push; this.vel.z -= q2.rz * side * push;
         }
-        if ((inp.throttle || 0) > 0.4 && this.speed < 2) {
-          this.vel.x -= q2.rx * side * 8;
-          this.vel.z -= q2.rz * side * 8;
-          this.vel.x += (q2.tx || 0) * 5;
-          this.vel.z += (q2.tz || 0) * 5;
+        const along = this.vel.x * (q2.tx || 0) + this.vel.z * (q2.tz || 0);
+        const sp = Math.hypot(this.vel.x, this.vel.z);
+        if ((inp.throttle || 0) > 0.35 && (sp < 7 || along < 4)) {
+          this.vel.x -= q2.rx * side * 6;
+          this.vel.z -= q2.rz * side * 6;
+          this.vel.x += (q2.tx || 0) * 9;
+          this.vel.z += (q2.tz || 0) * 9;
         }
       }
     }
@@ -792,6 +814,10 @@ export class Vehicle {
       const next = this.q1.fi || this.fi;
       if (this._skipsRibbon(this.fi, next)) this._catchRibbon();
       else this.fi = next;
+    }
+    if (this.grounded && !this.attached && tr.onPad && tr.onPad(this.q1.fi || this.fi)) {
+      const cap = ((this.t && this.t.vTop) || 62) * 1.08;
+      if (this.speed < cap) this.boostT = Math.max(this.boostT || 0, 0.42);
     }
 
     // ---------- 姿態 ----------
