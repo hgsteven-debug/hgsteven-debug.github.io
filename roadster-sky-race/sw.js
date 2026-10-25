@@ -1,6 +1,6 @@
 // 同網域的靜態檔在連得上時更新快取，斷線時用上次成功的回應。
-// v2：道具開關進了進場流程。舊的 v1 殼沒有 #s-items，activate 會丟掉舊快取。
-const CACHE = 'sky-roadster-v2';
+// v3：手機方向鍵。舊殼還是圓形搖桿，activate 會丟掉舊快取。
+const CACHE = 'sky-roadster-v3';
 
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => {

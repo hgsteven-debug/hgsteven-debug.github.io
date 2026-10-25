@@ -73,7 +73,7 @@ async function layout(page) {
       const len = Math.hypot(vx, vy) || 1;
       return { x: vx / len, y: vy / len, cx, cy };
     };
-    const stick = document.getElementById('stick');
+    const pad = document.getElementById('dpad');
     const buttons = {};
     for (const el of document.querySelectorAll('[data-t],[data-p]')) {
       const r = el.getBoundingClientRect();
@@ -91,10 +91,10 @@ async function layout(page) {
     return {
       forced: document.documentElement.classList.contains('force-landscape'),
       iw: innerWidth, ih: innerHeight,
-      right: axis(stick, '100%', '50%'),
-      left: axis(stick, '0%', '50%'),
-      up: axis(stick, '50%', '0%'),
-      down: axis(stick, '50%', '100%'),
+      right: axis(pad, '100%', '50%'),
+      left: axis(pad, '0%', '50%'),
+      up: axis(pad, '50%', '0%'),
+      down: axis(pad, '50%', '100%'),
       buttons,
     };
   });
@@ -125,14 +125,16 @@ async function pressButton(session, page, button) {
   return mid;
 }
 
-async function drag(session, page, from, dir) {
-  const dist = 52;
-  const x2 = from.cx + dir.x * dist, y2 = from.cy + dir.y * dist;
-  await finger(session, 'touchStart', from.cx, from.cy);
-  await finger(session, 'touchMove', x2, y2);
+async function idle(page, n) {
+  for (let i = 0; i < n; i++) await hostNow(page);
+}
+
+async function hold(session, page, button, polls) {
+  await finger(session, 'touchStart', button.cx, button.cy);
   await settle(page);
-  const mid = await hostNow(page);
-  await finger(session, 'touchEnd', x2, y2);
+  let mid = null;
+  for (let i = 0; i < polls; i++) mid = await hostNow(page);
+  await finger(session, 'touchEnd', button.cx, button.cy);
   await settle(page);
   return mid.host;
 }
@@ -158,22 +160,31 @@ async function runMode(name, viewport, orient, expectCss) {
       assert(b.inside && b.hit === key, name + ' hit ' + key + ' ' + JSON.stringify(b));
     }
     const along = (btn, dir) => (btn.cx - box.right.cx) * dir.x + (btn.cy - box.right.cy) * dir.y;
-    const B = box.buttons.lift, A = box.buttons.nitro, Y = box.buttons.camera, X = box.buttons.reset;
-    assert(along(B, box.down) > along(A, box.down) + 20, name + ' B not bottom');
-    assert(along(B, box.down) > along(Y, box.down) + 20 && along(B, box.down) > along(X, box.down) + 20, name + ' B not lowest');
-    assert(along(A, box.right) > along(B, box.right) + 20, name + ' A not right of B');
-    assert(along(Y, box.left) > along(B, box.left) + 20, name + ' Y not left of B');
-    assert(along(X, box.up) > along(B, box.up) + 20, name + ' X not above B');
+    const B = box.buttons.lift, A = box.buttons.nitro, Y = box.buttons.camera, X = box.buttons.reset, G = box.buttons.gas;
+    assert(along(B, box.down) > along(A, box.down) + 16, name + ' B not below A');
+    assert(along(A, box.right) > along(B, box.right) + 16, name + ' A not right of B');
+    assert(along(G, box.right) > along(B, box.right) + 16, name + ' gas not right of B');
+    assert(along(Y, box.up) > along(B, box.up) + 16 && along(X, box.up) > along(B, box.up) + 16, name + ' xy not above cluster');
+    assert(along(Y, box.right) > along(X, box.right) + 8, name + ' Y not right of X');
+    for (const key of ['left', 'right', 'pup', 'pdown']) {
+      const b = box.buttons[key];
+      assert(b && b.inside && b.hit === key, name + ' dpad ' + key + ' ' + JSON.stringify(b));
+    }
+    assert(box.buttons.left.label === '左轉' && box.buttons.right.label === '右轉' && box.buttons.pup.label === '俯仰', name + ' dpad labels');
     const quiet = (h) => Math.abs(h.steer) < 0.05 && h.throttle === 0 && h.brake === 0 && !h.lift && !h.nitro && h.pitch === 0;
 
-    const right = await drag(session, page, box.right, box.right);
-    assert(right.steer > 0.45 && Math.abs(right.pitch) < 0.2, name + ' stick right ' + JSON.stringify(right));
-    const left = await drag(session, page, box.left, box.left);
-    assert(left.steer < -0.45 && Math.abs(left.pitch) < 0.2, name + ' stick left ' + JSON.stringify(left));
-    const up = await drag(session, page, box.up, box.up);
-    assert(Math.abs(up.steer) < 0.2 && up.pitch < -0.45, name + ' stick up ' + JSON.stringify(up));
-    const down = await drag(session, page, box.down, box.down);
-    assert(Math.abs(down.steer) < 0.2 && down.pitch > 0.45, name + ' stick down ' + JSON.stringify(down));
+    const right = await hold(session, page, box.buttons.right, 18);
+    assert(right.steer > 0.8 && Math.abs(right.pitch) < 0.2, name + ' dpad right ' + JSON.stringify(right));
+    await idle(page, 24);
+    const left = await hold(session, page, box.buttons.left, 18);
+    assert(left.steer < -0.8 && Math.abs(left.pitch) < 0.2, name + ' dpad left ' + JSON.stringify(left));
+    await idle(page, 24);
+    const up = await hold(session, page, box.buttons.pup, 3);
+    assert(Math.abs(up.steer) < 0.25 && up.pitch < -0.45, name + ' dpad up ' + JSON.stringify(up));
+    await idle(page, 8);
+    const down = await hold(session, page, box.buttons.pdown, 3);
+    assert(Math.abs(down.steer) < 0.25 && down.pitch > 0.45, name + ' dpad down ' + JSON.stringify(down));
+    await idle(page, 8);
 
     const gas = await pressButton(session, page, box.buttons.gas);
     assert(gas.host.throttle > 0.5 && gas.host.brake === 0 && !gas.host.lift && !gas.host.nitro, name + ' gas ' + JSON.stringify(gas.host));

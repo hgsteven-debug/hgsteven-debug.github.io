@@ -430,6 +430,8 @@ async function measurePad(page) {
     const brake = box('[data-t="brake"]');
     const faces = ['y', 'x', 'b', 'a'].map((k) => box('.gpad.face.' + k));
     const stick = box('#stick');
+    const dpad = box('#dpad');
+    const stickShown = getComputedStyle(document.querySelector('#stick')).display !== 'none';
     const hit = (b) => {
       const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
       const node = document.elementFromPoint(cx, cy);
@@ -457,7 +459,7 @@ async function measurePad(page) {
     const early = sky.sync.hostOffroadWarn({ known: true, onRoad: true, since: 0, toastAt: 0 }, false, 1000);
     const late = sky.sync.hostOffroadWarn(early.state, false, 1600);
     return {
-      w: innerWidth, h: innerHeight, gas, brake, faces, stick,
+      w: innerWidth, h: innerHeight, gas, brake, faces, stick, dpad, stickShown,
       hitG: hit(gas), hitB: hit(brake),
       held: sky.input.touch.gas === true, throttle: sky.input.state.throttle,
       respawn: !!sky.veh.events.respawn, why: sky.veh.events.why || '',
@@ -493,7 +495,7 @@ async function testPhonePad() {
     if (box.gas.t !== '加速') throw new Error('label ' + JSON.stringify(box.gas));
     if (box.brake.t !== '煞車') throw new Error('brake label ' + box.brake.t);
     if (!(box.gas.x > w * 0.55 && box.gas.y + box.gas.h > h * 0.7)) throw new Error('gas not lower right ' + JSON.stringify(box));
-    if (!(box.brake.x < w * 0.4 && box.brake.y > h * 0.55)) throw new Error('brake not lower left ' + JSON.stringify(box));
+    if (!(box.brake.x < w * 0.45 && box.brake.y + box.brake.h > h * 0.85)) throw new Error('brake not lower left ' + JSON.stringify(box));
     if (!box.hitG.inside || box.hitG.key !== 'gas') throw new Error('gas hit ' + JSON.stringify(box.hitG));
     if (!box.hitB.inside || box.hitB.key !== 'brake') throw new Error('brake hit ' + JSON.stringify(box.hitB));
     for (const f of box.faces) {
@@ -504,8 +506,10 @@ async function testPhonePad() {
     const fb = byText['B推進'], fa = byText['A氮氣'], fy = byText['Y視角'], fx = byText['X回賽道'];
     if (!fb || !fa || !fy || !fx) throw new Error('face labels ' + JSON.stringify(box.faces.map((f) => f.t)));
     if (!(fb.y > fa.y && fb.y > fy.y && fb.y > fx.y)) throw new Error('B not bottom ' + JSON.stringify(box.faces));
-    if (!(fa.x > fb.x && fy.x < fb.x && fx.y < fb.y)) throw new Error('diamond ' + JSON.stringify(box.faces));
-    if (overlap(box.stick, box.brake)) throw new Error('stick overlaps brake ' + JSON.stringify(box));
+    if (!(fa.x > fb.x + 16 && box.gas.x > fb.x + fb.w)) throw new Error('cluster ' + JSON.stringify(box.faces));
+    if (!(fy.y + fy.h < fb.y && fx.y + fx.h < fb.y && fx.x + 4 < fy.x)) throw new Error('xy ' + JSON.stringify(box.faces));
+    if (box.stickShown || box.stick.w > 2) throw new Error('stick visible ' + JSON.stringify(box.stick));
+    if (!(box.dpad.w > 40) || overlap(box.dpad, box.brake) || box.brake.y + 1 < box.dpad.y + box.dpad.h) throw new Error('brake under pad ' + JSON.stringify({ dpad: box.dpad, brake: box.brake }));
     if (!box.held || !(box.throttle > 0.5)) throw new Error('hold ' + JSON.stringify(box));
     if (box.respawn || box.why) throw new Error('local off-track respawn ' + JSON.stringify(box));
     if (!(box.step < 1.5) || box.snapped) throw new Error('smooth ' + JSON.stringify(box));
