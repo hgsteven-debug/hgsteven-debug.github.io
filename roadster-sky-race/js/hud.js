@@ -142,7 +142,7 @@ export class Hud {
     const n = Math.max(1, Math.ceil(sec));
     this.setText('offcount', el, t('toast.offcount', { n }));
   }
-  flash() { this.el.flash.classList.add('on'); setTimeout(() => this.el.flash.classList.remove('on'), 160); }
+  flash() { this.el.flash.classList.add('on'); setTimeout(() => this.el.flash.classList.remove('on'), 90); }
   count(t) { this.setText('count', this.el.count, t); }
 
   update(dt, veh, lap, camLabel, padText, stateLabel) {
@@ -270,7 +270,7 @@ export class Hud {
     this._paintIcon(e.nextGlyph, nextRolling ? nextShow : next);
     if (e.next) e.next.classList.toggle('hidden', !next);
     if (e.iname) this.setText('itemname', e.iname, rolling ? t('item.roll') : (id ? name : t('item.empty')));
-    this._paintIcon(e.touchIco, id);
+    this._paintIcon(e.touchIco, rolling ? show : id);
     this._paintIcon(e.touchNext, next);
     if (e.touchNext) e.touchNext.classList.toggle('hidden', !next);
     if (e.pop) e.pop.classList.toggle('hidden', !(id && this._popUntil && now < this._popUntil));
