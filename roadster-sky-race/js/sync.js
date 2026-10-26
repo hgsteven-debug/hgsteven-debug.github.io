@@ -9,6 +9,10 @@ export const INTERP_DELAY_MS = 100;
 export const STATE_GAP_MS = 66;
 export const INPUT_GAP_MS = 50;
 export const LINK_STALE_MS = 5000;
+// 這一拍跟上一拍隔太久，是分頁或鎖屏恢復，不是車機沉默。
+export const LINK_RESUME_GAP_MS = 1200;
+// 直連超過這段時間沒有自己的封包，中繼封包就要拿來用，不能只拿來擋斷線。
+export const LINK_DC_FRESH_MS = 1500;
 export const REMOTE_GRACE_MS = 45000;
 export const INPUT_HISTORY = 4;
 
@@ -22,6 +26,43 @@ const SELF_KEYS = [
 // 有收到對端訊息才算接上。只連上 MQTT 伺服器不算。
 export function hostStillThere(lastAt, now, stale = LINK_STALE_MS) {
   return lastAt > 0 && now >= lastAt && now - lastAt <= stale;
+}
+
+// 上一拍到這一拍的間隔。pollAt 還沒寫過（第一拍）不算恢復。
+export function noteLinkResume(prevPollAt, now, gapMs = LINK_RESUME_GAP_MS) {
+  if (!(prevPollAt > 0) || !(now >= prevPollAt)) return false;
+  return now - prevPollAt > gapMs;
+}
+
+// 這一拍要不要宣布斷線。分頁或鎖屏剛恢復時，先把 lastAt 拉到 now，不當成斷線。
+// 已經判定失去聯絡（heardHost 為假）不會被這一拍洗掉。
+export function advanceLinkWatch({ heardHost, lastAt, pollAt, now, stale = LINK_STALE_MS, resumeGap = LINK_RESUME_GAP_MS } = {}) {
+  const resumed = noteLinkResume(pollAt, now, resumeGap);
+  let at = lastAt || 0;
+  let heard = !!heardHost;
+  let lost = false;
+  if (resumed && heard) at = now;
+  else if (heard && now < at) { /* 時鐘往回走，不當斷線 */ }
+  else if (heard && !hostStillThere(at, now, stale)) { heard = false; lost = true; }
+  return { resumed, lastAt: at, heardHost: heard, lost, pollAt: now };
+}
+
+// 比賽中、timeout 內沒有任何路徑的封包，才顯示失去聯絡。
+// 健康連線（最近有封包，RTT 晶片會是綠的）必須隱藏。replaced 另有自己的橫幅。
+export function showLostContact({ live, lastAt, now, resumed, replaced, stale = LINK_STALE_MS } = {}) {
+  if (!live || replaced || resumed) return false;
+  if (!(lastAt > 0)) return true;
+  if (!(now >= lastAt)) return false;
+  return now - lastAt > stale;
+}
+
+// 直連還活著時，中繼封包只證明車機還在，不拿來改位置、也不改走哪條路。
+// 直連安靜超過 dcStale，這包中繼就要生效，並把 rtcLive 放掉。
+export function relayPacketWhileDirect({ rtcLive, via, lastDcAt, now, dcStale = LINK_DC_FRESH_MS } = {}) {
+  if (via !== 'ws' || !rtcLive) return { drop: false, rtcLive: !!rtcLive };
+  const dcFresh = lastDcAt > 0 && now >= lastDcAt && now - lastDcAt < dcStale;
+  if (dcFresh) return { drop: true, rtcLive: true };
+  return { drop: false, rtcLive: false };
 }
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const PUBLIC_ORIGIN = 'https://hgsteven-debug.github.io';

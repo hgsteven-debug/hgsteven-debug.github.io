@@ -204,8 +204,9 @@ h2 { margin:0 0 .8rem; font-size:1.8rem; } h3 { margin:.2rem 0 .6rem; font-size:
 #linkhint { position:fixed; left:50%; top:calc(2.35rem + env(safe-area-inset-top, 0px)); transform:translateX(-50%); z-index:14;
   max-width:min(92vw, 28rem); text-align:center; font-size:.78rem; color:#ffe29a; background:rgba(40,28,8,.88);
   padding:.28rem .6rem; border-radius:.5rem; pointer-events:none; }
-#netbanner { position:fixed; left:50%; top:.6rem; transform:translateX(-50%); z-index:12; background:rgba(90,30,12,.92); color:#ffe29a;
-  padding:.45rem .9rem; border-radius:.5rem; font-size:.9rem; max-width:92vw; text-align:center; pointer-events:none; }
+#netbanner { position:fixed; left:50%; top:calc(2.7rem + env(safe-area-inset-top, 0px)); transform:translateX(-50%); z-index:12; background:rgba(90,30,12,.92); color:#ffe29a;
+  padding:.28rem .6rem; border-radius:.5rem; font-size:.78rem; max-width:min(92vw, 28rem); text-align:center; pointer-events:none;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 #netbanner.hidden { display:none; }
 #gbadge { position:fixed; left:1.2rem; top:7.6rem; z-index:8; pointer-events:none; font-size:.85rem; letter-spacing:.04em;
   color:#d5dde8; text-shadow:0 1px 6px #000; }
@@ -403,6 +404,13 @@ body.phone #btnFull {
 }
 body.phone #padstate, body.phone #camlabel, body.phone #hint,
 body.phone #itemslot, body.phone #itembadge { display:none !important; }
+body.phone #netbanner {
+  top:calc(var(--safe-t) + 58px);
+  font-size:11px;
+  line-height:1.1;
+  padding:2px 6px;
+  max-width:min(42vw, 200px);
+}
 body.phone #speedbox {
   left:50%; bottom:auto; top:calc(var(--safe-t) + 78px);
   transform:translateX(-50%); min-width:0; width:max-content;
