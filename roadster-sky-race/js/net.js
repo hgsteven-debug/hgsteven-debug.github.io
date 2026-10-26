@@ -5,6 +5,7 @@ import {
   REMOTE_LIMIT, makeRoomCode, peerIdFor, joinUrl, failText, packInput, zeroInput, formatCode, normalizeCode,
   STATE_GAP_MS, INPUT_GAP_MS, LINK_STALE_MS, REMOTE_GRACE_MS, hostStillThere,
   INPUT_HISTORY, acceptInputs, stateGapMs, mergePose, linkQuality, linkKind, lanIsolationHint,
+  advanceLinkWatch, relayPacketWhileDirect,
 } from './sync.js';
 import { webrtcSupport, rtcConfig, nextJoinStage, JOIN_TOTAL_MS } from './ice.js';
 import { connectRelayFan } from './relay.js';
@@ -1053,6 +1054,7 @@ export function createGuest(code, handlers) {
     _retried: false,
     heardHost: false,
     lastPeerAt: 0,
+    lastDcAt: 0,
     policy: rtcConfig().iceTransportPolicy,
     stage: !webrtcSupport().ok ? 'mqtt' : (rtcConfig().iceTransportPolicy === 'relay' ? 'turn' : 'direct'),
     stageAt: performance.now(),
@@ -1175,6 +1177,7 @@ export function createGuest(code, handlers) {
     const now = performance.now();
     session.provenAt = now;
     session.lastPeerAt = now;
+    session.lastDcAt = now;
     if (session.pathKind === 'relay' || session.policy === 'relay') session.via = 'relay';
     else if (session.pathKind === 'direct') session.via = 'direct';
     else session.via = 'direct';
@@ -1201,14 +1204,31 @@ export function createGuest(code, handlers) {
     }
     if (!data || typeof data !== 'object') return;
     if (data.t === 'state' && !seqNewer(session._stateSeq, data.seq | 0) && data.seq != null) {
-      session.lastPeerAt = performance.now();
+      const dupAt = performance.now();
+      session.lastPeerAt = dupAt;
+      if (via !== 'ws') session.lastDcAt = dupAt;
       return;
     }
-    if (via === 'ws' && session.rtcLive) return;
+    const gate = relayPacketWhileDirect({
+      rtcLive: session.rtcLive,
+      via,
+      lastDcAt: session.lastDcAt,
+      now: performance.now(),
+    });
+    if (gate.drop) {
+      // 直連還在送。中繼這包只刷新「有看到車機」，不倒回位置、不改 via、不蓋掉直連的 RTT。
+      session.lastPeerAt = performance.now();
+      session.heardHost = true;
+      session.connected = true;
+      return;
+    }
+    if (via === 'ws' && session.rtcLive && !gate.rtcLive) session.rtcLive = false;
     if (data.lan) session.sawRemoteHost = true;
     if (data.t === 'ping' || data.t === 'pong' || data.t === 'welcome' || data.t === 'state' || data.t === 'input') {
-      session.provenAt = performance.now();
-      session.lastPeerAt = performance.now();
+      const heardAt = performance.now();
+      session.provenAt = heardAt;
+      session.lastPeerAt = heardAt;
+      if (via !== 'ws') session.lastDcAt = heardAt;
       session.rejoin = false;
     }
     if (via !== 'ws' && (data.t === 'ping' || data.t === 'pong' || data.t === 'welcome' || data.t === 'state')) markDc(session);
@@ -1294,14 +1314,14 @@ export function createGuest(code, handlers) {
       next._skyBag = session;
       watchIce(pc, session, (st) => {
         if (st === 'failed' || st === 'disconnected') {
-          session.peerDetail = 'peer.rejoin';
-          session.rejoin = true;
-          const fresh = session.lastPeerAt && performance.now() - session.lastPeerAt < 1500;
+          const fresh = session.lastDcAt && performance.now() - session.lastDcAt < 1500;
           if (!fresh) {
+            session.peerDetail = 'peer.rejoin';
+            session.rejoin = true;
             session.rtcLive = false;
             if (session.wsOpen && session.via !== 'direct') session.via = 'ws';
+            emit('warn');
           }
-          emit('warn');
         }
         if (st === 'connected' || st === 'completed') {
           session.iceUp = true;
@@ -1521,8 +1541,16 @@ export function createGuest(code, handlers) {
     runDue(deadlines, now);
     if (relay) relay.poll(now);
     tickGuestJoin(now);
-    if (session.heardHost && !hostStillThere(session.lastPeerAt, now)) {
-      session.heardHost = false;
+    const watch = advanceLinkWatch({
+      heardHost: session.heardHost,
+      lastAt: session.lastPeerAt,
+      pollAt: session._pollAt,
+      now,
+    });
+    session._pollAt = watch.pollAt;
+    session.lastPeerAt = watch.lastAt;
+    session.heardHost = watch.heardHost;
+    if (watch.lost) {
       session.connected = false;
       emit('warn');
       helloRelay();

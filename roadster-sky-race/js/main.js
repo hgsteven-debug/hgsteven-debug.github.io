@@ -20,6 +20,7 @@ import { createHost, createGuest, drawRoomQr } from './net.js';
 import {
   normalizeCode, formatCode, joinUrl, heldInput, reconcileDecision, StateBuffer, zeroInput,
   packSelf, packPose, easeGuestPose, hostOffroadWarn, phoneHeldPortrait, phoneLayout,
+  showLostContact,
 } from './sync.js';
 import * as syncApi from './sync.js';
 
@@ -287,7 +288,7 @@ async function boot() {
     try {
       const swHost = location.hostname || '';
       if ((swHost.endsWith('github.io') || params.get('sw') === '1') && 'serviceWorker' in navigator) {
-        const SW_REV = 'v9';
+        const SW_REV = 'v10';
         navigator.serviceWorker.register('sw.js').then(() => {
           let once = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -1059,6 +1060,18 @@ function showBanner(text) {
   el.textContent = text;
   el.classList.remove('hidden');
 }
+// 橫幅跟著「最近有沒有車機封包」走，不靠狀態事件鎖住。綠晶片（封包還新）時一定收起。
+function syncGuestBanner(now) {
+  if (!game.guest || !guestNet) { showBanner(''); return; }
+  if (guestNet.replaced) { showBanner(t('guest.replacedBanner')); return; }
+  if (guestNet.full) { showBanner(guestNet.failMsg || t('guest.full')); return; }
+  const tnow = Number.isFinite(now) ? now : performance.now();
+  if (showLostContact({ live: !!guestLive, lastAt: guestNet.lastPeerAt, now: tnow })) {
+    showBanner(t('guest.lost'));
+    return;
+  }
+  showBanner('');
+}
 function onGuestWelcome(msg) {
   if (!guestNet) return;
   guestNet.connected = true;
@@ -1120,6 +1133,7 @@ function onGuestState(msg) {
   if (guestLive && phase === 'menu') leaveGuestRace();
   if (!guestLive) {
     if (phase === 'results') showGuestResults(msg);
+    syncGuestBanner(performance.now());
     return;
   }
   if (phase === 'countdown' && game.state !== 'paused') {
@@ -1146,12 +1160,12 @@ function onGuestState(msg) {
     game.state = 'race';
     if (ui.current === 'pause') ui.hideAll();
   }
+  syncGuestBanner(performance.now());
 }
 function onGuestFail(msg) {
   if (guestNet) { guestNet.failed = true; guestNet.failMsg = msg; }
   setJoinStatus(msg, 'bad');
-  if (guestLive) showBanner(msg);
-  else showBanner('');
+  syncGuestBanner(performance.now());
 }
 function onGuestClose(info) {
   if (!guestNet || guestNet._destroyed) return;
@@ -1162,8 +1176,8 @@ function onGuestClose(info) {
     showBanner(t('guest.replacedBanner'));
     return;
   }
-  if (guestLive) showBanner(t('guest.dropLive'));
-  else setJoinStatus(t('guest.drop'), 'bad');
+  if (!guestLive) setJoinStatus(t('guest.drop'), 'bad');
+  else syncGuestBanner(performance.now());
   if (guestRetryTimer) return;
   guestRetryTimer = setTimeout(() => {
     guestRetryTimer = null;
@@ -1172,12 +1186,11 @@ function onGuestClose(info) {
 }
 function onGuestStage(info) {
   if (!info) return;
+  if (guestLive) { syncGuestBanner(performance.now()); return; }
   if (guestNet && guestNet.connected) {
-    if (guestLive) { showBanner(''); return; }
     setJoinStatus(t('guest.waitHost', { how: linkHow(guestNet.via) }), 'ok');
     return;
   }
-  if (guestLive) showBanner(t('guest.lost'));
   setJoinStatus(info.text || '', info.kind === 'fail' ? 'bad' : 'wait');
 }
 function beginGuest() {
@@ -1828,6 +1841,7 @@ function frame(now) {
     } else game._lobbySince = 0;
   }
   try { flushNet(false); } catch (e) {}
+  try { syncGuestBanner(now); } catch (e) {}
   try { paintLink(); } catch (e) {}
   try { paintDebug(); } catch (e) {}
   adaptResolution(dt);
