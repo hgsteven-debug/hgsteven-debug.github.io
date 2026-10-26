@@ -1,6 +1,6 @@
 // 同網域的靜態檔在連得上時更新快取，斷線時用上次成功的回應。
-// v10：連線健康時收起「失去聯絡」橫幅。activate 會丟掉舊快取。
-const CACHE = 'sky-roadster-v10';
+// v11：道具圖示改到角落，彈出訊息縮小。activate 會丟掉舊快取。
+const CACHE = 'sky-roadster-v11';
 
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => {

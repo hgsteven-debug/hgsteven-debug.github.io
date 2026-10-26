@@ -50,8 +50,8 @@ function racer() {
 
 function testQueue() {
   assert(ITEM_PRESS_QUEUE_S <= 0.6, 'queue ' + ITEM_PRESS_QUEUE_S);
-  assert(ITEM_ROLL_MS <= 600 && ITEM_ROLL_MS >= 400, 'roll ' + ITEM_ROLL_MS);
-  assert(ITEM_POP_MS >= 900 && ITEM_POP_MS <= 1200, 'pop ' + ITEM_POP_MS);
+  assert(ITEM_ROLL_MS <= 500 && ITEM_ROLL_MS >= 300, 'roll ' + ITEM_ROLL_MS);
+  assert(ITEM_POP_MS >= 500 && ITEM_POP_MS <= 800, 'pop ' + ITEM_POP_MS);
   const battle = new ItemBattle({ N: 8, px: [], py: [], pz: [] }, [], () => 0);
   const me = racer();
   me.driver.input.state.item = true;

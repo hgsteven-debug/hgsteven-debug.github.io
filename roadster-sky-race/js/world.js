@@ -1110,14 +1110,14 @@ export class World {
     this.scene.add(box);
     this.itemBoxes = box;
     this.itemGlow = this._itemMesh(new THREE.BoxGeometry(2.35, 2.35, 2.35), 0xffe08a, n, { transparent: true, opacity: 0.28, depthWrite: false });
-    this.itemPops = this._itemMesh(new THREE.TorusGeometry(1.1, 0.16, 6, 14), 0xfff0a0, 8, { transparent: true, opacity: 0.9, depthWrite: false });
+    this.itemPops = this._itemMesh(new THREE.TorusGeometry(0.62, 0.07, 6, 12), 0xfff0a0, 8, { transparent: true, opacity: 0.55, depthWrite: false });
     this.itemDart = this._itemMesh(new THREE.ConeGeometry(0.48, 2.35, 7), 0xff2d2d, 8);
     this.itemDartTrail = this._itemMesh(new THREE.BoxGeometry(0.28, 1, 0.28), 0xff5a3a, 40);
     this.itemDrone = this._itemMesh(new THREE.SphereGeometry(0.62, 8, 6), 0xffd000, 8);
     this.itemReticle = this._itemMesh(new THREE.TorusGeometry(1.15, 0.09, 6, 16), 0xffe14a, 8);
-    this.itemSlick = this._itemMesh(new THREE.CylinderGeometry(2.15, 2.15, 0.2, 10), 0x140814, 8);
-    this.itemSlickRim = this._itemMesh(new THREE.CylinderGeometry(2.55, 2.55, 0.08, 10), 0x6a3cff, 8, { transparent: true, opacity: 0.9, depthWrite: false });
-    this.itemShield = this._itemMesh(new THREE.SphereGeometry(2.15, 12, 8), 0x3ec2ff, 8, { transparent: true, opacity: 0.38, depthWrite: false });
+    this.itemSlick = this._itemMesh(new THREE.CylinderGeometry(1.45, 1.45, 0.05, 10), 0x140814, 8, { transparent: true, opacity: 0.5, depthWrite: false });
+    this.itemSlickRim = this._itemMesh(new THREE.CylinderGeometry(1.6, 1.6, 0.04, 10), 0x6a3cff, 8, { transparent: true, opacity: 0.4, depthWrite: false });
+    this.itemShield = this._itemMesh(new THREE.SphereGeometry(1.15, 10, 8), 0x3ec2ff, 8, { transparent: true, opacity: 0.16, depthWrite: false });
     this.itemBurst = this._itemMesh(new THREE.OctahedronGeometry(0.7, 0), 0xffffff, 16, { transparent: true, opacity: 0.92, depthWrite: false });
     const burstColors = [0xffffff, 0xff2d2d, 0xffd000, 0x6a3cff, 0x3ec2ff, 0xff7a18, 0x5ce1ff];
     this._burstHex = burstColors;
@@ -1187,15 +1187,15 @@ export class World {
     const pops = [];
     for (const p of this._pickFx) {
       p.age += dt;
-      if (p.age < 0.5) pops.push(p);
+      if (p.age < 0.32) pops.push(p);
     }
     this._pickFx = pops.slice(-8);
     this._writeInstances(this.itemPops, this._pickFx, (o, p) => {
-      const k = p.age / 0.5;
+      const k = p.age / 0.32;
       o.position.set(p.x, p.y, p.z);
       o.rotation.set(Math.PI / 2, 0, t * 2);
       o.quaternion.setFromEuler(o.rotation);
-      o.scale.setScalar(0.4 + k * 3.4);
+      o.scale.setScalar(0.3 + k * 0.85);
     });
 
     const shots = on && view.shots ? view.shots : [];
@@ -1269,7 +1269,7 @@ export class World {
     this._writeInstances(this.itemShield, shields, (o, s) => {
       o.position.set(s.x, s.y, s.z);
       o.quaternion.identity();
-      o.scale.setScalar(1 + Math.sin(t * 4) * 0.04);
+      o.scale.setScalar(0.92 + Math.sin(t * 3) * 0.02);
     });
     const bursts = [];
     if (on && view.bursts) {
@@ -1280,7 +1280,7 @@ export class World {
       o.position.set(b.x, b.y, b.z);
       o.rotation.set(t * 2, t * 3, 0);
       o.quaternion.setFromEuler(o.rotation);
-      o.scale.setScalar((b.hit ? 1.4 : 0.7) + k * (b.hit ? 3.2 : 1.6));
+      o.scale.setScalar((b.hit ? 0.5 : 0.32) + k * (b.hit ? 0.85 : 0.4));
       if (this.itemBurst.setColorAt && this._burstHex) {
         this._itemColor.setHex(this._burstHex[(b.kind | 0)] || 0xffffff);
         this.itemBurst.setColorAt(i, this._itemColor);

@@ -1,7 +1,7 @@
 // 六種道具的原創圖示。HUD、手機鍵、彈出說明共用同一張 SVG。
-export const ITEM_ROLL_MS = 520;
-export const ITEM_POP_MS = 1000;
-export const ITEM_HIT_MS = 1200;
+export const ITEM_ROLL_MS = 420;
+export const ITEM_POP_MS = 680;
+export const ITEM_HIT_MS = 720;
 
 const SVG = {
   1: `<svg viewBox="0 0 64 64" aria-hidden="true"><path fill="#ff2d2d" d="M8 26h28L30 14l26 18-26 18-6-12H8z"/><path fill="#7a0c0c" d="M8 30h18v4H8z"/></svg>`,
